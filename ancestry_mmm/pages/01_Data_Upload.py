@@ -12,7 +12,18 @@ from ancestry_mmm.utils import (
     init_session_state,
     clear_model_state,
     dataframe_column_config,
+    get_state,
     set_state,
+)
+from ancestry_mmm.application.experiment_service import (
+    DEFAULT_EVIDENCE_STATUS,
+    adopt_experiment_record,
+    register_experiment_record,
+)
+from ancestry_mmm.core.experiments import (
+    EXPERIMENT_DESIGNS,
+    ExperimentRecord,
+    ExperimentToModelUse,
 )
 from ancestry_mmm.components import (
     apply_theme,
@@ -128,6 +139,10 @@ def _clear_standard_adoption_state() -> None:
         ("standard_joined_data", None),
         ("context_variable_metadata", []),
         ("source_domain_semantics", []),
+        # Source-derived evidence rows clear with their pack; the governed
+        # experiment registry is durable project state and never cleared
+        # here (append-only, survives source replacement).
+        ("experiment_evidence_rows", []),
     ):
         set_state(key, value)
     if st.session_state.get("transformed_data_origin") == "standard_source_pack":
@@ -223,6 +238,7 @@ def _record_outcome_source_import(workbook, canonical_bundle) -> None:
 def _adopt_standard_source_bundle(canonical_bundle) -> None:
     """Persist canonical non-Outcomes semantics without changing approvals."""
 
+    existing_experiment_rows = get_state("experiment_evidence_rows") or []
     adoption = adopt_standard_source_bundle(
         canonical_bundle,
         activity_definitions=[
@@ -234,6 +250,9 @@ def _adopt_standard_source_bundle(canonical_bundle) -> None:
         context_data=st.session_state.get("standard_context_data"),
         context_variable_metadata=st.session_state.get("context_variable_metadata")
         or [],
+        experiment_evidence=(
+            pd.DataFrame(existing_experiment_rows) if existing_experiment_rows else None
+        ),
         semantic_statuses=st.session_state.get("source_domain_semantics") or [],
     )
     set_state(
@@ -251,6 +270,11 @@ def _adopt_standard_source_bundle(canonical_bundle) -> None:
         "source_domain_semantics",
         [item.to_dict() for item in adoption.semantic_statuses],
     )
+    if adoption.experiment_evidence is not None:
+        set_state(
+            "experiment_evidence_rows",
+            adoption.experiment_evidence.to_dict(orient="records"),
+        )
     combined_frame = adopted_model_input_frame(
         outcome_data=adoption.outcome_data,
         activity_model_input=adoption.activity_model_input,
@@ -1134,6 +1158,168 @@ if sources:
         )
 
     render_next_step("data_upload")
+
+    # --- Experiment Evidence registry (REQ-EXPMODE-001, Work Package 2) --
+    st.markdown("---")
+    st.markdown("### Experiment Evidence registry")
+    st.caption(
+        "Uploaded experiment-evidence rows never change a model by "
+        "themselves. Adopt a row into the governed registry only after "
+        "reviewing and completing its required metadata; every use of an "
+        "experiment against a model declares exactly one evidence mode, "
+        "and calibrating uses require a completed compatibility review. "
+        "No calibration method runs anywhere in this application - this is "
+        "evidence governance, never a silent recalibration."
+    )
+    _experiment_rows = get_state("experiment_evidence_rows") or []
+    _experiment_records = [
+        ExperimentRecord.from_dict(item)
+        for item in (get_state("experiment_records") or [])
+    ]
+    _experiment_uses = [
+        ExperimentToModelUse.from_dict(item)
+        for item in (get_state("experiment_model_uses") or [])
+    ]
+
+    if _experiment_rows:
+        st.markdown("#### Source rows awaiting adoption")
+        _rows_df = pd.DataFrame(_experiment_rows)
+        st.dataframe(
+            _rows_df,
+            width="stretch",
+            column_config=dataframe_column_config(_rows_df),
+        )
+        _row_ids = [str(row.get("experiment_id") or "") for row in _experiment_rows]
+        _selected_row_id = st.selectbox(
+            "Row to adopt",
+            options=_row_ids,
+            key="exp_adopt_row_select",
+            format_func=lambda value: f"{value} (source row)",
+        )
+        _selected_row = next(
+            row
+            for row in _experiment_rows
+            if str(row.get("experiment_id") or "") == _selected_row_id
+        )
+        with st.form("exp_adopt_form"):
+            _form_design = st.selectbox(
+                "Design", list(EXPERIMENT_DESIGNS), key="exp_adopt_design"
+            )
+            _form_estimand = st.text_input(
+                "Estimand",
+                key="exp_adopt_estimand",
+                help="The causal quantity the experiment estimated.",
+            )
+            _f1, _f2 = st.columns(2)
+            _form_effect = _f1.number_input(
+                "Observed effect estimate",
+                key="exp_adopt_effect",
+                help="The experiment's effect on its own estimand/scale.",
+            )
+            _form_uncertainty = _f2.number_input(
+                "Effect uncertainty (>= 0)",
+                min_value=0.0,
+                key="exp_adopt_uncertainty",
+            )
+            _form_method = st.text_input(
+                "Method",
+                key="exp_adopt_method",
+                help="How the experiment was analysed (e.g. difference-in-differences).",
+            )
+            _form_source = st.text_input(
+                "Source / provenance",
+                key="exp_adopt_source",
+                help="Where this experiment came from (e.g. geo-test platform export).",
+            )
+            _form_status = st.text_input(
+                "Evidence status",
+                value=DEFAULT_EVIDENCE_STATUS,
+                key="exp_adopt_status",
+                help="Adoption is never approval - default is draft/review-required.",
+            )
+            _adopt_submitted = st.form_submit_button("Adopt into registry")
+        if _adopt_submitted:
+            try:
+                _new_record = adopt_experiment_record(
+                    _selected_row,
+                    {
+                        "design": _form_design,
+                        "estimand": _form_estimand,
+                        "observed_effect_estimate": _form_effect,
+                        "effect_uncertainty": _form_uncertainty,
+                        "method": _form_method,
+                        "source": _form_source,
+                        "evidence_status": _form_status,
+                    },
+                )
+                set_state(
+                    "experiment_records",
+                    [
+                        record.to_dict()
+                        for record in register_experiment_record(
+                            _experiment_records, _new_record
+                        )
+                    ],
+                )
+                st.success(
+                    f"Experiment {_new_record.experiment_id!r} adopted as "
+                    f"version {_new_record.experiment_version} "
+                    f"(status: {_new_record.evidence_status!r})."
+                )
+            except ValueError as exc:
+                st.error(str(exc))
+
+    if _experiment_records:
+        st.markdown("#### Registered experiments")
+        _registry_df = pd.DataFrame(
+            [
+                {
+                    "experiment_id": record.experiment_id,
+                    "version": record.experiment_version,
+                    "design": record.design,
+                    "start_date": record.start_date,
+                    "end_date": record.end_date,
+                    "market_scope": ", ".join(record.market_scope),
+                    "estimand": record.estimand,
+                    "observed_effect_estimate": record.observed_effect_estimate,
+                    "effect_uncertainty": record.effect_uncertainty,
+                    "evidence_status": record.evidence_status,
+                }
+                for record in _experiment_records
+            ]
+        )
+        st.dataframe(
+            _registry_df,
+            width="stretch",
+            column_config=dataframe_column_config(_registry_df),
+        )
+        st.caption(
+            "The registry is immutable: an edit creates a new version - "
+            "it never rewrites history. Model uses are declared on the "
+            "Model Diagnostics page against the current trained model."
+        )
+    else:
+        st.info("No experiments have been adopted into the governed registry yet.")
+    if _experiment_uses:
+        st.markdown("#### Registered model uses")
+        _uses_df = pd.DataFrame(
+            [
+                {
+                    "experiment_id": use.experiment_id,
+                    "experiment_version": use.experiment_version,
+                    "evidence_mode": use.evidence_mode,
+                    "model_id": use.model_id,
+                    "model_version": use.model_version,
+                    "dependence_handling_method": use.dependence_handling_method,
+                }
+                for use in _experiment_uses
+            ]
+        )
+        st.dataframe(
+            _uses_df,
+            width="stretch",
+            column_config=dataframe_column_config(_uses_df),
+        )
 else:
     render_empty_state(
         "No sources loaded yet. Load the demo data or upload a file above to get started.",

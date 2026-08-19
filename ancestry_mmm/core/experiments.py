@@ -71,11 +71,15 @@ Deliberately out of scope for this module (see REQ-EXPMODE-001's own
   beyond Requirement 2's explicit double-counting rule (Part 7 §48
   `VL-024`).
 - `core.persistence` export/import wiring for the experiment registry -
-  deferred as a separate integration follow-up, consistent with how
-  Work Package 1/2/3's core diagnostics were shipped ahead of their own
-  persistence/UI wiring.
+  delivered by Work Package 2 of `Media-Mix-Lab: Coding LLM Next Steps
+  After PR #291` (`config/experiments.json` under
+  `EXPERIMENT_REGISTRY_SCHEMA_VERSION`, with the adoption boundary in
+  `application.experiment_service` and quarantine-on-import via
+  `core.persistence.resolve_imported_experiments`). This module itself
+  remains persistence-agnostic.
 - `REQ-CALIB-001`'s calibrated-versus-uncalibrated comparison contract -
-  a separate, dependent record (its own module).
+  a separate, dependent record (its own module). No calibration
+  mechanism exists or is implied by any of the above.
 """
 
 from __future__ import annotations
@@ -115,6 +119,12 @@ _CALIBRATING_MODES = (
     EVIDENCE_MODE_PRIOR_CALIBRATION,
     EVIDENCE_MODE_LIKELIHOOD_CALIBRATION,
 )
+
+# Record-level schema version of the persisted experiment registry file
+# (`config/experiments.json` in the project bundle). Importers reject an
+# unrecognised future version rather than guessing - mirrors every other
+# governed record's schema-version contract in this repository.
+EXPERIMENT_REGISTRY_SCHEMA_VERSION = 1
 
 COMPATIBILITY_DIMENSIONS = (
     "outcome",

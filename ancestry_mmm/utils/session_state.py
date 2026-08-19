@@ -83,6 +83,16 @@ def init_session_state():
         "standard_context_data": None,
         "context_variable_metadata": [],
         "source_domain_semantics": [],
+        # REQ-EXPMODE-001: the durable Experiment Evidence workflow. Source
+        # rows ("experiment_evidence_rows") are what the canonical standard
+        # source pack carried; the governed registry ("experiment_records" /
+        # "experiment_model_uses" / "experiment_compatibility_assessments")
+        # is what the analyst explicitly adopted. Rows never auto-adopt; the
+        # registry is append-only and survives source replacement.
+        "experiment_evidence_rows": [],
+        "experiment_records": [],
+        "experiment_model_uses": [],
+        "experiment_compatibility_assessments": [],
         # Canonical outcome catalogue plus semantic groups.  Source import
         # drafts live separately so an existing catalogue is never silently
         # overwritten by a newly uploaded workbook.

@@ -482,12 +482,14 @@ def test_diagnostics_wp2_evidence_sections_render_in_browser(
     expect(
         page.get_by_text("No causal graph is configured for this project.", exact=True)
     ).to_be_visible(timeout=30_000)
-    # No experiment-evidence/calibration registry is wired into this project
-    # yet - the section must say so explicitly, not render blank.
+    # No experiment use/calibration comparison is registered for this
+    # imported project - the section must say so explicitly, not render
+    # blank, and never fabricate a pass.
     expect(
         page.get_by_text(
-            "No experiment evidence or calibrated-model comparison is registered.",
-            exact=True,
+            "No experiment uses are registered for the current model, and no "
+            "calibrated-model comparison exists",
+            exact=False,
         )
     ).to_be_visible(timeout=30_000)
 

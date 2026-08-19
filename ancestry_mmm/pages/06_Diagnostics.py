@@ -117,6 +117,20 @@ from ancestry_mmm.core.estimand_identification import (
     EFFECT_TYPE_DIRECT,
     EFFECT_TYPE_TOTAL,
 )
+from ancestry_mmm.application.experiment_service import (
+    build_compatibility_assessment,
+    provenance_for_model,
+    register_model_use,
+)
+from ancestry_mmm.core.experiments import (
+    COMPATIBILITY_DIMENSIONS,
+    EVIDENCE_MODES,
+    EVIDENCE_MODE_LIKELIHOOD_CALIBRATION,
+    EVIDENCE_MODE_PRIOR_CALIBRATION,
+    CompatibilityAssessment,
+    ExperimentRecord,
+    ExperimentToModelUse,
+)
 
 MODEL_TYPE_LABEL = {
     "shared": "Shared response across markets",
@@ -222,6 +236,22 @@ search_objects = [
     for item in (get_state("search_objects") or [])
 ]
 coverage_matrix_dict = get_state("variable_coverage_matrix")
+
+# REQ-EXPMODE-001 (Work Package 2): the governed experiment registry -
+# adopted records, declared model uses and their compatibility assessments.
+# Loaded once here and reused for both the scorecard input and the
+# experiment evidence section below; never two divergent reads.
+experiment_records = [
+    ExperimentRecord.from_dict(item) for item in (get_state("experiment_records") or [])
+]
+experiment_uses = [
+    ExperimentToModelUse.from_dict(item)
+    for item in (get_state("experiment_model_uses") or [])
+]
+experiment_assessments = [
+    CompatibilityAssessment.from_dict(item)
+    for item in (get_state("experiment_compatibility_assessments") or [])
+]
 
 # PR 79A (work package B): the current model run's identity is constructed
 # once, here, and reused as this single object for diagnostics, validation
@@ -338,6 +368,22 @@ if st.button("Compute scorecard", type="primary"):
                 "variable_coverage_matrix_built_against_fingerprint"
             ),
             joined_dataframe_fingerprint=fingerprint_dataframe(frame["df"]),
+            # REQ-EXPMODE-001 (Work Package 2): populate the schema-v8
+            # experiment section from the real saved project registry - one
+            # provenance report per model identity, per experiment, never
+            # averaged. None when the current model has no registered uses,
+            # so the section stays explicitly not_applicable rather than a
+            # fabricated empty report.
+            experiment_provenance_report=(
+                provenance_for_model(
+                    experiment_records,
+                    experiment_uses,
+                    model_id=current_model_identity.model_run_id,
+                    model_version=current_model_identity.model_spec_fingerprint,
+                )
+                if current_model_identity is not None
+                else None
+            ),
         )
         diag_result = diag_service.evaluate(diag_input)
         scorecard = diag_result.scorecard
@@ -1928,11 +1974,138 @@ st.caption(
     "uncalibrated model comparison (REQ-CALIB-001), kept as two separate, "
     "individually attributed evidence groups - never averaged into one "
     "score, and never used to silently override this model's fitted "
-    "estimates. This project has no durable experiment-evidence registry "
-    "or calibration mechanism wired in yet, so this section stays "
-    "not_applicable until that governed workflow exists."
+    "estimates. Provenance below comes from the governed experiment "
+    "registry (adopted on the Data Sources page); declaring a use here "
+    "records evidence mode and target identity only - no calibration "
+    "method runs in this application, so the calibrated-vs-uncalibrated "
+    "comparison stays empty until an approved calibration mechanism "
+    "exists."
 )
 ec_section = diag_artefact.experiment_calibration if diag_artefact else None
+
+# Live staleness: the registry is the source of truth for this section.
+# If it changed after the scorecard was computed, the stored provenance no
+# longer matches the current registry - shown explicitly, never silently
+# presented as current evidence.
+_live_provenance = None
+if current_model_identity is not None:
+    _live_provenance = provenance_for_model(
+        experiment_records,
+        experiment_uses,
+        model_id=current_model_identity.model_run_id,
+        model_version=current_model_identity.model_spec_fingerprint,
+    )
+if (
+    ec_section is not None
+    and ec_section.status == "computed"
+    and ec_section.payload.get("experiments") is not None
+):
+    _stored = ec_section.payload["experiments"]
+    _live = _live_provenance.to_dict() if _live_provenance is not None else None
+    if _live is None or _live != _stored:
+        st.info(
+            "The experiment registry has changed since this scorecard was "
+            "computed - recompute the scorecard to refresh this evidence."
+        )
+
+if experiment_records and current_model_identity is not None:
+    st.markdown("**Declare an experiment use against the current model**")
+    with st.form("exp_use_form"):
+        _use_c1, _use_c2 = st.columns(2)
+        _use_selected = _use_c1.selectbox(
+            "Experiment",
+            options=[
+                f"{rec.experiment_id} (v{rec.experiment_version})"
+                for rec in experiment_records
+            ],
+            key="exp_use_select",
+        )
+        _use_mode = _use_c2.selectbox(
+            "Evidence mode", list(EVIDENCE_MODES), key="exp_use_mode"
+        )
+        _use_handling = st.text_input(
+            "Dependence handling method (required when one experiment "
+            "informs this model through two different calibrating modes)",
+            key="exp_use_handling",
+        )
+        _use_prior_name = None
+        _use_prior_version = None
+        _use_lik_name = None
+        _use_lik_version = None
+        _use_compat = None
+        if _use_mode == EVIDENCE_MODE_PRIOR_CALIBRATION:
+            _p1, _p2 = st.columns(2)
+            _use_prior_name = _p1.text_input(
+                "Affected prior name", key="exp_use_prior_name"
+            )
+            _use_prior_version = _p2.text_input(
+                "Affected prior version", key="exp_use_prior_version"
+            )
+        if _use_mode == EVIDENCE_MODE_LIKELIHOOD_CALIBRATION:
+            _l1, _l2 = st.columns(2)
+            _use_lik_name = _l1.text_input(
+                "Affected likelihood term name", key="exp_use_lik_name"
+            )
+            _use_lik_version = _l2.text_input(
+                "Affected likelihood term version", key="exp_use_lik_version"
+            )
+        if _use_mode in (
+            EVIDENCE_MODE_PRIOR_CALIBRATION,
+            EVIDENCE_MODE_LIKELIHOOD_CALIBRATION,
+        ):
+            st.caption(
+                "Calibrating uses require a compatibility review across "
+                "all nine governed dimensions - your review, never an "
+                "automatic verdict."
+            )
+            _dimension_results = {}
+            for dimension in COMPATIBILITY_DIMENSIONS:
+                _dimension_results[dimension] = st.checkbox(
+                    f"Compatible: {dimension}", key=f"exp_use_dim_{dimension}"
+                )
+            _use_compat = build_compatibility_assessment(
+                experiment_id=_use_selected.split(" (")[0],
+                dimension_results=_dimension_results,
+            )
+        _use_submitted = st.form_submit_button("Declare use")
+    if _use_submitted:
+        _selected_exp_id = _use_selected.split(" (")[0]
+        _selected_exp_version = int(_use_selected.split("(v")[1].rstrip(")"))
+        try:
+            set_state(
+                "experiment_model_uses",
+                [
+                    use.to_dict()
+                    for use in register_model_use(
+                        experiment_records,
+                        experiment_uses,
+                        experiment_id=_selected_exp_id,
+                        experiment_version=_selected_exp_version,
+                        evidence_mode=_use_mode,
+                        model_id=current_model_identity.model_run_id,
+                        model_version=current_model_identity.model_spec_fingerprint,
+                        compatibility=_use_compat,
+                        affected_prior_name=_use_prior_name,
+                        affected_prior_version=_use_prior_version,
+                        affected_likelihood_term_name=_use_lik_name,
+                        affected_likelihood_term_version=_use_lik_version,
+                        dependence_handling_method=_use_handling or None,
+                    )
+                ],
+            )
+            st.success(
+                f"Use registered: {_selected_exp_id} v{_selected_exp_version} "
+                f"({_use_mode}) against the current model. Recompute the "
+                "scorecard to refresh provenance."
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+elif experiment_records and current_model_identity is None:
+    st.caption(
+        "Experiments are registered, but no trained model exists yet - "
+        "fit a model before declaring an experiment use against it."
+    )
+
 if ec_section is not None and ec_section.status == "computed":
     if ec_section.payload["experiments"] is not None:
         st.markdown("**Experiment provenance**")
@@ -1949,6 +2122,10 @@ if ec_section is not None and ec_section.status == "computed":
             cal_df, width="stretch", column_config=dataframe_column_config(cal_df)
         )
 elif ec_section is not None and ec_section.status in ("not_applicable", "not_computed"):
-    st.info("No experiment evidence or calibrated-model comparison is registered.")
+    st.info(
+        "No experiment uses are registered for the current model, and no "
+        "calibrated-model comparison exists (no calibration mechanism is "
+        "implemented in this application)."
+    )
 
 render_next_step("diagnostics")

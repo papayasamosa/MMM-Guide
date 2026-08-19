@@ -353,15 +353,34 @@ The current implementation includes:
   (`graphical_identification`, always carrying its disclaimer),
   latent-state identification (`latent_state_identification`,
   fail-closed, never a fabricated pass), and the experiment/calibration
-  provenance display slots (`experiment_calibration` - display slots
-  only: no experiment adoption/persistence workflow and no calibration
-  mechanism exist yet, and the page says so explicitly). The compiler
+  provenance display slots (`experiment_calibration`). The compiler
   blocking-error extensions reserved by `REQ-IDENT-001` Requirement 5 and
   `REQ-LATENT-001` Requirement 3 remain open, as do Candidate A's
-  identifying anchor (`MD-021`), the durable Experiment Evidence
-  workflow, and the calibration statistical mechanism - all recorded in
+  identifying anchor (`MD-021`) and the calibration statistical
+  mechanism - all recorded in
   `docs/approved_requirements/` and `docs/decision_log.md`, not silently
   reclassified as implemented.
+- Durable Experiment Evidence adoption (Work Package 2 of
+  `Media-Mix-Lab: Coding LLM Next Steps After PR #291`,
+  `application/experiment_service.py`, `core/persistence.py`,
+  `pages/01_Data_Upload.py`, `pages/06_Diagnostics.py`): uploaded
+  evidence rows now flow through an explicit analyst-reviewed adoption
+  boundary into the governed registry - a row never auto-adopts, missing
+  required fields fail closed, the registry is immutable (edits are new
+  versions, never mutations), calibrating uses require a fully
+  compatible caller-evidenced assessment plus explicit affected
+  prior/likelihood identity, and a new use that would create a
+  double-counted dependence fails closed without an explicit
+  dependence-handling method. The registry persists through the project
+  bundle (`config/experiments.json` under
+  `EXPERIMENT_REGISTRY_SCHEMA_VERSION`, malformed records/orphaned
+  uses/unrecognised future schema versions quarantined on import) and
+  now populates the schema-v8 `experiment_calibration` Diagnostics
+  section from the real saved registry - per experiment, never averaged,
+  with a live staleness note when the registry changed after scorecard
+  computation. No calibration mechanism exists or is implied; the
+  calibrated-vs-uncalibrated comparison half of the Diagnostics section
+  remains empty, and no model-fitting module reads the registry.
 
 ## Known bounded gaps
 

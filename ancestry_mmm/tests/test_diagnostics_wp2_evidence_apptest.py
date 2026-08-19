@@ -213,7 +213,61 @@ def test_scorecard_reports_not_applicable_latent_state_and_experiment_sections()
     assert artefact.experiment_calibration.status == "not_applicable"
     text = _all_markdown_text(at)
     assert "No latent causal states are declared or fitted" in text
-    assert "No experiment evidence or calibrated-model comparison" in text
+    assert "No experiment uses are registered for the current model" in text
+
+
+def test_scorecard_renders_registered_experiment_provenance(monkeypatch):
+    """REQ-EXPMODE-001 (Work Package 2): when the governed registry has a
+    use against the current model, the schema-v8 experiment section must be
+    computed from the real provenance report - per experiment, never
+    averaged - and rendered as its own table."""
+    from ancestry_mmm.core.experiments import (
+        ExperimentProvenanceEntry,
+        ExperimentProvenanceReport,
+    )
+
+    canned = ExperimentProvenanceReport(
+        model_id="run-test-wp2-1",
+        model_version="spec-fp",
+        entries=(
+            ExperimentProvenanceEntry(
+                experiment_id="exp-geo-1",
+                experiment_version=1,
+                evidence_mode="validation_only",
+                estimand="incremental GSA acquisitions",
+                observed_effect_estimate=0.12,
+                effect_uncertainty=0.04,
+            ),
+        ),
+    )
+    seen: dict = {}
+
+    def fake_provenance(records, uses, *, model_id, model_version):
+        seen["model_id"] = model_id
+        seen["model_version"] = model_version
+        return canned
+
+    monkeypatch.setattr(
+        "ancestry_mmm.application.experiment_service.provenance_for_model",
+        fake_provenance,
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    at.run()
+
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    assert not at.exception, f"page raised after computing scorecard: {at.exception}"
+
+    artefact = at.session_state["diagnostics_artefact"]
+    assert artefact.experiment_calibration.status == "computed"
+    entries = artefact.experiment_calibration.payload["experiments"]["entries"]
+    assert entries[0]["experiment_id"] == "exp-geo-1"
+    assert entries[0]["estimand"] == "incremental GSA acquisitions"
+    assert seen["model_id"] == "run-test-wp2-1"
+    text = _all_markdown_text(at)
+    assert "Experiment provenance" in text
 
 
 def test_historical_validation_button_records_a_failed_section_without_crashing():
