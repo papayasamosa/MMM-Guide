@@ -472,9 +472,7 @@ def test_diagnostics_wp2_evidence_sections_render_in_browser(
     # the stronger fold-local path when source tables exist, the weaker
     # coverage-metadata-only tier otherwise - never silently.
     expect(
-        page.get_by_text(
-            "automatically uses the stronger reconstruction", exact=False
-        )
+        page.get_by_text("automatically uses the stronger reconstruction", exact=False)
     ).to_be_visible(timeout=30_000)
     expect(
         page.get_by_text("never presented as the deeper reconstruction", exact=False)
