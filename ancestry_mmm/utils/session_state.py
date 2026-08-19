@@ -93,6 +93,14 @@ def init_session_state():
         "experiment_records": [],
         "experiment_model_uses": [],
         "experiment_compatibility_assessments": [],
+        # REQ-EVENT-001: the governed named-event registry. Occurrences are
+        # adopted explicitly from uploaded Context `events` rows; families
+        # and response definitions are governed registrations. All three
+        # are append-only versioned history and survive source replacement
+        # (same category as the experiment registry above).
+        "named_event_families": [],
+        "named_event_occurrences": [],
+        "named_event_response_definitions": [],
         # Canonical outcome catalogue plus semantic groups.  Source import
         # drafts live separately so an existing catalogue is never silently
         # overwritten by a newly uploaded workbook.
