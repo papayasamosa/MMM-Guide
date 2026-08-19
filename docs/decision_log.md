@@ -6949,3 +6949,35 @@ changed.
 **Owner:** Platform engineering (CI/merge tooling).
 **Status:** Implemented.
 
+
+---
+
+**Date:** 2026-08-19
+**Decision:** Record the Work Package 3 identification/latent-state use-boundary
+determination in `docs/wp3_identification_use_boundary_decision_package.md` and keep
+compiler-gating deferred. No compiler-level blocking for adjustment-set incompatibility
+(`REQ-IDENT-001` Requirement 5) and no compiler-level rejection of unanchored latent
+structures (`REQ-LATENT-001` Requirement 3) is implemented, because (a) compilation has no
+adjustment-set surface today - `assess_backdoor_identification` is diagnostics-only - so
+Requirement 5 has nothing mechanical to fire on until VL-026 decides when graph checks are
+mandatory and which official requests carry adjustment-based estimands; and (b) the only
+fitted latent state is Candidate A, whose MD-021 anchor is unresolved, so applying
+Requirement 3 would block the Candidate A implementation-and-validation scope REQ-SEARCH-002
+actually approved. The fail-closed boundaries that already exist (Candidate A replay
+boundary; `is_eligible_for_official_use`; separate Diagnostics dimensions with disclaimers)
+remain unchanged.
+**Reason:** WP3's own brief restricts implementation to what is unambiguously approved;
+VL-026, MD-021 and UX-028 are decision-required and excluded from the records' approvals.
+Implementing the gates would require guessing those decisions.
+**Alternatives considered:** Wiring a new `require_graph_compatible_adjustment` guard that no
+official artefact calls yet (rejected - dead speculative code with no authorised "when
+mandatory"); applying Requirement 3 to Candidate A now (rejected - blocks the approved
+implementation/validation scope and needs the anchor it would check); auto-selecting
+Candidate A's anchor from prior-scale parameters (rejected - prior regularisation is not
+identification, per REQ-LATENT-001 Requirement 2).
+**Impact:** New `docs/wp3_identification_use_boundary_decision_package.md` (determination +
+candidate integration points, no candidate selected) and
+`ancestry_mmm/tests/test_identification_use_boundary_package.py` (anti-drift conformance
+guards). No production `core`/`application`/`pages` code changed.
+**Owner:** Marketing Data Science (identification policy; MD-021/VL-026 decision owners).
+**Status:** Decision package recorded; compiler-gating blocked pending VL-026/MD-021.
