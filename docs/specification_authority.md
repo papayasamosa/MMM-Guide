@@ -432,7 +432,14 @@ narrower capability boundary documented in its own record:
   section, populated by `DiagnosticsService.
   run_historical_and_structural_validation_check()` from one fold-refit
   run, rendered as a "Historical validation & structural stability" page
-  action. Documented boundary: the repository retains no durable
+  action. The page routes to the deeper from-sources path automatically
+  when the project has its raw source tables and outcome definitions, and
+  otherwise runs the shallower coverage-metadata-only path with that
+  weaker tier recorded in the `historical_validation` payload (closed
+  `RECONSTRUCTION_TIER_*` vocabulary, part of the artefact fingerprint;
+  reload restores the weaker tier for pre-tier artefacts) and labelled
+  explicitly in the UI — never presented as the deeper reconstruction.
+  Documented boundary: the repository retains no durable
   historical-vintage byte store — a fold whose pinned `SourceVersion` was
   uploaded after its cutoff resolves `cannot_verify` and is never fit,
   and is never silently rebuilt from today's revision.

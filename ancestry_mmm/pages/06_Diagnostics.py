@@ -1,5 +1,6 @@
 """Page 6: model scorecard - convergence, in-sample fit, posterior predictive coverage, plausibility flags, out-of-sample backtest."""
 
+import json
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -104,7 +105,14 @@ from ancestry_mmm.core.market_specific_predict import (
     predict_mu_market_specific,
 )
 from ancestry_mmm.data import prepare_fh_modeling_frame
-from ancestry_mmm.application.fold_refit_service import run_leakage_safe_fold_refit
+from ancestry_mmm.application.fold_refit_service import (
+    run_leakage_safe_fold_refit,
+    run_leakage_safe_fold_refit_from_sources,
+)
+from ancestry_mmm.core.validation_folds import (
+    RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY,
+    RECONSTRUCTION_TIER_SOURCE_VERSION_AWARE_FOLD_LOCAL,
+)
 from ancestry_mmm.core.estimand_identification import (
     EFFECT_TYPE_DIRECT,
     EFFECT_TYPE_TOTAL,
@@ -1573,16 +1581,20 @@ st.caption(
     "only fit at all if it first clears a per-variable reconstruction "
     "assessment against the current variable coverage matrix (effective "
     "periods, publication lag, definition breaks) - a fold that cannot be "
-    "proven leakage-safe is skipped, never silently fit anyway. This check "
-    "uses the coverage matrix's own recorded metadata, not a full per-source-"
-    "version cross-check (that deeper check is available to a caller that "
-    "supplies registered source-version upload events - not wired into this "
-    "page). Structural stability (REQ-STAB-001) compares decision-driving "
-    "parameters (adstock decay, saturation, response coefficients, ...) "
-    "across every fold that was actually fit - reporting each parameter's "
-    "plain numeric range across folds, never a stability verdict or "
-    "threshold. Both sections come from exactly one fit per fold - never two "
-    "divergent fits for the same fold."
+    "proven leakage-safe is skipped, never silently fit anyway. When this "
+    "project has its raw source tables and outcome definitions, the run "
+    "automatically uses the stronger reconstruction: each fold's official "
+    "preparation is rebuilt fold-locally from the raw sources, governed to "
+    "that fold's own information cutoff, with registered source-version "
+    "upload-event cross-checks where available. When those inputs are not "
+    "available, the run uses the coverage-matrix's own recorded metadata "
+    "only - clearly labelled as such below, never presented as the deeper "
+    "reconstruction. Structural stability (REQ-STAB-001) compares "
+    "decision-driving parameters (adstock decay, saturation, response "
+    "coefficients, ...) across every fold that was actually fit - "
+    "reporting each parameter's plain numeric range across folds, never a "
+    "stability verdict or threshold. Both sections come from exactly one "
+    "fit per fold - never two divergent fits for the same fold."
 )
 hv_c1, hv_c2, hv_c3 = st.columns(3)
 hv_n_folds = hv_c1.number_input(
@@ -1620,23 +1632,64 @@ if st.button("Run historical validation & structural stability"):
         hv_spec = ModelSpec.from_dict(get_state("model_spec"))
         hv_df = get_state("transformed_data")
         hv_coverage_matrix = VariableCoverageMatrix.from_dict(coverage_matrix_dict)
+        hv_raw_sources = get_state("raw_sources") or {}
+        hv_outcome_definitions = get_state("outcome_definitions") or []
+        # Strongest available reconstruction, never silently downgraded:
+        # raw source tables + outcome definitions let each fold rebuild its
+        # official preparation fold-locally from the raw sources, governed
+        # to that fold's own information cutoff. Without them, only the
+        # coverage matrix's recorded metadata can be assessed - an
+        # explicitly weaker tier, labelled as such in the evidence below.
+        hv_use_deep = bool(hv_raw_sources) and bool(hv_outcome_definitions)
         try:
-            with st.spinner(
-                f"Running {hv_n_folds}-fold leakage-safe refit "
-                "(this refits the real model per accepted fold)..."
-            ):
-                fold_refit_result = run_leakage_safe_fold_refit(
-                    hv_df,
-                    hv_spec,
-                    hv_coverage_matrix,
-                    model_type=model_type,
-                    n_folds=int(hv_n_folds),
-                    min_train_frac=hv_min_train_frac,
-                    dna_lag_weeks=get_state("dna_lag_weeks", 4),
-                    prior_config=get_state("prior_config"),
-                    draws=int(hv_draws),
-                    tune=int(hv_draws),
-                )
+            if hv_use_deep:
+                hv_calendar = get_state("canonical_calendar") or {}
+                with st.spinner(
+                    f"Running {hv_n_folds}-fold source-version-aware "
+                    "fold-local refit (this rebuilds each fold's official "
+                    "preparation from the raw source tables and refits the "
+                    "real model per accepted fold)..."
+                ):
+                    fold_refit_result = run_leakage_safe_fold_refit_from_sources(
+                        hv_raw_sources,
+                        hv_spec,
+                        hv_coverage_matrix,
+                        hv_outcome_definitions,
+                        governed_frequency=str(
+                            hv_calendar.get("frequency") or "weekly"
+                        ).lower(),
+                        source_versions=get_state("source_versions") or [],
+                        activity_definitions=get_state("activity_definitions") or [],
+                        search_objects=get_state("search_objects") or [],
+                        pipeline_steps=get_state("pipeline_steps") or [],
+                        model_type=model_type,
+                        n_folds=int(hv_n_folds),
+                        min_train_frac=hv_min_train_frac,
+                        dna_lag_weeks=get_state("dna_lag_weeks", 4),
+                        prior_config=get_state("prior_config"),
+                        draws=int(hv_draws),
+                        tune=int(hv_draws),
+                    )
+            else:
+                with st.spinner(
+                    f"Running {hv_n_folds}-fold leakage-safe refit from the "
+                    "coverage matrix's recorded metadata (raw source tables "
+                    "are not available, so each fold's official preparation "
+                    "is not rebuilt fold-locally; this refits the real model "
+                    "per accepted fold)..."
+                ):
+                    fold_refit_result = run_leakage_safe_fold_refit(
+                        hv_df,
+                        hv_spec,
+                        hv_coverage_matrix,
+                        model_type=model_type,
+                        n_folds=int(hv_n_folds),
+                        min_train_frac=hv_min_train_frac,
+                        dna_lag_weeks=get_state("dna_lag_weeks", 4),
+                        prior_config=get_state("prior_config"),
+                        draws=int(hv_draws),
+                        tune=int(hv_draws),
+                    )
         except Exception as e:
             # Fold construction/assessment failed before any fit could even
             # be attempted (e.g. no transformed_data available yet) -
@@ -1644,9 +1697,14 @@ if st.button("Run historical validation & structural stability"):
             # sampling failure above, rather than a page-only ephemeral
             # message, so this outcome is itself canonical evidence and
             # consistently invalidates governance evidence.
+            failed_path = (
+                "source-version-aware fold-local"
+                if hv_use_deep
+                else "coverage-metadata-only"
+            )
             updated_artefact = DiagnosticsService().record_historical_and_structural_validation_failure(
                 diag_artefact,
-                f"Could not run the leakage-safe fold refit: {e}",
+                f"Could not run the leakage-safe fold refit ({failed_path} path): {e}",
             )
         else:
             updated_artefact = (
@@ -1656,6 +1714,7 @@ if st.button("Run historical validation & structural stability"):
                     folds=fold_refit_result.folds,
                     assessments=fold_refit_result.assessments,
                     snapshots=fold_refit_result.snapshots,
+                    reconstruction_tier=fold_refit_result.reconstruction_tier,
                 )
             )
         set_state("diagnostics_artefact", updated_artefact)
@@ -1680,6 +1739,28 @@ if hv_section is not None and hv_section.status == "computed":
         f"Folds assessed: {hv_section.payload['n_folds_assessed']} | "
         f"Leakage-safe: {hv_section.payload['n_folds_leakage_safe']}"
     )
+    hv_tier = hv_section.payload.get("reconstruction_tier")
+    if hv_tier == RECONSTRUCTION_TIER_SOURCE_VERSION_AWARE_FOLD_LOCAL:
+        st.caption(
+            "Evidence source: source-version-aware fold-local reconstruction "
+            "- each fold's official preparation was rebuilt from the raw "
+            "source tables, governed to that fold's own information cutoff."
+        )
+    elif hv_tier == RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY:
+        st.caption(
+            "Evidence source: coverage-metadata-only assessment - the raw "
+            "source tables were not available, so each fold's official "
+            "preparation was NOT rebuilt fold-locally from sources; this "
+            "run assessed the coverage matrix's recorded metadata only. It "
+            "is not equivalent to the deeper source-version-aware "
+            "reconstruction."
+        )
+    else:
+        st.caption(
+            f"Evidence source: unrecognised reconstruction tier "
+            f"{hv_tier!r} recorded in this artefact - review the artefact "
+            "provenance before treating this evidence as current."
+        )
     with st.expander("Fold reconstruction assessments"):
         for assessment in hv_section.payload["assessments"]:
             st.markdown(
@@ -1703,7 +1784,15 @@ if ss_section is not None and ss_section.status == "computed":
         {
             "parameter_name": p["parameter_name"],
             "point_range": p["point_range"],
-            "fold_point_values": p["fold_point_values"],
+            # st.dataframe's Arrow serialiser cannot convert a list/dict-
+            # valued object column (pyarrow ArrowTypeError) - render the
+            # per-fold point values as a compact JSON string instead,
+            # losing no content.
+            "fold_point_values": (
+                json.dumps(p["fold_point_values"])
+                if isinstance(p["fold_point_values"], (dict, list))
+                else p["fold_point_values"]
+            ),
         }
         for p in ss_section.payload["per_parameter"]
     ]

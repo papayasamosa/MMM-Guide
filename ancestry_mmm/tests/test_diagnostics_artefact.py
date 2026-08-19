@@ -2613,6 +2613,118 @@ class TestRunHistoricalAndStructuralValidationCheck:
         assert round_tripped.historical_validation.status == "computed"
         assert round_tripped.fingerprint() == updated.fingerprint()
 
+    def test_reconstruction_tier_is_recorded_and_changes_the_fingerprint(self):
+        """The evidence-source tier must be stored in the
+        `historical_validation` payload and therefore enter the artefact
+        fingerprint - the same evidence can never be re-labelled a
+        different tier without changing its identity."""
+        from ancestry_mmm.core.validation_folds import (
+            RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY,
+            RECONSTRUCTION_TIER_SOURCE_VERSION_AWARE_FOLD_LOCAL,
+        )
+
+        fold = self._fold("fold-1")
+        common = dict(
+            results_df=pd.DataFrame(
+                [{"fold_id": "fold-1", "leakage_safe": True, "skipped_reason": None}]
+            ),
+            folds=(fold,),
+            assessments=(self._safe_assessment("fold-1"),),
+            snapshots=(self._snapshot("fold-1", 100.0),),
+        )
+        deep = DiagnosticsService().run_historical_and_structural_validation_check(
+            DiagnosticsArtefact(),
+            reconstruction_tier=RECONSTRUCTION_TIER_SOURCE_VERSION_AWARE_FOLD_LOCAL,
+            **common,
+        )
+        shallow = DiagnosticsService().run_historical_and_structural_validation_check(
+            DiagnosticsArtefact(),
+            reconstruction_tier=RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY,
+            **common,
+        )
+        assert (
+            deep.historical_validation.payload["reconstruction_tier"]
+            == RECONSTRUCTION_TIER_SOURCE_VERSION_AWARE_FOLD_LOCAL
+        )
+        assert (
+            shallow.historical_validation.payload["reconstruction_tier"]
+            == RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY
+        )
+        assert deep.fingerprint() != shallow.fingerprint()
+
+    def test_unknown_reconstruction_tier_fails_closed(self):
+        """An unrecognised tier value is a programming error - it must be
+        rejected, never silently recorded as provenance."""
+        fold = self._fold("fold-1")
+        with pytest.raises(ValueError, match="Unknown reconstruction_tier"):
+            DiagnosticsService().run_historical_and_structural_validation_check(
+                DiagnosticsArtefact(),
+                results_df=pd.DataFrame(
+                    [
+                        {
+                            "fold_id": "fold-1",
+                            "leakage_safe": True,
+                            "skipped_reason": None,
+                        }
+                    ]
+                ),
+                folds=(fold,),
+                assessments=(self._safe_assessment("fold-1"),),
+                snapshots=(self._snapshot("fold-1", 100.0),),
+                reconstruction_tier="fancy_new_tier",
+            )
+
+    def test_reload_never_upgrades_a_missing_tier_to_the_stronger_one(self):
+        """The service default stamps the weaker tier; a stored artefact
+        that predates the tier contract (no `reconstruction_tier` key at
+        all) must be restored with the *weaker* coverage-metadata-only
+        tier on reload - never a stronger one - while an explicitly stored
+        stronger tier round-trips unchanged."""
+        from ancestry_mmm.core.validation_folds import (
+            RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY,
+            RECONSTRUCTION_TIER_SOURCE_VERSION_AWARE_FOLD_LOCAL,
+        )
+
+        fold = self._fold("fold-1")
+        common = dict(
+            results_df=pd.DataFrame(
+                [{"fold_id": "fold-1", "leakage_safe": True, "skipped_reason": None}]
+            ),
+            folds=(fold,),
+            assessments=(self._safe_assessment("fold-1"),),
+            snapshots=(self._snapshot("fold-1", 100.0),),
+        )
+        # Default (omitted) tier is the weaker one - never the stronger.
+        defaulted = DiagnosticsService().run_historical_and_structural_validation_check(
+            DiagnosticsArtefact(), **common
+        )
+        assert (
+            defaulted.historical_validation.payload["reconstruction_tier"]
+            == RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY
+        )
+
+        # A pre-contract persisted artefact carries no key at all: strip it
+        # exactly as it would have been stored, and reload must restore the
+        # weaker tier, not drop it and not upgrade it.
+        stored = defaulted.to_dict()
+        del stored["historical_validation"]["payload"]["reconstruction_tier"]
+        reloaded = DiagnosticsArtefact.from_dict(stored)
+        assert (
+            reloaded.historical_validation.payload["reconstruction_tier"]
+            == RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY
+        )
+
+        deep = DiagnosticsService().run_historical_and_structural_validation_check(
+            DiagnosticsArtefact(),
+            reconstruction_tier=RECONSTRUCTION_TIER_SOURCE_VERSION_AWARE_FOLD_LOCAL,
+            **common,
+        )
+        deep_reloaded = DiagnosticsArtefact.from_dict(deep.to_dict())
+        assert (
+            deep_reloaded.historical_validation.payload["reconstruction_tier"]
+            == RECONSTRUCTION_TIER_SOURCE_VERSION_AWARE_FOLD_LOCAL
+        )
+
 
 class TestSchemaV8StalenessAndReadiness:
     """REQ-VAL-001's existing `diagnostic_artefact_fingerprint` staleness

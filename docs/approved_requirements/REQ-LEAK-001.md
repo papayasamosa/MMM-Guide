@@ -130,6 +130,30 @@ shown, never only the folds that were fit. A fold rejected by assessment
 is still `computed` evidence (zero folds cleared is itself a genuine
 result), never silently reported as `not_computed`.
 
+Strongest-available reconstruction routing now complete (Work Package 1 of
+`Media-Mix-Lab: Coding LLM Next Steps After PR #291`, 2026-08-19): the
+Diagnostics page routes its historical/structural action through
+`run_leakage_safe_fold_refit_from_sources` automatically when the project
+has its raw source tables and outcome definitions (each fold's official
+preparation rebuilt fold-locally from the raw sources, governed to that
+fold's own information cutoff, with registered `SourceVersion` upload-event
+cross-checks supplied whenever the project has them). When those inputs
+are not available, the page may still run the shallower
+`run_leakage_safe_fold_refit` (coverage-matrix metadata only), but that
+run is never presented as the deeper reconstruction: a closed evidence-tier
+vocabulary (`core.validation_folds.RECONSTRUCTION_TIER_*`:
+`source_version_aware_fold_local` / `coverage_metadata_only`) is recorded
+in the `historical_validation` payload — so the tier is part of the
+artefact fingerprint — and rendered explicitly in the UI, including what
+was and was not reconstructed. The tier default is the weaker
+`coverage_metadata_only`, and `DiagnosticsArtefact.from_dict` restores
+that weaker tier for stored artefacts predating the tier contract: reload
+can never upgrade weaker historical evidence into stronger. Per-fold
+`cannot_verify` semantics (including a pinned `SourceVersion` uploaded
+after the fold's cutoff) are unchanged. No historical-vintage byte store
+is introduced or implied by this routing — see the from-sources scope
+boundary above.
+
 ## Requirement
 
 ### 1. Fold as a first-class versioned object
