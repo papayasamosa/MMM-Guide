@@ -175,13 +175,19 @@ Part 4 v1.6, Part 6 v1.8, Part 7 v1.7, Part 10 v1.8, and Part 11 v1.7 each
 reference a further **Part 5 v1.6** ("canonical entities, physical and
 logical source contracts, mapping artefacts, persistence semantics and
 lineage") that was not supplied in the local PRD traceability set
-reconciled by this work package — only Part 5 v1.4 is present locally.
+reconciled by this work package.
 This reconciliation does not infer Part 5 v1.6's content, does not
-promote the present Part 5 v1.4 file to v1.6, and does not claim the
+promote any present Part 5 file to v1.6, and does not claim the
 local PRD set is fully self-contained. Where Part 5 v1.6 content would
 have been needed to reconcile an invariant, that invariant remains
 unreconciled pending the missing source, rather than being approved from
 inference.
+
+(A later reconciliation pass — the governed named-event overlay
+recorded below, 2026-08-19 — supplied **Part 5 v1.5** (`Focused v1.5
+update: governed named-event occurrence and temporal-response data
+contracts`). Part 5 v1.6 remains absent, and this document does not
+claim Part 5 v1.6 now exists.)
 
 (An earlier reconciliation pass within this same work package additionally
 found Part 3 v1.9 and Part 11 v1.7 referenced-but-absent against an
@@ -189,6 +195,89 @@ earlier local PRD snapshot; a subsequent local PRD refresh, reviewed
 before this record was finalised, supplied Part 3 v1.10 — cumulatively
 retaining its own v1.9 content — and Part 11 v1.7 Final, resolving both of
 those specific gaps. Only the Part 5 v1.6 gap remains open.)
+
+## Version history: focused governed named-event overlay
+
+Work Package 0 of `Media-Mix-Lab: Coding LLM Next Steps Post PR #297`
+(2026-08-19) reconciled a newer local PRD traceability set covering
+governed named-event occurrence/family data contracts, governed
+anticipatory named-event response, named-event validation, future
+named-event scenario replay, named-event UX, and named-event
+service/API contracts. This is a **focused overlay**, not a
+full-suite version bump, and it approves no statistical response
+method. The named-event sources preserve the structural-causal
+overlay's Part 10 v1.8 and Part 11 v1.7 — neither is downgraded or
+erased. Part 9 v1.6 Final (`964EEB444DD4663D`) contains **no
+dedicated named-event reporting contract** — none is assumed or
+invented. Part 1 v1.4 and Part 2 v1.4 are retained unchanged.
+
+| Part | Version | Notes |
+|---|---|---|
+| Part 1 | Retained (v1.4) | Not updated by this overlay |
+| Part 2 | Retained (v1.4) | Not updated by this overlay |
+| Part 3 | v1.11 focused overlay | Cumulative: governed named-event temporal-response functional coherence, retaining v1.10 (PyMC engine), v1.9 (source-input contract) and v1.8 (structural causal) content in the same file — see `REQ-EVENT-001` |
+| Part 4 | Retained (v1.6 Final) | Not updated by this overlay |
+| Part 5 | v1.5 focused overlay | Governed named-event occurrence and temporal-response data contracts, preserving v1.4 — see `REQ-EVENT-001`. Part 5 v1.6 remains absent |
+| Part 6 | v1.9 focused overlay | Governed anticipatory named-event response, preserving v1.8. Statistical form, priors, regularisation, pooling and heterogeneity remain decision-required — see `docs/wp2_named_event_statistical_method_decision_package.md` |
+| Part 7 | v1.8 focused overlay | Governed named-event response validation, preserving v1.7. Validation and planning-eligibility thresholds remain decision-required — see the same package |
+| Part 8 | v1.5 focused overlay (named-event scenario replay) | Governed future named-event scenario replay, preserving v1.4 — see `REQ-EVENT-002`. Distinct focused source from the structural-causal Part 8 v1.5 (`REQ-SCCURVE-001`); see the source-collision note below |
+| Part 9 | Retained (v1.6 Final) | Not updated by this overlay; contains no dedicated named-event reporting contract |
+| Part 10 | v1.6 focused overlay (named-event UX) | Governed named-event configuration and scenario replay UX, preserving v1.5 — does not downgrade or erase the structural-causal Part 10 v1.8 |
+| Part 11 | v1.6 focused overlay (named-event service/API contracts) | Governed named-event service and API contracts, preserving v1.5 — does not downgrade or erase the structural-causal Part 11 v1.7 |
+
+Do not treat this table as evidence that Parts 1, 2, 4, or 9 moved, or
+that any Part 10 v1.8 / Part 11 v1.7 content was replaced.
+`REQ-EVENT-001` and `REQ-EVENT-002` (both
+`docs/approved_requirements/`) translate this overlay's
+implementation-ready data/governance/replay invariants into repository
+authority as target-state contracts with zero implementation;
+`docs/wp2_named_event_statistical_method_decision_package.md` records
+the statistical choices (response structure, kernel/basis family,
+priors, regularisation, pooling, heterogeneity, family-specific
+lead/lag support, validation and planning-eligibility thresholds) that
+remain decision-required.
+
+### Part 8 v1.5 source collision
+
+The label "Part 8 v1.5" now denotes **two distinct focused updates** of
+Part 8, each preserving v1.4 content:
+
+- `Focused v1.5 update: structural intervention curves and bounded
+  causal-engine use` — already reconciled by `REQ-SCCURVE-001` (Work
+  Package 0 of `...Post PR #286`).
+- `Focused v1.5 update: governed named-event scenario replay` —
+  reconciled by `REQ-EVENT-002` (this overlay):
+  `Ancestry_MMM_PRD_Part_8_Coherent_v1_5_Governed_Named_Event_Scenario_Replay.md`,
+  SHA-256 prefix `837858F9BCEF6AF0`.
+
+Same part + same version is not sufficient source identity; the two
+sources are distinguished by focused-update title, filename and content
+hash. Neither supersedes the other, and neither changes Part 8's v1.4
+baseline for the other's topic. Any future citation of "Part 8 v1.5"
+must name the focused-update title.
+
+### Known version-reference gaps
+
+Recorded against the local PRD set reconciled by this overlay
+(2026-08-19); recorded, not resolved, and no missing source content is
+invented:
+
+- **Part 5 v1.6** is still referenced by Part 4 v1.6 and by retained
+  content in Part 6 v1.9, and remains absent (see the structural-causal
+  overlay's gap note above).
+- Part 6 v1.9 retains cross-references to **Part 3 v1.9** and
+  **Part 11 v1.7** from its v1.8 content; Part 3 is now v1.11
+  (cumulative, retaining v1.9), and Part 11 now also has the
+  named-event v1.6 focused update alongside the structural-causal
+  v1.7.
+- Part 7 v1.8 retains cross-references to **Part 3 v1.10** and
+  **Part 11 v1.7**; Part 3 is now v1.11, and Part 11 v1.7 remains
+  valid as the structural-causal overlay.
+- Part 9 v1.6 references **Part 3 v1.9** (now v1.11) and **Part 8
+  v1.5**; the latter reference is now ambiguous under the source
+  collision above.
+- Part 4 v1.6 references **Part 3 v1.9** (now v1.11) and **Part 5
+  v1.6** (absent).
 
 ## Historical status of earlier documents
 
@@ -250,6 +339,8 @@ Each row below is one of two distinct states, not to be conflated:
 | Structural causal posterior intervention effects (`REQ-SCEFFECT-001`) | Requirement exists but capability incomplete | Approved 2026-08-18 (Work Package 0 structural-causal authority reconciliation). Target-state contract only - blocked pending `docs/wp_structural_causal_engine_decision_package.md` and `REQ-SCENGINE-001` (an engine must first satisfy the capability-resolution contract). Zero implementation yet; Candidate A's own direct/mediated/total reconciliation (`REQ-SEARCH-002`) is unaffected and is not superseded by this record. |
 | Causal robustness evidence: DAG falsification, placebo/permutation refutation, unmeasured-confounding sensitivity (`REQ-CAUSALROBUST-001`) | Requirement exists but capability incomplete | Approved 2026-08-18 (Work Package 0 structural-causal authority reconciliation). Target-state evidence contract only - blocked pending `docs/wp_structural_causal_engine_decision_package.md`, which found Part 7 §48 `VL-028`/`VL-029` explicitly reserve the exact test/method/threshold for each of the three dimensions as decision-required. Zero implementation yet; distinct from `REQ-IDENT-001`'s graphical identification and `REQ-LATENT-001`'s latent-state identification, neither of which this record replaces or extends. |
 | Structural intervention curve provenance and planning-eligibility boundary (`REQ-SCCURVE-001`) | Requirement exists but capability incomplete | Approved 2026-08-18 (Work Package 0 structural-causal authority reconciliation). Target-state contract only, extending `REQ-CURVE-001` to a future structural-causal-engine-produced curve - blocked pending `docs/wp_structural_causal_engine_decision_package.md` (planning/optimisation eligibility is explicitly excluded, per Part 10 §47 `UX-033`). Zero implementation yet; no structural intervention curve type exists in `core.canonical_curves`/`core.curve_bank`. |
+| Governed named-event occurrence, family and response-definition data contracts (`REQ-EVENT-001`) | Requirement exists but capability incomplete | Approved 2026-08-19 (Work Package 0 named-event authority reconciliation). Target-state contract only, extending the optional Context `events` table groundwork inside `REQ-DATAIN-001` - no new logical source domain. Zero governed resource set today: only `event_id`/`event_name`/`start_date`/`end_date` exist (`data/templates.py`, `data/source_inventory.py`); no event family, response definition or governed classification. All statistical method choices excluded and tracked by `docs/wp2_named_event_statistical_method_decision_package.md`. |
+| Governed future named-event replay in sequential planning (`REQ-EVENT-002`) | Requirement exists but capability incomplete | Approved 2026-08-19 (Work Package 0 named-event authority reconciliation). Target-state contract only, extending `REQ-STATE-001`/`REQ-SCEN-001`-`004`; the existing weekly sequential simulator remains authoritative. Fixed external calendar dates are non-decision context. Zero implementation. Blocked pending `REQ-EVENT-001`'s resources and the named-event statistical-method decision package. |
 | Experiment translation and recalibration | Requirement exists but capability incomplete | Superseded by `REQ-EXPMODE-001`/`REQ-CALIB-001` below (approved 2026-08-17) — see those rows. |
 | Reporting semantics | No approved requirement/decision yet | No indexed record exists. |
 | Background jobs and service boundaries | No approved requirement/decision yet | No indexed record exists. |

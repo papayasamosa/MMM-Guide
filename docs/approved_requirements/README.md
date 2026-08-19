@@ -53,3 +53,4 @@ Coding agents must not independently interpret or reconcile the external Ancestr
 - `REQ-SCEFFECT-*` — structural causal posterior intervention effects contract
 - `REQ-CAUSALROBUST-*` — causal robustness evidence (DAG falsification, placebo/permutation refutation, unmeasured-confounding sensitivity)
 - `REQ-SCCURVE-*` — structural intervention curve provenance and planning-eligibility boundary
+- `REQ-EVENT-*` — governed named-event occurrence, family, response-definition, and future-replay contracts

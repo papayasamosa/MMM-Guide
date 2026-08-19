@@ -194,10 +194,13 @@ class TestStructuralCausalEngineOverlayReconciled:
         Part 1, 2, or 5 moved to any version introduced by this overlay -
         those three remain retained/unreconciled by this specific overlay."""
         content = AUTHORITY_PATH.read_text()
+        # Bound the overlay section at the next overlay heading: the
+        # named-event overlay (2026-08-19) was added later in the same
+        # document and has its own per-part table.
         overlay_section = content.split(
             "## Version history: focused structural-causal engine integration overlay",
             1,
-        )[1].split("## Historical status of earlier documents", 1)[0]
+        )[1].split("## Version history: focused governed named-event overlay", 1)[0]
         rows = _markdown_table_rows(overlay_section)
         assert rows, "no rows parsed from the structural-causal overlay table"
 
@@ -253,7 +256,7 @@ class TestStructuralCausalEngineOverlayReconciled:
         content = AUTHORITY_PATH.read_text()
         gaps_note_section = content.split("### Known version-reference gaps", 1)[
             1
-        ].split("## Historical status of earlier documents", 1)[0]
+        ].split("## Version history: focused governed named-event overlay", 1)[0]
         assert "Part 5 v1.6" in gaps_note_section
         assert "not supplied" in gaps_note_section
         assert "does not infer Part 5 v1.6" in gaps_note_section
@@ -266,10 +269,12 @@ class TestStructuralCausalEngineOverlayReconciled:
         how the Part 3 v1.6->v1.7 supersession was recorded earlier in the
         same document."""
         content = AUTHORITY_PATH.read_text()
+        # Bound at the next overlay heading so the later named-event
+        # overlay's own table cannot leak into this assertion.
         overlay_section = content.split(
             "## Version history: focused structural-causal engine integration overlay",
             1,
-        )[1].split("## Historical status of earlier documents", 1)[0]
+        )[1].split("## Version history: focused governed named-event overlay", 1)[0]
         assert (
             "supersedes the v1.5 focused Bayesian-validation overlay" in overlay_section
         )

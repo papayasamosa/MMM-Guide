@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "generated_at": "2026-08-17",
+  "generated_at": "2026-08-19",
   "requirements": [
     {
       "requirement_id": "REQ-AUTH-001",
@@ -969,6 +969,48 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
         "ancestry_mmm/tests/test_structural_causal_authority_reconciliation.py::TestStructuralCausalEngineOverlayReconciled::test_req_sccurve_001_indexed_and_classified_incomplete"
+      ]
+    },
+    {
+      "requirement_id": "REQ-EVENT-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-EVENT-001.md",
+      "affected_modules": [
+        "docs/approved_requirements/REQ-EVENT-001.md",
+        "docs/approved_requirements/index.json",
+        "docs/specification_authority.md",
+        "docs/wp2_named_event_statistical_method_decision_package.md"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_named_event_authority_reconciliation.py::TestNamedEventOverlayReconciled::test_req_event_001_indexed_and_classified_incomplete"
+      ]
+    },
+    {
+      "requirement_id": "REQ-EVENT-002",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-EVENT-002.md",
+      "affected_modules": [
+        "docs/approved_requirements/REQ-EVENT-002.md",
+        "docs/approved_requirements/index.json",
+        "docs/specification_authority.md",
+        "docs/wp2_named_event_statistical_method_decision_package.md"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_named_event_authority_reconciliation.py::TestNamedEventOverlayReconciled::test_req_event_002_indexed_and_classified_incomplete"
       ]
     }
   ]
