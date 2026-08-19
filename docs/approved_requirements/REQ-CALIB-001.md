@@ -51,13 +51,29 @@ new limitations are all caller-supplied, structured facts for a human
 reviewer to record — never a judgement this module computes itself,
 mirroring `core.structural_stability`'s established pattern.
 
+A `DiagnosticsArtefact`/Diagnostics-page slot for this record's comparison
+artefact now exists (Work Package 2 of `Media-Mix-Lab: Coding LLM Next
+Steps After PR #286`, canonical Diagnostics evidence integration,
+2026-08-18): schema v8's `experiment_calibration` section carries an
+optional `CalibratedVsUncalibratedComparisonArtefact` payload (this
+record's own `to_dict()`, unchanged) alongside `REQ-EXPMODE-001`'s
+experiment-provenance payload — two clearly separated keys under one
+section, never merged into one score. This is a display slot only: no
+calibration mechanism exists to *produce* a
+`CalibratedVsUncalibratedComparisonArtefact` for a real project yet, so
+this half of the section is always `None`/`not_applicable` today, exactly
+as before this wiring — the requirement's own core contract
+(`assemble_calibration_comparison`) remains untouched and uncoupled from
+any specific statistical mechanism.
+
 Not yet implemented: the material-change criteria that trigger
 mandatory review (Part 7 `VL-025`, Part 9 `RP-023`); any specific
 comparison tolerance or threshold; computing any comparison metric
 itself; and keeping calibrated/uncalibrated versions "separately visible
-and directly comparable" in curves/planning/reports (Requirement 4) — a
-UI/reporting-page requirement deferred alongside Work Package 1/2/3/4's
-own same open item. No calibration statistical mechanism exists or is
+and directly comparable" in curves/planning/reports (Requirement 4) — the
+Diagnostics-page display slot above is a read-only evidence view, not
+this Requirement 4 obligation, which remains a separate curves/planning/
+reports UI item. No calibration statistical mechanism exists or is
 implied — `REQ-EXPMODE-001`'s own deferred decision-support-package
 question remains open.
 
@@ -126,8 +142,14 @@ validation dimensions; and any new limitation introduced.
   yet coupled — `ExperimentAgreementComparison` uses a plain
   `experiment_id` string, not a hard import, to avoid a premature
   dependency)
-- `ancestry_mmm/pages/06_Diagnostics.py` (not yet touched — the
-  calibrated-vs-uncalibrated comparison view is deferred)
+- `ancestry_mmm/application/diagnostics_service.py` (Work Package 2 —
+  `DiagnosticsArtefact` schema v8 `experiment_calibration` section carries
+  an optional `CalibratedVsUncalibratedComparisonArtefact`, computed
+  inline in `evaluate()`; display-slot only, no calibration mechanism)
+- `ancestry_mmm/pages/06_Diagnostics.py` (Work Package 2 — wired, the
+  comparison view is a read-only evidence display, never a curves/
+  planning/reports "separately visible" integration — Requirement 4
+  remains open)
 - `docs/approved_requirements/REQ-CALIB-001.md` (this record)
 - `docs/approved_requirements/index.json` (updated)
 
@@ -141,6 +163,10 @@ validation dimensions; and any new limitation introduced.
   verdict or recommendation; the calibration-event record's identity
   check, closed uncertainty-change vocabulary, `None`-means-
   not-yet-assessed semantics, and full round-trip)
+- `ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateExperimentCalibration`
+  (Work Package 2 — the shared `experiment_calibration` section's
+  not_applicable default and computed-with-evidence path; this record's
+  own comparison-artefact payload uses the identical wiring)
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid`
@@ -151,8 +177,13 @@ validation dimensions; and any new limitation introduced.
 
 ## Migration impact
 
-None to persisted artefacts or model-fitting code — this module is
-additive and standalone, with no UI/reporting-page wiring yet.
+None to `core.calibration_comparison` itself or model-fitting code — this
+module remains additive and standalone. Resolved (Work Package 2):
+`DiagnosticsArtefact` schema v7 → v8 adds a display slot for this
+record's comparison artefact; an artefact computed before schema v8
+upgrades this section to `not_computed` with an explicit "added in schema
+v8" message. Curves/planning/reports Requirement 4 wiring remains
+unimplemented.
 
 ## Unresolved decisions
 

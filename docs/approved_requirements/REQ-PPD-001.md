@@ -47,12 +47,19 @@ observations where both actual and predicted are exactly zero are masked
 out of that draw's sMAPE rather than producing a 0/0 artefact, mirroring
 the existing scalar `_smape` helper's own safeguard.
 
-Not yet wired: `DiagnosticsArtefact`/Diagnostics-page integration —
-deferred to land together with `REQ-STAB-001`'s structural-stability
-evidence in one schema/UI addition (the Diagnostics UI must separate
-predictive quality, predictive stability, structural stability,
-identification and approval readiness as one coherent view, not several
-uncoordinated ones), not built twice.
+`DiagnosticsArtefact`/Diagnostics-page integration now complete (Work
+Package 2, canonical Diagnostics evidence integration, 2026-08-18):
+`ancestry_mmm/application/diagnostics_service.py` schema v8 adds the
+`posterior_predictive_metric_distributions` section, computed inline in
+`DiagnosticsService.evaluate()` for both Model A and Model C from the same
+trace/frame/meta/params already used for `error_metrics` (no extra fit) —
+landed together with `REQ-STAB-001`'s structural-stability evidence and
+`REQ-IDENT-001`/`REQ-LATENT-001`/`REQ-EXPMODE-001`/`REQ-CALIB-001` in one
+coherent schema/UI addition, as originally deferred, not built twice.
+`pages/06_Diagnostics.py` renders the section as its own table, separate
+from every other evidence dimension. An artefact computed before schema v8
+upgrades this section to `not_computed` (never a fabricated payload) — see
+`DiagnosticsArtefact.from_dict`'s v7→v8 migration path.
 
 ## Requirement
 
@@ -119,8 +126,11 @@ uncertainty") for more than one of the three objects in Requirement 1.
   distributions`, `_posterior_predictive_metric_distributions_core`)
 - `ancestry_mmm/core/market_specific_diagnostics.py` (new:
   `posterior_predictive_metric_distributions_market_specific`)
-- `ancestry_mmm/pages/06_Diagnostics.py` (not yet wired — deferred to land
-  with `REQ-STAB-001`)
+- `ancestry_mmm/application/diagnostics_service.py` (Work Package 2 —
+  `DiagnosticsArtefact` schema v8 `posterior_predictive_metric_
+  distributions` section, computed inline in `evaluate()`)
+- `ancestry_mmm/pages/06_Diagnostics.py` (Work Package 2 — wired, rendered
+  as its own table separate from every other evidence dimension)
 - `docs/approved_requirements/REQ-PPD-001.md` (this record)
 - `docs/approved_requirements/index.json` (updated)
 
@@ -132,6 +142,12 @@ uncertainty") for more than one of the three objects in Requirement 1.
   the-metric distinction under noise, credible-interval bounding, and the
   zero-noise-collapses-to-a-point sanity check, for both Model A and
   Model C)
+- `ancestry_mmm/tests/test_diagnostics_artefact.py::TestSchemaV8Migration`
+  and `TestSchemaV8FreshArtefact` (Work Package 2 — migration, round trip,
+  fingerprint coverage for all six new schema-v8 sections)
+- `ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluatePosteriorPredictiveMetricDistributions`
+  (Work Package 2 — Model A and Model C, wired into `evaluate()`)
+- `ancestry_mmm/tests/test_diagnostics_wp2_evidence_apptest.py::test_scorecard_computes_posterior_predictive_metric_distributions`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid`
@@ -142,8 +158,10 @@ uncertainty") for more than one of the three objects in Requirement 1.
 
 ## Migration impact
 
-None yet. `DiagnosticsArtefact` is not yet touched — the additive schema
-bump is deferred to land together with `REQ-STAB-001`.
+Resolved (Work Package 2): `DiagnosticsArtefact` schema v7 → v8. An
+artefact computed before schema v8 upgrades this section to `not_computed`
+with an explicit "added in schema v8" message — never a fabricated
+payload. No change to any other already-computed section.
 
 ## Unresolved decisions
 
@@ -153,9 +171,10 @@ bump is deferred to land together with `REQ-STAB-001`.
   this implementation computes all five for every outcome; the PRD's own
   decision registers, not this record, govern which ones are officially
   required.
-- `DiagnosticsArtefact`/Diagnostics-page schema and UI wiring — deferred
-  to be designed jointly with `REQ-STAB-001`'s structural-stability
-  evidence.
+- `DiagnosticsArtefact`/Diagnostics-page schema and UI wiring — **resolved**
+  (Work Package 2, see Capability status above). The approved threshold/
+  materiality policy questions above remain open; this record's evidence
+  is exposed for human review, not gated by an invented threshold.
 
 ## Owner
 

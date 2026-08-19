@@ -89,12 +89,22 @@ full test list — this record's structural-stability integration test is
 `TestFromSourcesGenuineMultiFoldStructuralStability`, mirroring the
 existing `TestGenuineMultiFoldStructuralStability`).
 
-Still not wired: `DiagnosticsArtefact`/Diagnostics-page integration.
-Unlike `REQ-PPD-001` (which only needs a single existing trace/frame/
-meta/params call and could be wired into `DiagnosticsService.evaluate()`
-today), wiring this record's `DiagnosticsArtefact` section is deferred one
-more step: the schema/UI work is planned jointly with `REQ-PPD-001`'s once
-wiring begins, not because a real re-estimation pipeline is still missing.
+`DiagnosticsArtefact`/Diagnostics-page integration now complete (Work
+Package 2, canonical Diagnostics evidence integration, 2026-08-18):
+schema v8 adds the `structural_stability` section. Unlike `REQ-PPD-001`,
+this evidence requires a real per-fold PyMC re-fit and is therefore not
+computed inline in `evaluate()` — `DiagnosticsService.run_historical_and_
+structural_validation_check()` accepts the folds/assessments/snapshots
+from one `application.fold_refit_service.run_leakage_safe_fold_refit(
+_from_sources)` run (the same call `historical_validation`, REQ-LEAK-001,
+is populated from — never two divergent fits for the same fold) and
+replaces both sections in one pure, immutable update, mirroring
+`run_backtest`'s established pattern. `pages/06_Diagnostics.py` exposes
+this as a "Historical validation & structural stability" action with its
+own draws/folds/min-training-fraction controls, reported as its own
+per-parameter table — never collapsed with predictive-fit or predictive-
+stability evidence, and never a status/verdict/pass/fail field (verified
+by an explicit test).
 
 ## Requirement
 
@@ -179,9 +189,11 @@ closed.
   real-fit producer of `FoldParameterSnapshot` evidence; Work Package 1
   part 2 (new) — `run_leakage_safe_fold_refit_from_sources`, the same
   producer driven by fold-local raw-source reconstruction)
-- `ancestry_mmm/core/diagnostics.py` (not yet touched — `DiagnosticsArtefact`
-  schema extension deferred, see Capability status)
-- `ancestry_mmm/pages/06_Diagnostics.py` (not yet wired — deferred)
+- `ancestry_mmm/application/diagnostics_service.py` (Work Package 2 —
+  `DiagnosticsArtefact` schema v8 `structural_stability` section,
+  `run_historical_and_structural_validation_check`,
+  `record_historical_and_structural_validation_failure`)
+- `ancestry_mmm/pages/06_Diagnostics.py` (Work Package 2 — wired)
 - `docs/approved_requirements/REQ-STAB-001.md` (this record)
 - `docs/approved_requirements/index.json` (updated)
 
@@ -217,12 +229,22 @@ closed.
   — `TestFromSourcesMarketSpecificRealFit`/`TestFromSourcesGenuine
   MultiFoldStructuralStability`, the same coverage for
   `run_leakage_safe_fold_refit_from_sources`)
+- `ancestry_mmm/tests/test_diagnostics_artefact.py::TestRunHistoricalAndStructuralValidationCheck`
+  (Work Package 2 — missing fold history, zero-leakage-safe-folds-still-
+  computed, both sections from one fit, pure-update/carries-other-sections-
+  over, pre-v8 schema upgrade)
+- `ancestry_mmm/tests/test_diagnostics_artefact.py::TestSchemaV8StalenessAndReadiness`
+- `ancestry_mmm/tests/test_diagnostics_wp2_evidence_apptest.py::test_historical_validation_button_records_a_failed_section_without_crashing`
+- `ancestry_mmm/tests/test_official_lifecycle_browser.py::test_diagnostics_wp2_evidence_sections_render_in_browser`
 
 ## Migration impact
 
-None yet. `core.structural_stability` and `application.fold_refit_service`
-are additive modules with no persisted artefact today; `DiagnosticsArtefact`
-is not yet touched.
+Resolved (Work Package 2): `DiagnosticsArtefact` schema v7 → v8. An
+artefact computed before schema v8 upgrades this section to `not_computed`
+with an explicit "added in schema v8" message. `core.structural_stability`
+and `application.fold_refit_service` remain additive/standalone with no
+persisted artefact of their own — only `DiagnosticsArtefact`'s copy of
+their output is persisted.
 
 ## Unresolved decisions
 
@@ -236,11 +258,8 @@ is not yet touched.
   the same way by this same change, and Work Package 1 part 2's
   `run_leakage_safe_fold_refit_from_sources` follows the identical split.
 - `DiagnosticsArtefact`/Diagnostics-page schema and UI wiring for both
-  this record and `REQ-PPD-001` — deferred; a real multi-fold
-  re-estimation pipeline now exists to supply genuine
-  `FoldParameterSnapshot` evidence (see Capability status), so this is a
-  UI/schema-design follow-up, not blocked on evidence-production
-  existing.
+  this record and `REQ-PPD-001` — **resolved** (Work Package 2, see
+  Capability status above).
 - The minimum fold-support, parameter/effect classes, materiality rules,
   and permitted-use consequences for time-slice structural instability
   remain Part 7 `VL-022`'s open decision, not approved here.

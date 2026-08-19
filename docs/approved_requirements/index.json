@@ -545,7 +545,9 @@
         "ancestry_mmm/core/validation_folds.py",
         "ancestry_mmm/application/fold_refit_service.py",
         "docs/approved_requirements/REQ-LEAK-001.md",
-        "docs/approved_requirements/index.json"
+        "docs/approved_requirements/index.json",
+        "ancestry_mmm/application/diagnostics_service.py",
+        "ancestry_mmm/pages/06_Diagnostics.py"
       ],
       "required_tests": [
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
@@ -568,7 +570,15 @@
         "ancestry_mmm/tests/test_fold_refit_service.py::TestRunLeakageSafeFoldRefitFromSourcesSafePath::test_safe_fold_is_fit_and_produces_one_snapshot",
         "ancestry_mmm/tests/test_fold_refit_service.py::TestRunLeakageSafeFoldRefitFromSourcesBlockedPaths::test_unresolved_coverage_blocks_the_whole_fold_without_fitting",
         "ancestry_mmm/tests/test_fold_refit_service.py::TestRunLeakageSafeFoldRefitFromSourcesBlockedPaths::test_publication_lag_blocks_without_fitting",
-        "ancestry_mmm/tests/test_fold_refit_service.py::TestRunLeakageSafeFoldRefitFromSourcesBlockedPaths::test_later_source_version_blocks_without_fitting"
+        "ancestry_mmm/tests/test_fold_refit_service.py::TestRunLeakageSafeFoldRefitFromSourcesBlockedPaths::test_later_source_version_blocks_without_fitting",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestRunHistoricalAndStructuralValidationCheck::test_missing_fold_history_is_not_computed",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestRunHistoricalAndStructuralValidationCheck::test_folds_assessed_but_none_leakage_safe_is_still_computed_evidence",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestRunHistoricalAndStructuralValidationCheck::test_folds_with_snapshots_compute_both_sections_from_one_fit",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestRunHistoricalAndStructuralValidationCheck::test_update_is_pure_and_carries_other_sections_over_unchanged",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestRunHistoricalAndStructuralValidationCheck::test_upgrades_a_pre_v8_artefact_schema_version",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestSchemaV8StalenessAndReadiness::test_readiness_becomes_stale_when_historical_validation_evidence_is_added",
+        "ancestry_mmm/tests/test_diagnostics_wp2_evidence_apptest.py::test_historical_validation_button_records_a_failed_section_without_crashing",
+        "ancestry_mmm/tests/test_official_lifecycle_browser.py::test_diagnostics_wp2_evidence_sections_render_in_browser"
       ]
     },
     {
@@ -579,7 +589,9 @@
         "ancestry_mmm/core/structural_stability.py",
         "ancestry_mmm/application/fold_refit_service.py",
         "docs/approved_requirements/REQ-STAB-001.md",
-        "docs/approved_requirements/index.json"
+        "docs/approved_requirements/index.json",
+        "ancestry_mmm/application/diagnostics_service.py",
+        "ancestry_mmm/pages/06_Diagnostics.py"
       ],
       "required_tests": [
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
@@ -597,7 +609,15 @@
         "ancestry_mmm/tests/test_fold_refit_service.py::TestRealSnapshotIntegratesWithStructuralStability::test_real_snapshot_plus_a_second_fold_compares_without_error",
         "ancestry_mmm/tests/test_fold_refit_service.py::TestRunLeakageSafeFoldRefitFromSourcesSafePath::test_structural_snapshot_matches_predictive_evidence_fit",
         "ancestry_mmm/tests/test_fold_refit_service_recovery.py::TestFromSourcesGenuineMultiFoldStructuralStability::test_two_real_fits_from_raw_sources_feed_structural_stability",
-        "ancestry_mmm/tests/test_fold_refit_service_recovery.py::TestFromSourcesMarketSpecificRealFit::test_market_specific_fit_via_fold_local_official_preparation"
+        "ancestry_mmm/tests/test_fold_refit_service_recovery.py::TestFromSourcesMarketSpecificRealFit::test_market_specific_fit_via_fold_local_official_preparation",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestRunHistoricalAndStructuralValidationCheck::test_missing_fold_history_is_not_computed",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestRunHistoricalAndStructuralValidationCheck::test_folds_assessed_but_none_leakage_safe_is_still_computed_evidence",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestRunHistoricalAndStructuralValidationCheck::test_folds_with_snapshots_compute_both_sections_from_one_fit",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestRunHistoricalAndStructuralValidationCheck::test_update_is_pure_and_carries_other_sections_over_unchanged",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestRunHistoricalAndStructuralValidationCheck::test_upgrades_a_pre_v8_artefact_schema_version",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestSchemaV8StalenessAndReadiness::test_readiness_becomes_stale_when_historical_validation_evidence_is_added",
+        "ancestry_mmm/tests/test_diagnostics_wp2_evidence_apptest.py::test_historical_validation_button_records_a_failed_section_without_crashing",
+        "ancestry_mmm/tests/test_official_lifecycle_browser.py::test_diagnostics_wp2_evidence_sections_render_in_browser"
       ]
     },
     {
@@ -608,7 +628,9 @@
         "ancestry_mmm/core/diagnostics.py",
         "ancestry_mmm/core/market_specific_diagnostics.py",
         "docs/approved_requirements/REQ-PPD-001.md",
-        "docs/approved_requirements/index.json"
+        "docs/approved_requirements/index.json",
+        "ancestry_mmm/application/diagnostics_service.py",
+        "ancestry_mmm/pages/06_Diagnostics.py"
       ],
       "required_tests": [
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
@@ -620,7 +642,16 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
         "ancestry_mmm/tests/test_posterior_predictive_metric_distributions.py::TestPosteriorPredictiveMetricDistributions::test_point_value_matches_error_metrics_by_outcome_exactly",
         "ancestry_mmm/tests/test_posterior_predictive_metric_distributions.py::TestPosteriorPredictiveMetricDistributions::test_distribution_mean_differs_from_point_for_nonlinear_metric_under_noise",
-        "ancestry_mmm/tests/test_posterior_predictive_metric_distributions.py::TestPosteriorPredictiveMetricDistributionsMarketSpecific::test_point_value_matches_market_specific_error_metrics_exactly"
+        "ancestry_mmm/tests/test_posterior_predictive_metric_distributions.py::TestPosteriorPredictiveMetricDistributionsMarketSpecific::test_point_value_matches_market_specific_error_metrics_exactly",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestSchemaV8Migration::test_v7_artefact_upgrades_all_six_new_sections_to_not_computed",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestSchemaV8Migration::test_v7_round_trip_through_to_dict_is_stable",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestSchemaV8Migration::test_unsupported_future_schema_version_is_rejected",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestSchemaV8FreshArtefact::test_current_defaults_are_schema_v8",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestSchemaV8FreshArtefact::test_freshly_constructed_artefact_has_not_computed_new_sections",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluatePosteriorPredictiveMetricDistributions::test_model_a_computes_the_section",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluatePosteriorPredictiveMetricDistributions::test_model_c_computes_the_section",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluatePosteriorPredictiveMetricDistributions::test_section_round_trips_and_is_fingerprinted",
+        "ancestry_mmm/tests/test_diagnostics_wp2_evidence_apptest.py::test_scorecard_computes_posterior_predictive_metric_distributions"
       ]
     },
     {
@@ -632,7 +663,9 @@
         "pyproject.toml",
         "uv.lock",
         "docs/approved_requirements/REQ-IDENT-001.md",
-        "docs/approved_requirements/index.json"
+        "docs/approved_requirements/index.json",
+        "ancestry_mmm/application/diagnostics_service.py",
+        "ancestry_mmm/pages/06_Diagnostics.py"
       ],
       "required_tests": [
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
@@ -646,7 +679,14 @@
         "ancestry_mmm/tests/test_estimand_identification.py::TestTreatmentDescendantExclusion::test_minimal_adjustment_set_never_includes_a_treatment_descendant",
         "ancestry_mmm/tests/test_estimand_identification.py::TestColliderOpensPath::test_adjusting_for_the_collider_too_reopens_the_path",
         "ancestry_mmm/tests/test_estimand_identification.py::TestScopeBoundaries::test_direct_effect_type_is_unsupported",
-        "ancestry_mmm/tests/test_estimand_identification.py::TestScopeBoundaries::test_excluded_diagnostic_only_edges_are_not_part_of_the_causal_graph"
+        "ancestry_mmm/tests/test_estimand_identification.py::TestScopeBoundaries::test_excluded_diagnostic_only_edges_are_not_part_of_the_causal_graph",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateGraphicalIdentification::test_no_graph_or_requests_is_not_computed",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateGraphicalIdentification::test_graph_compatible_total_effect_request_is_computed",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateGraphicalIdentification::test_unsupported_direct_effect_request_is_rejected_not_silently_allowed",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateGraphicalIdentification::test_section_round_trips_and_is_fingerprinted",
+        "ancestry_mmm/tests/test_diagnostics_wp2_evidence_apptest.py::test_graphical_identification_assesses_a_graph_compatible_total_effect",
+        "ancestry_mmm/tests/test_diagnostics_wp2_evidence_apptest.py::test_graphical_identification_rejects_unsupported_direct_effect_request",
+        "ancestry_mmm/tests/test_official_lifecycle_browser.py::test_diagnostics_wp2_evidence_sections_render_in_browser"
       ]
     },
     {
@@ -656,7 +696,9 @@
       "affected_modules": [
         "ancestry_mmm/core/latent_state_identification.py",
         "docs/approved_requirements/REQ-LATENT-001.md",
-        "docs/approved_requirements/index.json"
+        "docs/approved_requirements/index.json",
+        "ancestry_mmm/application/diagnostics_service.py",
+        "ancestry_mmm/pages/06_Diagnostics.py"
       ],
       "required_tests": [
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
@@ -670,7 +712,12 @@
         "ancestry_mmm/tests/test_latent_state_identification.py::TestSignFlipDetection::test_disagreeing_signs_across_chains_is_not_identified",
         "ancestry_mmm/tests/test_latent_state_identification.py::TestStableAcrossChains::test_agreeing_signs_is_identified",
         "ancestry_mmm/tests/test_latent_state_identification.py::TestUseEligibilityGate::test_review_required_is_not_eligible",
-        "ancestry_mmm/tests/test_latent_state_identification.py::TestResultValidation::test_round_trip_with_declaration"
+        "ancestry_mmm/tests/test_latent_state_identification.py::TestResultValidation::test_round_trip_with_declaration",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateLatentStateIdentification::test_ordinary_fit_is_not_applicable",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateLatentStateIdentification::test_candidate_a_fit_with_no_declaration_is_not_identified",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateLatentStateIdentification::test_candidate_a_fit_with_declaration_but_no_chain_draws_is_review_required",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateLatentStateIdentification::test_section_round_trips_and_is_fingerprinted",
+        "ancestry_mmm/tests/test_diagnostics_wp2_evidence_apptest.py::test_scorecard_reports_not_applicable_latent_state_and_experiment_sections"
       ]
     },
     {
@@ -680,7 +727,9 @@
       "affected_modules": [
         "ancestry_mmm/core/experiments.py",
         "docs/approved_requirements/REQ-EXPMODE-001.md",
-        "docs/approved_requirements/index.json"
+        "docs/approved_requirements/index.json",
+        "ancestry_mmm/application/diagnostics_service.py",
+        "ancestry_mmm/pages/06_Diagnostics.py"
       ],
       "required_tests": [
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
@@ -693,7 +742,11 @@
         "ancestry_mmm/tests/test_experiments.py::TestExperimentVersioning::test_current_versions_resolves_highest_per_lineage",
         "ancestry_mmm/tests/test_experiments.py::TestBuildCalibratingUse::test_incompatible_experiment_is_rejected",
         "ancestry_mmm/tests/test_experiments.py::TestDoubleCountedDependence::test_both_modes_without_dependence_handling_is_flagged",
-        "ancestry_mmm/tests/test_experiments.py::TestProvenanceReport::test_reports_each_experiment_individually"
+        "ancestry_mmm/tests/test_experiments.py::TestProvenanceReport::test_reports_each_experiment_individually",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateExperimentCalibration::test_no_evidence_supplied_is_not_applicable",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateExperimentCalibration::test_experiment_provenance_report_is_computed_and_kept_separate",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateExperimentCalibration::test_section_round_trips_and_is_fingerprinted",
+        "ancestry_mmm/tests/test_diagnostics_wp2_evidence_apptest.py::test_scorecard_reports_not_applicable_latent_state_and_experiment_sections"
       ]
     },
     {
@@ -703,7 +756,9 @@
       "affected_modules": [
         "ancestry_mmm/core/calibration_comparison.py",
         "docs/approved_requirements/REQ-CALIB-001.md",
-        "docs/approved_requirements/index.json"
+        "docs/approved_requirements/index.json",
+        "ancestry_mmm/application/diagnostics_service.py",
+        "ancestry_mmm/pages/06_Diagnostics.py"
       ],
       "required_tests": [
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
@@ -715,7 +770,10 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
         "ancestry_mmm/tests/test_calibration_comparison.py::TestComparisonArtefact::test_rejects_identical_identities",
         "ancestry_mmm/tests/test_calibration_comparison.py::TestComparisonArtefact::test_no_verdict_or_recommendation_field_exists",
-        "ancestry_mmm/tests/test_calibration_comparison.py::TestCalibrationEventRecord::test_full_record_round_trip"
+        "ancestry_mmm/tests/test_calibration_comparison.py::TestCalibrationEventRecord::test_full_record_round_trip",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateExperimentCalibration::test_no_evidence_supplied_is_not_applicable",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateExperimentCalibration::test_experiment_provenance_report_is_computed_and_kept_separate",
+        "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateExperimentCalibration::test_section_round_trips_and_is_fingerprinted"
       ]
     },
     {

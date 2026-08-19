@@ -67,15 +67,29 @@ program (do not implement directly from PRD prose without an approved
 requirement or decision package; do not guess an unresolved statistical
 decision).
 
+`DiagnosticsArtefact`/Diagnostics-page wiring now complete (Work Package 2
+of `Media-Mix-Lab: Coding LLM Next Steps After PR #286`, canonical
+Diagnostics evidence integration, 2026-08-18): schema v8 adds the
+`latent_state_identification` section, computed inline in
+`DiagnosticsService.evaluate()`. Dispatch mirrors `search_capacity`'s own
+`meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE` check: an ordinary
+fit with no declared latent state is `not_applicable`; a Candidate A fit
+always assesses `candidate_a_latent_branded_search_demand` — with no
+supplied declaration this correctly resolves `not_identified`
+(Requirement 1 unmet, the fail-closed contract, never a fabricated pass),
+and a declaration with no chain draws resolves `review_required`. Any
+caller-supplied `LatentStateIdentificationDeclaration`s are assessed
+alongside it. `pages/06_Diagnostics.py` reports this section separately
+from every other evidence dimension. This wiring does not assert or
+declare any specific identifying anchor for Candidate A's latent demand —
+`MD-021` remains the unresolved statistical decision it always was.
+
 Not yet implemented: Requirement 3 (extending `core.graph_model_
 compiler`'s blocking-error contract for unresolved latent-state
-identification), full synthetic-recovery validation and decision-
+identification), and full synthetic-recovery validation and decision-
 instability detection for Requirement 4's remaining two sub-items (both
-require a real fit/re-fit pipeline this module does not run), and
-`DiagnosticsArtefact`/Causal-Graph-page wiring — all deferred as
-separate integration follow-ups, consistent with how Work Package 1/2/3's
-other core diagnostics were shipped ahead of their own compiler/UI
-wiring.
+require a real fit/re-fit pipeline this module does not run) — deferred
+as separate integration follow-ups.
 
 ## Requirement
 
@@ -160,8 +174,11 @@ undifferentiated status.
 - `ancestry_mmm/core/structural_stability.py` (read-only precedent for
   this record's "caller supplies the computation" and "report movement,
   never a verdict" patterns — no shared code, no coupling)
-- `ancestry_mmm/pages/14_Causal_Graph.py` / `ancestry_mmm/pages/06_
-  Diagnostics.py` (not yet wired — deferred)
+- `ancestry_mmm/pages/14_Causal_Graph.py` (not yet wired — deferred)
+- `ancestry_mmm/application/diagnostics_service.py` (Work Package 2 —
+  `DiagnosticsArtefact` schema v8 `latent_state_identification` section,
+  computed inline in `evaluate()`, `CANDIDATE_A_LATENT_DEMAND_STATE_ID`)
+- `ancestry_mmm/pages/06_Diagnostics.py` (Work Package 2 — wired)
 - `docs/approved_requirements/REQ-LATENT-001.md` (this record)
 - `docs/approved_requirements/index.json` (updated)
 
@@ -179,6 +196,11 @@ undifferentiated status.
   latent_state_id, a mismatched declaration latent_state_id, and an
   empty chain; the fail-closed use-eligibility gate for every status;
   and result validation/round-trip with and without a declaration)
+- `ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateLatentStateIdentification`
+  (Work Package 2 — ordinary fit not_applicable; Candidate A fit with no
+  declaration not_identified; declaration with no chain draws
+  review_required; round trip/fingerprint)
+- `ancestry_mmm/tests/test_diagnostics_wp2_evidence_apptest.py::test_scorecard_reports_not_applicable_latent_state_and_experiment_sections`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists`
 - `ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid`
@@ -189,19 +211,21 @@ undifferentiated status.
 
 ## Migration impact
 
-None to persisted artefacts or model-mathematics files — this module is
-additive and standalone. Implementing Requirement 3 against Candidate A
-will still require `core.search_capacity`'s latent-demand construction
-to declare an identification strategy — a fit-relevant change requiring
-re-fit and fingerprint invalidation for any project with an existing
-Candidate A fit, once implemented.
+Resolved (Work Package 2): `DiagnosticsArtefact` schema v7 → v8. An
+artefact computed before schema v8 upgrades this section to `not_computed`
+with an explicit "added in schema v8" message. No model-mathematics files
+changed — `core.search_capacity`'s latent-demand construction still
+declares no identification strategy; Requirement 3 against Candidate A
+still requires that separate, unresolved change once implemented.
 
 ## Unresolved decisions
 
 - Candidate A's actual identifying anchor/constraint (`MD-021`) — statistical
   modelling decision, not resolvable by this reconciliation record.
 - Whether identification validation runs at fit time, as a separate
-  Diagnostics check, or both.
+  Diagnostics check, or both — **partially resolved**: it now runs as a
+  Diagnostics-page check (Work Package 2, see Capability status above);
+  fit-time validation is not implemented.
 
 ## Owner
 
