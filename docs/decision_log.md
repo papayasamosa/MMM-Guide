@@ -7021,3 +7021,61 @@ new `ancestry_mmm/tests/test_wp4_structural_causal_capability_evaluation.py`
 owners).
 **Status:** Decision package recorded; engine selection remains open pending
 MD-022 review.
+
+---
+
+**Date:** 2026-08-19
+**Decision:** Record Work Package 0's governed named-event PRD authority
+reconciliation (`Media-Mix-Lab: Coding LLM Next Steps Post PR #297`). The
+refreshed local PRD set — Part 3 v1.11 (`1A27675D69187E99`), Part 5 v1.5
+(`660F14BCA251C87F`), Part 6 v1.9 (`1212CBD9AAC7F89F`), Part 7 v1.8
+(`89CF8D1FA523FA26`), named-event Part 8 v1.5 (`837858F9BCEF6AF0`),
+named-event Part 10 v1.6 (`0E93394F020BD04C`), named-event Part 11 v1.6
+(`BC1408608391EB1B`); Part 9 v1.6 Final unchanged — is reconciled as a
+focused overlay into `REQ-EVENT-001` (governed named-event occurrence,
+family and response-definition data contracts, extending the existing
+optional Context `events` table groundwork inside `REQ-DATAIN-001` — no
+new logical source domain) and `REQ-EVENT-002` (governed future
+named-event replay in sequential planning, extending
+`REQ-STATE-001`/`REQ-SCEN-001`–`004`), both target-state contracts with
+zero implementation. Recorded coherence facts: the "Part 8 v1.5" label
+now denotes two distinct focused updates (structural intervention
+curves, `REQ-SCCURVE-001`; named-event scenario replay,
+`REQ-EVENT-002`), distinguished by focused-update title, filename and
+SHA-256 prefix, neither superseding the other; Part 9 v1.6 Final
+contains no dedicated named-event reporting contract and none is
+invented; Part 5 v1.5 is now supplied while Part 5 v1.6 remains absent;
+the structural-causal Part 10 v1.8 / Part 11 v1.7 overlays are neither
+downgraded nor erased; remaining cross-reference mismatches (Part 6
+v1.9 → Part 3 v1.9 / Part 11 v1.7; Part 7 v1.8 → Part 3 v1.10 /
+Part 11 v1.7; Part 9 v1.6 → Part 3 v1.9 and now-ambiguous "Part 8
+v1.5"; Part 4 v1.6 → Part 3 v1.9 / Part 5 v1.6) are recorded, not
+resolved. No statistical response method is approved: response
+structure, kernel/basis family, priors, regularisation, pooling,
+heterogeneity, family-specific lead/lag support, validation thresholds
+and planning-eligibility thresholds remain decision-required, tracked
+by `docs/wp2_named_event_statistical_method_decision_package.md`.
+**Reason:** The brief's Work Package 0 authorises authority
+reconciliation only, with no event-response model mathematics. The PRD
+defines boundaries but does not select a statistical method, and no
+event-specific decision-register IDs exist to approve from.
+**Alternatives considered:** Folding the event invariants into existing
+records only (rejected — family identity, response-definition identity
+and future-replay semantics are genuinely new contracts no existing
+record owns); creating a new source domain (rejected — the brief and
+Part 5 explicitly extend the existing Context `events` architecture);
+selecting a default response structure to unblock WP1 (rejected —
+decision-required items must not be guessed).
+**Impact:** New `REQ-EVENT-001.md` / `REQ-EVENT-002.md`,
+`docs/wp2_named_event_statistical_method_decision_package.md`, and
+anti-drift tests
+`ancestry_mmm/tests/test_named_event_authority_reconciliation.py`;
+`docs/specification_authority.md` overlay/gap-table/source-collision
+records; `docs/approved_requirements/index.json` and README updated;
+three structural-causal anti-drift tests re-scoped to their own
+section boundary. No production code changed. PRD sources remain
+untracked and unpushed.
+**Owner:** Marketing Data Science / Model Governance (statistical form
+and threshold decisions).
+**Status:** Authority reconciled; named-event statistical method and
+thresholds remain decision-required (Work Package 2 evidence next).
