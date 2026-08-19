@@ -423,7 +423,14 @@ class TestBrowserLifecycleInstallIsBounded:
     browser test started). The fix is bounded time, not weakened tests: a
     job-level timeout, a step-level timeout, one bounded retry of the
     install, and the real browser tests untouched. CI must still fail when
-    the install genuinely cannot complete."""
+    the install genuinely cannot complete.
+
+    A second, subtler failure mode is also guarded: when attempt 1 timed
+    out, playwright's `sudo apt-get` child survived `timeout`'s process-
+    group signal and kept holding /var/lib/dpkg/lock-frontend, so attempt 2
+    died immediately with "E: Could not get lock" and main went red. The
+    step must therefore reap orphaned apt/dpkg processes and wait for the
+    dpkg lock between attempts."""
 
     WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "tests.yml"
 
@@ -459,6 +466,23 @@ class TestBrowserLifecycleInstallIsBounded:
         assert "timeout --signal=TERM" in install_step
         assert "after 2 bounded attempts" in install_step
         assert "exit 1" in install_step
+
+    def test_chromium_install_reaps_orphaned_apt_between_attempts(self):
+        """A timed-out attempt must not leave an orphaned apt-get/dpkg
+        holding /var/lib/dpkg/lock-frontend - the 2026-08-19 main-CI
+        failure mode where attempt 2 died immediately with 'E: Could not
+        get lock'. The step must reap orphans, repair dpkg, and wait for
+        the lock before retrying."""
+        browser_job = self._browser_job_text()
+        install_step = browser_job.split("- name: Install Chromium", 1)[1].split(
+            "- name:", 1
+        )[0]
+        assert "reap_orphaned_apt" in install_step
+        assert "pkill -KILL -x apt-get" in install_step
+        assert "pkill -KILL -x dpkg" in install_step
+        assert "dpkg --configure -a" in install_step
+        assert "wait_for_dpkg_lock" in install_step
+        assert "pgrep -x apt-get" in install_step
 
     def test_browser_tests_are_not_weakened_or_skipped(self):
         """The install hang must never be worked around by weakening or

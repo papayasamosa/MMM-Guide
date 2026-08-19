@@ -594,8 +594,37 @@ jobs:
         # `timeout-minutes`; after two bounded attempts the step fails, and
         # CI fails - an install problem is never worked around by weakening
         # or skipping the browser tests below.
+        #
+        # Known failure mode (main CI, 2026-08-19): when attempt 1 times
+        # out, playwright's `sudo apt-get` child can survive `timeout`'s own
+        # process-group signal and keep holding
+        # /var/lib/dpkg/lock-frontend, so attempt 2 immediately dies with
+        # "E: Could not get lock". Each failed attempt is therefore followed
+        # by a bounded reaping pass (terminate, then kill any orphaned
+        # apt-get/dpkg), a bounded dpkg recovery pass, and a bounded wait
+        # for the dpkg frontend lock to clear before the next attempt.
         run: |
           set -euo pipefail
+          reap_orphaned_apt() {
+            # Terminate, then hard-kill any apt/dpkg process orphaned by a
+            # timed-out attempt (playwright's --with-deps sudo'ed children).
+            sudo pkill -TERM -x apt-get 2>/dev/null || true
+            sudo pkill -TERM -x dpkg 2>/dev/null || true
+            sleep 2
+            sudo pkill -KILL -x apt-get 2>/dev/null || true
+            sudo pkill -KILL -x dpkg 2>/dev/null || true
+          }
+          wait_for_dpkg_lock() {
+            # Bounded wait for orphaned apt/dpkg processes to exit (pgrep is
+            # procps, present on the runner image; no psmisc dependency).
+            for _ in $(seq 1 24); do
+              if ! pgrep -x apt-get >/dev/null 2>&1 && ! pgrep -x dpkg >/dev/null 2>&1; then
+                return 0
+              fi
+              sleep 5
+            done
+            return 1
+          }
           for attempt in 1 2; do
             echo "::group::Chromium install attempt ${attempt} of 2"
             if timeout --signal=TERM --kill-after=60s 13m uv run playwright install --with-deps chromium; then
@@ -605,10 +634,19 @@ jobs:
             fi
             echo "::endgroup::"
             echo "Chromium install attempt ${attempt} failed or timed out."
+            reap_orphaned_apt
+            # A killed dpkg can leave the package database mid-configure;
+            # repair it (bounded) so the retry's apt-get can proceed.
+            sudo timeout 3m dpkg --configure -a >/dev/null 2>&1 || true
+            if wait_for_dpkg_lock; then
+              echo "dpkg lock released - retrying."
+            else
+              echo "::warning::dpkg lock still held after bounded wait - retrying anyway."
+            fi
           done
           echo "::error::Chromium install failed after 2 bounded attempts."
           exit 1
-        timeout-minutes: 30
+        timeout-minutes: 35
       - name: Run deterministic browser lifecycle journey
         run: |
           uv run pytest ancestry_mmm/tests/test_official_lifecycle_browser.py ancestry_mmm/tests/test_causal_graph_editor_browser.py \
