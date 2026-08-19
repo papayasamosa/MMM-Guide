@@ -63,9 +63,16 @@ Deliberately out of scope for this module (see REQ-LEAK-001's own
   frequency_alignment` fold-locally from raw native source tables (Work
   Package 1 part 2).
 - Wiring this evidence into `DiagnosticsArtefact`/the Diagnostics page.
-  Work Package 2's structural-stability evidence is expected to share
-  these same fold manifests (REQ-LEAK-001 requirement 6); the schema/UI
-  integration is deferred so it is designed once for both, not twice.
+  This landed with the canonical Diagnostics evidence integration (schema
+  v8, PR #291): `DiagnosticsService.run_historical_and_structural_
+  validation_check` consumes one fold-refit run for both the historical
+  and structural-stability sections. The Diagnostics page now routes to
+  the stronger `run_leakage_safe_fold_refit_from_sources` path
+  automatically when the project has its raw source tables and outcome
+  definitions, and labels the weaker coverage-metadata-only tier
+  explicitly otherwise - the two tiers are the `RECONSTRUCTION_TIER_*`
+  vocabulary defined below, recorded in the `historical_validation`
+  payload so the evidence tier is part of the artefact fingerprint.
 - Any specific minimum source-vintage/publication-lag evidence threshold
   for calling a fold "leakage-safe enough" for production use - Part 7
   S48 `VL-023` remains an open decision; this module reports what it can
@@ -112,6 +119,20 @@ LEAKAGE_STATUSES = (
 # variable's history - a fold overlapping one of these cannot be proven
 # leakage-safe for that variable from coverage metadata alone.
 _AMBIGUOUS_COVERAGE_STATES = frozenset({STATE_UNAVAILABLE_SOURCE, STATE_UNKNOWN})
+
+# Evidence-source tiers for a completed historical-validation run (Work
+# Package 1 of `Media-Mix-Lab: Coding LLM Next Steps After PR #291`).
+# These record *which* reconstruction the run's evidence was produced by -
+# a distinct, closed vocabulary from the per-fold leakage statuses above,
+# which stay per fold. A run must never be presented as having used the
+# stronger tier than the one recorded here.
+RECONSTRUCTION_TIER_SOURCE_VERSION_AWARE_FOLD_LOCAL = "source_version_aware_fold_local"
+RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY = "coverage_metadata_only"
+
+RECONSTRUCTION_TIERS = (
+    RECONSTRUCTION_TIER_SOURCE_VERSION_AWARE_FOLD_LOCAL,
+    RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY,
+)
 
 
 @dataclass(frozen=True)

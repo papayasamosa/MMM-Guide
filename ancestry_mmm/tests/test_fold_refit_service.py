@@ -42,6 +42,10 @@ from ancestry_mmm.core.structural_stability import (
     FoldParameterSnapshot,
     assess_structural_stability,
 )
+from ancestry_mmm.core.validation_folds import (
+    RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY,
+    RECONSTRUCTION_TIER_SOURCE_VERSION_AWARE_FOLD_LOCAL,
+)
 
 FIT_KWARGS = dict(
     draws=15, tune=15, chains=2, cores=1, target_accept=0.8, random_seed=1
@@ -173,6 +177,15 @@ class TestRunLeakageSafeFoldRefitSafePath:
         assert set(snapshot.draws) == set(snapshot.point_values)
         assert len(snapshot.draws["hill_K__TV_Brand"]) == 5
         assert all(np.isfinite(v) for v in snapshot.draws["hill_K__TV_Brand"])
+
+    def test_result_records_the_coverage_metadata_only_tier(self, shared_refit_result):
+        """The dataframe-slicing path must record its evidence tier as
+        `coverage_metadata_only` - never the deeper fold-local tier, and
+        never an absent/ambiguous tier."""
+        assert (
+            shared_refit_result.reconstruction_tier
+            == RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY
+        )
 
 
 class TestRunLeakageSafeFoldRefitUnsafePath:
@@ -377,6 +390,18 @@ class TestRunLeakageSafeFoldRefitFromSourcesSafePath:
         divergent ones."""
         result = shared_sources_refit_result
         assert result.snapshots[0].fold_id == result.results_df.iloc[0]["fold_id"]
+
+    def test_result_records_the_source_version_aware_tier(
+        self, shared_sources_refit_result
+    ):
+        """The fold-local source-reconstruction path must record its
+        evidence tier as `source_version_aware_fold_local` - distinguishable
+        from the shallower coverage-metadata-only tier by downstream
+        consumers and fingerprints."""
+        assert (
+            shared_sources_refit_result.reconstruction_tier
+            == RECONSTRUCTION_TIER_SOURCE_VERSION_AWARE_FOLD_LOCAL
+        )
 
 
 class TestRunLeakageSafeFoldRefitFromSourcesBlockedPaths:

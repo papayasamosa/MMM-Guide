@@ -339,7 +339,15 @@ The current implementation includes:
   historical-vintage byte store exists, and none is claimed), feeding one
   shared fold run into both the `historical_validation` and
   `structural_stability` evidence sections - never two divergent fits for
-  one fold. Schema v8 additionally renders posterior predictive metric
+  one fold. The Diagnostics page now routes this action through the
+  deeper from-sources path automatically whenever the project has its raw
+  source tables and outcome definitions, and otherwise records and labels
+  the weaker `coverage_metadata_only` tier explicitly (closed
+  `RECONSTRUCTION_TIER_*` vocabulary in the `historical_validation`
+  payload, part of the artefact fingerprint; reload restores the weaker
+  tier for pre-tier artefacts, never the stronger) - the shallow path is
+  never presented as the deep reconstruction. Schema v8 additionally
+  renders posterior predictive metric
   distributions (`posterior_predictive_metric_distributions`, computed
   inline, no extra fit), graphical identification
   (`graphical_identification`, always carrying its disclaimer),

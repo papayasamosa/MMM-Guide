@@ -93,6 +93,8 @@ from ancestry_mmm.core.calibration_comparison import (
 )
 from ancestry_mmm.core.experiments import ExperimentProvenanceReport
 from ancestry_mmm.core.validation_folds import (
+    RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY,
+    RECONSTRUCTION_TIERS,
     FoldReconstructionAssessment,
     ValidationFold,
 )
@@ -666,6 +668,28 @@ class DiagnosticsArtefact:
                 historical_validation_sec = DiagnosticSection.from_dict(
                     d.get("historical_validation", {})
                 )
+                # Work Package 1 (`...Next Steps After PR #291`): evidence-
+                # source tier provenance. An artefact computed before the
+                # tier contract existed carries no `reconstruction_tier`
+                # key; its evidence was produced by the weaker coverage-
+                # metadata-only path (the only path the page offered
+                # then). Reload must restore that weaker tier - never
+                # upgrade weaker historical evidence into stronger.
+                if (
+                    historical_validation_sec.status == "computed"
+                    and isinstance(historical_validation_sec.payload, dict)
+                    and "reconstruction_tier" not in historical_validation_sec.payload
+                ):
+                    tiered_payload = dict(historical_validation_sec.payload)
+                    tiered_payload["reconstruction_tier"] = (
+                        RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY
+                    )
+                    historical_validation_sec = DiagnosticSection(
+                        status=historical_validation_sec.status,
+                        payload=tiered_payload,
+                        error=historical_validation_sec.error,
+                        warnings=historical_validation_sec.warnings,
+                    )
                 structural_stability_sec = DiagnosticSection.from_dict(
                     d.get("structural_stability", {})
                 )
@@ -1852,6 +1876,7 @@ class DiagnosticsService:
         folds: Sequence[ValidationFold],
         assessments: Sequence[FoldReconstructionAssessment],
         snapshots: Sequence[FoldParameterSnapshot],
+        reconstruction_tier: Optional[str] = RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY,
     ) -> DiagnosticsArtefact:
         """Populate `historical_validation` (REQ-LEAK-001) and
         `structural_stability` (REQ-STAB-001) together from one real
@@ -1874,6 +1899,21 @@ class DiagnosticsService:
         structural_stability`'s and `core.validation_folds`'s own "the
         caller supplies the fold-local computation" contract.
 
+        `reconstruction_tier` (one of `core.validation_folds.
+        RECONSTRUCTION_TIERS`) records which reconstruction produced the
+        supplied evidence - `source_version_aware_fold_local` for a
+        `run_leakage_safe_fold_refit_from_sources` run, or
+        `coverage_metadata_only` for a `run_leakage_safe_fold_refit` run.
+        It defaults to the *weaker* `coverage_metadata_only` tier: a
+        caller that produced the deeper tier must say so explicitly, never
+        by omission. It is stored in the `historical_validation` payload
+        and therefore enters the artefact fingerprint - the same evidence
+        can never be re-labelled a stronger tier without changing the
+        fingerprint, and an unknown value fails closed here rather than
+        being recorded. `from_dict` restores the same weaker default for
+        stored artefacts that predate the tier contract, never a stronger
+        one.
+
         `historical_validation` is `computed` whenever at least one fold
         was assessed (even if every fold was rejected - that is itself
         genuine evidence, never `not_computed`), `not_computed` only when
@@ -1886,6 +1926,13 @@ class DiagnosticsService:
         artefact from `core.structural_stability.assess_structural_
         stability` (which itself raises on an empty snapshot tuple).
         """
+        if reconstruction_tier is not None and reconstruction_tier not in (
+            RECONSTRUCTION_TIERS
+        ):
+            raise ValueError(
+                f"Unknown reconstruction_tier {reconstruction_tier!r} - "
+                f"expected one of {RECONSTRUCTION_TIERS!r}."
+            )
         if not folds:
             historical_validation_sec = DiagnosticSection(
                 status="not_computed",
@@ -1894,17 +1941,22 @@ class DiagnosticsService:
             )
         else:
             try:
+                historical_validation_payload: Dict[str, Any] = {
+                    "folds": [f.to_dict() for f in folds],
+                    "assessments": [a.to_dict() for a in assessments],
+                    "results": results_df.to_dict(orient="records"),
+                    "n_folds_assessed": len(folds),
+                    "n_folds_leakage_safe": sum(
+                        1 for a in assessments if a.is_leakage_safe
+                    ),
+                }
+                if reconstruction_tier is not None:
+                    historical_validation_payload["reconstruction_tier"] = (
+                        reconstruction_tier
+                    )
                 historical_validation_sec = DiagnosticSection(
                     status="computed",
-                    payload={
-                        "folds": [f.to_dict() for f in folds],
-                        "assessments": [a.to_dict() for a in assessments],
-                        "results": results_df.to_dict(orient="records"),
-                        "n_folds_assessed": len(folds),
-                        "n_folds_leakage_safe": sum(
-                            1 for a in assessments if a.is_leakage_safe
-                        ),
-                    },
+                    payload=historical_validation_payload,
                 )
             except Exception as exc:
                 historical_validation_sec = DiagnosticSection(

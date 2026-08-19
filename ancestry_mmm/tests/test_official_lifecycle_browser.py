@@ -467,6 +467,18 @@ def test_diagnostics_wp2_evidence_sections_render_in_browser(
     expect(
         page.get_by_text("This evaluates the assumed graph.", exact=False)
     ).to_be_visible(timeout=30_000)
+    # Work Package 1 (Post PR291): the historical-validation section must
+    # disclose its automatic reconstruction routing in the rendered page -
+    # the stronger fold-local path when source tables exist, the weaker
+    # coverage-metadata-only tier otherwise - never silently.
+    expect(
+        page.get_by_text(
+            "it automatically uses the stronger reconstruction", exact=False
+        )
+    ).to_be_visible(timeout=30_000)
+    expect(
+        page.get_by_text("never presented as the deeper reconstruction", exact=False)
+    ).to_be_visible(timeout=30_000)
     # This fixture bundle has no causal graph configured - the section must
     # render its explicit "nothing to assess yet" state, never crash.
     expect(

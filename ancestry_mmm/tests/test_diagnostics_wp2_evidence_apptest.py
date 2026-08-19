@@ -253,6 +253,208 @@ def test_historical_validation_button_records_a_failed_section_without_crashing(
     assert at.session_state["approval_readiness"] is None
 
 
+def _canned_fold_refit_result(tier: str):
+    """A genuine LeakageSafeFoldRefitResult with no fit performed - the
+    page's deep/shallow routing is what these tests exercise, never the
+    expensive real per-fold PyMC fit itself."""
+    from ancestry_mmm.application.fold_refit_service import LeakageSafeFoldRefitResult
+    from ancestry_mmm.core.structural_stability import FoldParameterSnapshot
+    from ancestry_mmm.core.validation_folds import (
+        LEAKAGE_STATUS_SAFE,
+        FoldReconstructionAssessment,
+        ValidationFold,
+        VariableReconstructionAssessment,
+    )
+
+    fold = ValidationFold(
+        fold_id="fold-1",
+        fold_manifest_version=1,
+        train_start="2024-01-01",
+        train_end="2024-03-01",
+        test_start="2024-03-08",
+        test_end="2024-04-01",
+    )
+    assessment = FoldReconstructionAssessment(
+        fold_id="fold-1",
+        per_variable=(
+            VariableReconstructionAssessment(
+                variable_id="tv_spend",
+                market="UK",
+                status=LEAKAGE_STATUS_SAFE,
+                reason="Source version pinned before fold cutoff.",
+            ),
+        ),
+    )
+    snapshot = FoldParameterSnapshot(
+        fold_id="fold-1", point_values={"hill_K__TV": 100.0}
+    )
+    return LeakageSafeFoldRefitResult(
+        results_df=pd.DataFrame(
+            [
+                {
+                    "fold_id": "fold-1",
+                    "outcome_id": "fh_new_gsa",
+                    "r_squared": 0.8,
+                    "mape_pct": 12.0,
+                    "leakage_safe": True,
+                    "skipped_reason": None,
+                }
+            ]
+        ),
+        folds=(fold,),
+        assessments=(assessment,),
+        snapshots=(snapshot,),
+        reconstruction_tier=tier,
+    )
+
+
+def test_historical_validation_routes_to_deep_path_when_sources_exist(monkeypatch):
+    """With raw source tables and outcome definitions available, the page
+    must route through run_leakage_safe_fold_refit_from_sources (the
+    stronger fold-local reconstruction) and record the
+    source-version-aware tier - never the shallower path, never an
+    ambiguous tier."""
+    from ancestry_mmm.core.outcomes import (
+        FAMILY_HISTORY,
+        METRIC_GSA,
+        OutcomeDefinition,
+    )
+    from ancestry_mmm.core.validation_folds import (
+        RECONSTRUCTION_TIER_SOURCE_VERSION_AWARE_FOLD_LOCAL,
+    )
+
+    seen: dict = {}
+
+    def fake_from_sources(sources, spec, coverage_matrix, outcomes, **kwargs):
+        seen["sources"] = sources
+        seen["outcomes"] = outcomes
+        return _canned_fold_refit_result(
+            RECONSTRUCTION_TIER_SOURCE_VERSION_AWARE_FOLD_LOCAL
+        )
+
+    def fail_shallow(*args, **kwargs):
+        raise AssertionError("shallow path must not run when deep inputs exist")
+
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fold_refit_service.run_leakage_safe_fold_refit_from_sources",
+        fake_from_sources,
+    )
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fold_refit_service.run_leakage_safe_fold_refit",
+        fail_shallow,
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    at.session_state["variable_coverage_matrix"] = {
+        "matrix_id": "cm-wp2-apptest-deep",
+        "matrix_version": 1,
+        "generated_at": "2026-08-18T00:00:00+00:00",
+        "records": [],
+    }
+    at.session_state["raw_sources"] = {
+        "src-1": pd.DataFrame(
+            {"date": pd.date_range("2024-01-01", periods=8, freq="W")}
+        )
+    }
+    # A real OutcomeDefinition - the page resolves outcome definitions at
+    # the top of the script, so a bare dict would not survive page load.
+    at.session_state["outcome_definitions"] = [
+        OutcomeDefinition(
+            outcome_id="fh_new_gsa",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric=METRIC_GSA,
+            source_column="fh_new_gsa",
+        ).to_dict()
+    ]
+    at.session_state["source_versions"] = []
+    at.run()
+
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    assert not at.exception, f"page raised after computing scorecard: {at.exception}"
+
+    hv_button = next(
+        b
+        for b in at.button
+        if b.label == "Run historical validation & structural stability"
+    )
+    hv_button.click().run()
+    assert not at.exception, f"page raised: {at.exception}"
+
+    artefact = at.session_state["diagnostics_artefact"]
+    assert artefact.historical_validation.status == "computed"
+    assert (
+        artefact.historical_validation.payload["reconstruction_tier"]
+        == RECONSTRUCTION_TIER_SOURCE_VERSION_AWARE_FOLD_LOCAL
+    )
+    assert seen["sources"]
+    assert seen["outcomes"]
+    text = _all_markdown_text(at)
+    assert "source-version-aware fold-local reconstruction" in text
+
+
+def test_historical_validation_labels_the_shallow_path_when_sources_absent(
+    monkeypatch,
+):
+    """Without raw source tables the page may still run the shallower
+    coverage-metadata-only path - but it must record and render that
+    weaker tier explicitly, never presenting it as the deeper
+    reconstruction."""
+    from ancestry_mmm.core.validation_folds import (
+        RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY,
+    )
+
+    def fail_deep(*args, **kwargs):
+        raise AssertionError("deep path must not run without raw sources")
+
+    def fake_shallow(*args, **kwargs):
+        return _canned_fold_refit_result(RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY)
+
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fold_refit_service.run_leakage_safe_fold_refit_from_sources",
+        fail_deep,
+    )
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fold_refit_service.run_leakage_safe_fold_refit",
+        fake_shallow,
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    at.session_state["variable_coverage_matrix"] = {
+        "matrix_id": "cm-wp2-apptest-shallow",
+        "matrix_version": 1,
+        "generated_at": "2026-08-18T00:00:00+00:00",
+        "records": [],
+    }
+    at.session_state["transformed_data"] = None
+    at.run()
+
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+    assert not at.exception, f"page raised after computing scorecard: {at.exception}"
+
+    hv_button = next(
+        b
+        for b in at.button
+        if b.label == "Run historical validation & structural stability"
+    )
+    hv_button.click().run()
+    assert not at.exception, f"page raised: {at.exception}"
+
+    artefact = at.session_state["diagnostics_artefact"]
+    assert artefact.historical_validation.status == "computed"
+    assert (
+        artefact.historical_validation.payload["reconstruction_tier"]
+        == RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY
+    )
+    text = _all_markdown_text(at)
+    assert "coverage-metadata-only assessment" in text
+    assert "NOT rebuilt fold-locally" in text
+
+
 def test_graphical_identification_assesses_a_graph_compatible_total_effect():
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_fully_identified_model(at)

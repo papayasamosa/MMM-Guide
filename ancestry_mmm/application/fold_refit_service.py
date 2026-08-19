@@ -122,6 +122,8 @@ from ancestry_mmm.core.search_objects import SearchObjectDefinition
 from ancestry_mmm.core.structural_stability import FoldParameterSnapshot
 from ancestry_mmm.core.uncertainty import sample_draw_indices
 from ancestry_mmm.core.validation_folds import (
+    RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY,
+    RECONSTRUCTION_TIER_SOURCE_VERSION_AWARE_FOLD_LOCAL,
     FoldReconstructionAssessment,
     ValidationFold,
     assess_fold_source_reconstruction,
@@ -337,12 +339,21 @@ class LeakageSafeFoldRefitResult:
     `train_end`, `test_end`, `outcome_id`, `r_squared`, `mape_pct`,
     `leakage_safe`, `skipped_reason`), plus the real `FoldParameterSnapshot`
     per fold that was actually fit - the evidence
-    `core.structural_stability.assess_structural_stability` needs."""
+    `core.structural_stability.assess_structural_stability` needs.
+
+    `reconstruction_tier` records which reconstruction produced this run's
+    evidence (`core.validation_folds.RECONSTRUCTION_TIER_*`): the deep
+    `run_leakage_safe_fold_refit_from_sources` path is
+    `source_version_aware_fold_local`; the dataframe-slicing
+    `run_leakage_safe_fold_refit` path is `coverage_metadata_only`. It is
+    evidence provenance - a caller must never present one tier's evidence
+    as the other's, and reload must never upgrade a stored weaker tier."""
 
     results_df: pd.DataFrame
     folds: Tuple[ValidationFold, ...]
     assessments: Tuple[FoldReconstructionAssessment, ...]
     snapshots: Tuple[FoldParameterSnapshot, ...]
+    reconstruction_tier: str = RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY
 
 
 def _fold_row(
@@ -472,6 +483,7 @@ def run_leakage_safe_fold_refit(
         folds=folds,
         assessments=assessments,
         snapshots=tuple(snapshots),
+        reconstruction_tier=RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY,
     )
 
 
@@ -722,4 +734,5 @@ def run_leakage_safe_fold_refit_from_sources(
         folds=folds,
         assessments=tuple(assessments),
         snapshots=tuple(snapshots),
+        reconstruction_tier=RECONSTRUCTION_TIER_SOURCE_VERSION_AWARE_FOLD_LOCAL,
     )
