@@ -23,6 +23,13 @@ from ancestry_mmm.core.curve_artifact import (
     validate_portable_path_component,
     write_curve_artifact,
 )
+from ancestry_mmm.core.experiments import (
+    COMPATIBILITY_DIMENSIONS,
+    EXPERIMENT_REGISTRY_SCHEMA_VERSION,
+    CompatibilityAssessment,
+    ExperimentRecord,
+    ExperimentToModelUse,
+)
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
     fingerprint_model_spec,
@@ -56,6 +63,7 @@ from ancestry_mmm.core.persistence import (
     reconstruct_model_state,
     replace_curve_artifact_store,
     resolve_imported_causal_graphs,
+    resolve_imported_experiments,
     resolve_imported_media_outcome_pathways,
     resolve_imported_outcome_approvals,
     resolve_imported_search_objects,
@@ -4681,3 +4689,213 @@ class TestOfficialCurvesCheckpointRevalidation:
         assert reasons, audit["official_blocking_reasons"]
         assert reasons[0]["artefact_id"] == "art-unrelated-approval"
         assert "no_matching_outcome_approval" in reasons[0]["reason"]
+
+
+# ---------------------------------------------------------------------------
+# REQ-EXPMODE-001 (Work Package 2): experiment registry persistence
+# ---------------------------------------------------------------------------
+
+
+class TestResolveImportedExperiments:
+    def _payload(
+        self, *, schema_version=EXPERIMENT_REGISTRY_SCHEMA_VERSION, **overrides
+    ):
+        record = {
+            "experiment_id": "exp-geo-1",
+            "experiment_version": 1,
+            "design": "geo_test",
+            "start_date": "2026-01-05",
+            "end_date": "2026-02-01",
+            "market_scope": ["UK"],
+            "estimand": "incremental GSA acquisitions",
+            "observed_effect_estimate": 0.12,
+            "effect_uncertainty": 0.04,
+            "method": "difference-in-differences",
+            "source": "geo-test platform export",
+            "evidence_status": "draft_review_required",
+        }
+        use = {
+            "experiment_id": "exp-geo-1",
+            "experiment_version": 1,
+            "evidence_mode": "validation_only",
+            "model_id": "run-1",
+            "model_version": "spec-fp",
+            "dependence_handling_method": None,
+        }
+        assessment = {
+            "experiment_id": "exp-geo-1",
+            "dimension_results": {
+                dimension: True for dimension in COMPATIBILITY_DIMENSIONS
+            },
+            "dimension_notes": {},
+            "is_local": False,
+            "scope_note": None,
+        }
+        payload = {
+            "schema_version": schema_version,
+            "records": [record],
+            "model_uses": [use],
+            "compatibility_assessments": [assessment],
+            "evidence_rows": [
+                {
+                    "experiment_id": "exp-geo-1",
+                    "activity_id": "TV_Brand",
+                    "market": "UK",
+                    "start_date": "2026-01-05",
+                    "end_date": "2026-02-01",
+                }
+            ],
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_no_registry_file_is_no_registry_not_an_error(self):
+        records, uses, assessments, rows, warnings = resolve_imported_experiments({})
+        assert records == [] and uses == [] and assessments == [] and rows == []
+        assert warnings == []
+
+    def test_round_trip_preserves_every_registry_part(self):
+        payload = self._payload()
+        records, uses, assessments, rows, warnings = resolve_imported_experiments(
+            {"experiments": payload}
+        )
+        assert warnings == []
+        # The resolver normalises each record through its own
+        # from_dict/to_dict round-trip (mirroring every other resolver) -
+        # compare normalised-to-normalised, never raw-to-raw.
+        assert records == [ExperimentRecord.from_dict(payload["records"][0]).to_dict()]
+        assert uses == [
+            ExperimentToModelUse.from_dict(payload["model_uses"][0]).to_dict()
+        ]
+        assert assessments == [
+            CompatibilityAssessment.from_dict(
+                payload["compatibility_assessments"][0]
+            ).to_dict()
+        ]
+        assert rows == payload["evidence_rows"]
+
+    def test_future_schema_version_is_quarantined(self):
+        payload = self._payload(schema_version=99)
+        records, uses, assessments, rows, warnings = resolve_imported_experiments(
+            {"experiments": payload}
+        )
+        assert records == [] and uses == [] and assessments == [] and rows == []
+        assert any("unrecognised future version" in warning for warning in warnings)
+
+    def test_invalid_schema_version_type_is_quarantined(self):
+        payload = self._payload(schema_version="1")
+        _, _, _, _, warnings = resolve_imported_experiments({"experiments": payload})
+        assert any("not a valid integer" in warning for warning in warnings)
+
+    def test_malformed_record_is_quarantined_by_index(self):
+        payload = self._payload(
+            records=[{"experiment_id": "broken", "experiment_version": 1}]
+        )
+        records, uses, _, _, warnings = resolve_imported_experiments(
+            {"experiments": payload}
+        )
+        assert records == []
+        assert any("was malformed and was quarantined" in w for w in warnings)
+        # The use references a version no surviving record carries - the
+        # orphan use must be quarantined too, never kept dangling.
+        assert uses == []
+        assert any("orphan use was quarantined" in w for w in warnings)
+
+    def test_orphan_use_is_quarantined_but_records_survive(self):
+        payload = self._payload(
+            model_uses=[
+                {
+                    "experiment_id": "exp-geo-1",
+                    "experiment_version": 2,
+                    "evidence_mode": "validation_only",
+                    "model_id": "run-1",
+                    "model_version": "spec-fp",
+                    "dependence_handling_method": None,
+                }
+            ]
+        )
+        records, uses, _, _, warnings = resolve_imported_experiments(
+            {"experiments": payload}
+        )
+        assert len(records) == 1
+        assert uses == []
+        assert any("orphan use was quarantined" in w for w in warnings)
+
+    def test_double_counted_dependence_is_reported_not_rewritten(self):
+        payload = self._payload(
+            model_uses=[
+                {
+                    "experiment_id": "exp-geo-1",
+                    "experiment_version": 1,
+                    "evidence_mode": "prior_calibration",
+                    "model_id": "run-1",
+                    "model_version": "spec-fp",
+                    "affected_prior_name": "beta",
+                    "affected_prior_version": "v1",
+                    "dependence_handling_method": None,
+                },
+                {
+                    "experiment_id": "exp-geo-1",
+                    "experiment_version": 1,
+                    "evidence_mode": "likelihood_calibration",
+                    "model_id": "run-1",
+                    "model_version": "spec-fp",
+                    "affected_likelihood_term_name": "likelihood",
+                    "affected_likelihood_term_version": "v1",
+                    "dependence_handling_method": None,
+                },
+            ]
+        )
+        _, uses, _, _, warnings = resolve_imported_experiments({"experiments": payload})
+        assert len(uses) == 2
+        assert any("review is required" in w for w in warnings)
+
+
+def test_experiment_registry_round_trips_through_export_import(
+    tmp_path, sample_project
+):
+    """REQ-EXPMODE-001: the full registry (records, uses, assessments,
+    evidence rows) travels through the project bundle under its own
+    record-level schema version and resolves to the same content on
+    import - quarantining nothing."""
+    payload = {
+        "schema_version": EXPERIMENT_REGISTRY_SCHEMA_VERSION,
+        "records": [
+            {
+                "experiment_id": "exp-geo-1",
+                "experiment_version": 1,
+                "design": "geo_test",
+                "start_date": "2026-01-05",
+                "end_date": "2026-02-01",
+                "market_scope": ["UK"],
+                "estimand": "incremental GSA acquisitions",
+                "observed_effect_estimate": 0.12,
+                "effect_uncertainty": 0.04,
+                "method": "difference-in-differences",
+                "source": "geo-test platform export",
+                "evidence_status": "draft_review_required",
+            }
+        ],
+        "model_uses": [],
+        "compatibility_assessments": [],
+        "evidence_rows": [
+            {
+                "experiment_id": "exp-geo-1",
+                "activity_id": "TV_Brand",
+                "market": "UK",
+                "start_date": "2026-01-05",
+                "end_date": "2026-02-01",
+            }
+        ],
+    }
+    project = dict(sample_project)
+    project["experiments"] = payload
+    output_path = export_project(tmp_path / "experiments.zip", **project)
+    imported = import_project(output_path)
+    assert imported["experiments"] == payload
+    records, uses, assessments, rows, warnings = resolve_imported_experiments(imported)
+    assert warnings == []
+    assert records == [ExperimentRecord.from_dict(payload["records"][0]).to_dict()]
+    assert uses == []
+    assert assessments == []
+    assert rows == payload["evidence_rows"]

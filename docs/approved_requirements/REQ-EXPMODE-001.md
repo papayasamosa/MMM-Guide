@@ -75,16 +75,43 @@ shows `not_applicable`/`not_computed` for this section today, with an
 explicit "no experiment evidence... registered" message — never blank,
 never a fabricated pass.
 
+Durable adoption/persistence workflow now complete (Work Package 2 of
+`Media-Mix-Lab: Coding LLM Next Steps After PR #291`, 2026-08-19):
+`application.experiment_service` is the explicit analyst-reviewed adoption
+boundary — an uploaded source row never becomes an `ExperimentRecord` by
+itself; the analyst completes every required field at adoption (missing
+fields fail closed, never fabricated), the registry is immutable
+(edits are new versions via `new_registered_experiment_version`, never
+mutations), and re-adoption of differing content raises. Evidence-mode
+adoption is explicit per model use (`register_model_use`): calibrating
+modes require a caller-evidenced `CompatibilityAssessment`
+(`build_calibrating_use` fails closed on incompatibility), explicit
+affected prior/likelihood identity, and a `dependence_handling_method`
+whenever a new use would create a double-counted dependence —
+`validate_no_double_counted_dependence`'s violation list gates
+construction. `validation_only`/`diagnostic_comparison` uses need no
+compatibility assessment and cannot alter fitting because no
+model-fitting module reads the registry — no calibration computation
+exists anywhere. The registry persists through the project bundle
+(`config/experiments.json` under `EXPERIMENT_REGISTRY_SCHEMA_VERSION`,
+`core.persistence.resolve_imported_experiments` quarantines malformed
+records, orphaned uses, and unrecognised future schema versions) and
+populates the Diagnostics `experiment_calibration` section from the real
+saved registry (`provenance_for_model`, per experiment, never averaged,
+with a live staleness note when the registry changed after scorecard
+computation). The adoption/review UI lives on `pages/01_Data_Upload.py`;
+model-use declaration and provenance render on `pages/06_Diagnostics.py`.
+AppTest and browser-journey coverage exercise both.
+
 Not yet implemented: any specific likelihood-calibration or
 prior-calibration statistical mechanism (explicitly reserved by this
 record's own "Explicitly excluded" section for a future decision-support
 package using Context7/official PyMC/PyMC-Marketing sources, per the
 PRD-authority instruction governing this program — do not guess an
-unresolved statistical decision); `core.persistence` export/import
-wiring for the registry (the durable Experiment Evidence workflow); and
-`REQ-CALIB-001`'s dependent calibrated-versus-uncalibrated comparison
-contract (separate record, also now Diagnostics-wired — see
-`REQ-CALIB-001`'s own Capability status).
+unresolved statistical decision); the calibrated-versus-uncalibrated
+comparison half of the Diagnostics section therefore remains empty
+(`REQ-CALIB-001`, separate record, no mechanism exists to produce its
+artefact).
 
 ## Requirement
 

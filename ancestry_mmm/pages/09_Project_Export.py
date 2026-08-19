@@ -54,9 +54,19 @@ from ancestry_mmm.core.persistence import (
     resolve_imported_outcome_groups,
     resolve_imported_outcome_group_treatments,
     resolve_imported_outcome_reconciliation_groups,
+    resolve_imported_experiments,
     verify_imported_approval,
     UnsafeZipEntryError,
     audit_project_resumability,
+)
+from ancestry_mmm.application.experiment_service import (
+    registry_has_content,
+    registry_to_dict,
+)
+from ancestry_mmm.core.experiments import (
+    CompatibilityAssessment,
+    ExperimentRecord,
+    ExperimentToModelUse,
 )
 from ancestry_mmm.application.project_service import verify_imported_readiness
 from ancestry_mmm.application.diagnostics_service import DiagnosticsArtefact
@@ -166,6 +176,7 @@ _CONTAINS_LABELS = {
     "standard_context_data": "Adopted Context model input",
     "context_variable_metadata": "Context variable metadata",
     "source_domain_semantics": "Source semantic adoption statuses",
+    "experiment_registry": "Experiment evidence registry",
 }
 
 _CHECKPOINT_LABELS = {
@@ -187,6 +198,29 @@ def _display_checkpoint(checkpoint: object) -> str:
 
     value = str(checkpoint or "unknown")
     return _CHECKPOINT_LABELS.get(value, value.replace("_", " ").title())
+
+
+def _experiments_for_export() -> dict | None:
+    """The governed experiment registry as one exportable payload (records,
+    declared model uses, compatibility assessments, retained source rows
+    under one record-level schema version) - None while the registry is
+    empty, so older bundles remain byte-comparable."""
+    records = [
+        ExperimentRecord.from_dict(item)
+        for item in (get_state("experiment_records") or [])
+    ]
+    uses = [
+        ExperimentToModelUse.from_dict(item)
+        for item in (get_state("experiment_model_uses") or [])
+    ]
+    assessments = [
+        CompatibilityAssessment.from_dict(item)
+        for item in (get_state("experiment_compatibility_assessments") or [])
+    ]
+    evidence_rows = get_state("experiment_evidence_rows") or []
+    if not registry_has_content(records, uses, assessments, evidence_rows):
+        return None
+    return registry_to_dict(records, uses, assessments, evidence_rows)
 
 
 def _render_contains_checklist(contains: dict) -> None:
@@ -730,6 +764,12 @@ if st.button("Build export bundle", type="primary"):
             standard_context_data=get_state("standard_context_data"),
             context_variable_metadata=get_state("context_variable_metadata") or [],
             source_domain_semantics=get_state("source_domain_semantics") or [],
+            # REQ-EXPMODE-001 (Work Package 2): the governed experiment
+            # registry travels with the project - records, declared model
+            # uses, compatibility assessments and retained source rows
+            # under one record-level schema version. None (omitted) while
+            # the registry is empty.
+            experiments=_experiments_for_export(),
         )
     st.success("Durable project bundle built and ready to download.")
     # Read back this bundle's own manifest.json (written by
@@ -1014,6 +1054,28 @@ if uploaded_zip is not None and st.button("Import bundle"):
         )
         for _coverage_matrix_warning in _coverage_matrix_warnings:
             st.warning(_coverage_matrix_warning)
+        # REQ-EXPMODE-001 (Work Package 2): restore the quarantine-checked
+        # governed experiment registry. A bundle with no experiments.json
+        # (every bundle exported before this capability existed, or an
+        # empty registry) resolves to empty lists - "no registry yet"
+        # restored as none, never fabricated; malformed records and
+        # orphaned model uses are quarantined and named in warnings.
+        (
+            _resolved_experiment_records,
+            _resolved_experiment_uses,
+            _resolved_experiment_assessments,
+            _resolved_experiment_rows,
+            _experiment_warnings,
+        ) = resolve_imported_experiments(imported)
+        set_state("experiment_records", _resolved_experiment_records)
+        set_state("experiment_model_uses", _resolved_experiment_uses)
+        set_state(
+            "experiment_compatibility_assessments",
+            _resolved_experiment_assessments,
+        )
+        set_state("experiment_evidence_rows", _resolved_experiment_rows)
+        for _experiment_warning in _experiment_warnings:
+            st.warning(_experiment_warning)
         # REQ-COVERAGE-001 S4 (Work Package 4): restore the join key
         # columns, mode and diagnostics from the most recent "Join
         # sources" click - a bundle with no join_config.json (every bundle

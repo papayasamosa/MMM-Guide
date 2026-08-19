@@ -317,6 +317,7 @@ def export_project(
     standard_context_data: Optional[pd.DataFrame] = None,
     context_variable_metadata: Optional[List[dict]] = None,
     source_domain_semantics: Optional[List[dict]] = None,
+    experiments: Optional[dict] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp_str:
@@ -590,6 +591,15 @@ def export_project(
             (tmp / "config" / "source_domain_semantics.json").write_text(
                 json.dumps(source_domain_semantics, indent=2, default=str)
             )
+        # REQ-EXPMODE-001 (Work Package 2): the governed experiment
+        # registry - records, declared model uses, compatibility
+        # assessments and retained source rows, under one record-level
+        # schema version (application.experiment_service.
+        # registry_to_dict). Written only when the registry has content.
+        if experiments is not None and bool(experiments):
+            (tmp / "config" / "experiments.json").write_text(
+                json.dumps(experiments, indent=2, default=str)
+            )
         if diagnostics is not None:
             for name, value in diagnostics.items():
                 if value is None:
@@ -689,6 +699,7 @@ def export_project(
                 and bool(context_variable_metadata),
                 "source_domain_semantics": source_domain_semantics is not None
                 and bool(source_domain_semantics),
+                "experiment_registry": experiments is not None and bool(experiments),
             },
         }
         (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
@@ -833,6 +844,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         "standard_context_data": None,
         "context_variable_metadata": [],
         "source_domain_semantics": [],
+        # REQ-EXPMODE-001 (Work Package 2): the governed experiment
+        # registry file, raw and unvalidated - resolve_imported_experiments
+        # applies the quarantine/migration contract before session use.
+        "experiments": None,
     }
     with tempfile.TemporaryDirectory() as tmp_str:
         tmp = Path(tmp_str)
@@ -1052,6 +1067,13 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "source_domain_semantics.json").exists():
             result["source_domain_semantics"] = json.loads(
                 (config_dir / "source_domain_semantics.json").read_text()
+            )
+        # REQ-EXPMODE-001 (Work Package 2): raw experiment-registry file.
+        # Validation/quarantine happens in resolve_imported_experiments -
+        # this loader never guesses an unrecognised record-level schema.
+        if (config_dir / "experiments.json").exists():
+            result["experiments"] = json.loads(
+                (config_dir / "experiments.json").read_text()
             )
         # G2A.7 (REQ-OUT-002): outcome approvals persisted alongside outcome
         # definitions. Absent in legacy bundles — treated as no approvals on
@@ -1683,6 +1705,147 @@ def resolve_imported_variable_coverage_matrices(
                 f"quarantined (dropped, not silently kept): {exc}"
             )
     return normalised, warnings
+
+
+def resolve_imported_experiments(
+    imported: Dict[str, Any],
+) -> Tuple[List[dict], List[dict], List[dict], List[dict], List[str]]:
+    """REQ-EXPMODE-001 (Work Package 2): resolve the governed experiment
+    registry an imported bundle should use.
+
+    Returns `(records, model_uses, compatibility_assessments, evidence_rows,
+    warnings)` - four dict lists ready for session state, plus quarantine
+    warnings. Every record round-trips through its own `from_dict`/`to_dict`
+    for validation: a malformed record, or a registry file carrying an
+    unrecognised future `schema_version`, is quarantined (dropped) and named
+    in `warnings`, never silently trusted. A model use referencing an
+    experiment version this registry does not contain is also quarantined
+    (an orphan use must never point at missing evidence), and
+    double-counted dependence violations are reported as warnings while the
+    records themselves are retained - import reports, it does not rewrite
+    an analyst's registry.
+
+    A bundle with no `experiments.json` (every bundle exported before this
+    capability existed, or a project with an empty registry) resolves to
+    four empty lists with no warnings - "no registry yet", never fabricated.
+    """
+    from .experiments import (
+        EXPERIMENT_REGISTRY_SCHEMA_VERSION,
+        CompatibilityAssessment,
+        ExperimentRecord,
+        ExperimentToModelUse,
+        validate_no_double_counted_dependence,
+    )
+
+    warnings: List[str] = []
+    raw = imported.get("experiments")
+    if raw is None:
+        return [], [], [], [], warnings
+    if not isinstance(raw, Mapping):
+        warnings.append(
+            "The experiment registry file is not a mapping and was "
+            "quarantined (dropped, not silently kept)."
+        )
+        return [], [], [], [], warnings
+
+    schema_version = raw.get("schema_version")
+    if type(schema_version) is not int or schema_version < 1:
+        warnings.append(
+            f"Experiment registry schema_version {schema_version!r} is not "
+            "a valid integer >= 1 - the whole registry was quarantined."
+        )
+        return [], [], [], [], warnings
+    if schema_version != EXPERIMENT_REGISTRY_SCHEMA_VERSION:
+        warnings.append(
+            f"Experiment registry schema_version {schema_version} is an "
+            "unrecognised future version - the whole registry was "
+            "quarantined rather than guessed."
+        )
+        return [], [], [], [], warnings
+
+    records: List[ExperimentRecord] = []
+    for index, item in enumerate(raw.get("records") or []):
+        if not isinstance(item, Mapping):
+            warnings.append(
+                f"Experiment record {index} is not a mapping and was quarantined."
+            )
+            continue
+        try:
+            records.append(ExperimentRecord.from_dict(item))
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            experiment_id = item.get("experiment_id", "<unknown>")
+            warnings.append(
+                f"Experiment record {index} (experiment_id={experiment_id!r}) "
+                f"was malformed and was quarantined: {exc}"
+            )
+
+    registered_versions = {
+        (record.experiment_id, record.experiment_version) for record in records
+    }
+    uses: List[ExperimentToModelUse] = []
+    for index, item in enumerate(raw.get("model_uses") or []):
+        if not isinstance(item, Mapping):
+            warnings.append(
+                f"Experiment model use {index} is not a mapping and was quarantined."
+            )
+            continue
+        try:
+            use = ExperimentToModelUse.from_dict(item)
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            warnings.append(
+                f"Experiment model use {index} was malformed and was quarantined: {exc}"
+            )
+            continue
+        if (use.experiment_id, use.experiment_version) not in registered_versions:
+            warnings.append(
+                f"Experiment model use {index} references "
+                f"{use.experiment_id!r} v{use.experiment_version}, which this "
+                "registry does not contain - the orphan use was quarantined."
+            )
+            continue
+        uses.append(use)
+
+    for violation in validate_no_double_counted_dependence(uses):
+        warnings.append(
+            f"Experiment {violation!r} informs one model through two "
+            "different calibrating modes without a dependence_handling_method "
+            "on every such use - kept as recorded, but review is required."
+        )
+
+    assessments: List[CompatibilityAssessment] = []
+    for index, item in enumerate(raw.get("compatibility_assessments") or []):
+        if not isinstance(item, Mapping):
+            warnings.append(
+                f"Compatibility assessment {index} is not a mapping and was "
+                "quarantined."
+            )
+            continue
+        try:
+            assessments.append(CompatibilityAssessment.from_dict(item))
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            experiment_id = item.get("experiment_id", "<unknown>")
+            warnings.append(
+                f"Compatibility assessment {index} "
+                f"(experiment_id={experiment_id!r}) was malformed and was "
+                f"quarantined: {exc}"
+            )
+
+    evidence_rows: List[dict] = []
+    for index, item in enumerate(raw.get("evidence_rows") or []):
+        if not isinstance(item, Mapping):
+            warnings.append(
+                f"Experiment evidence row {index} is not a mapping and was quarantined."
+            )
+            continue
+        evidence_rows.append(dict(item))
+
+    return (
+        [record.to_dict() for record in records],
+        [use.to_dict() for use in uses],
+        [assessment.to_dict() for assessment in assessments],
+        evidence_rows,
+        warnings,
+    )
 
 
 def _validate_relative_artifact_path(rel_path: str) -> None:

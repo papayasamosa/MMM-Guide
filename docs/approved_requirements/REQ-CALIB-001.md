@@ -64,7 +64,12 @@ calibration mechanism exists to *produce* a
 this half of the section is always `None`/`not_applicable` today, exactly
 as before this wiring — the requirement's own core contract
 (`assemble_calibration_comparison`) remains untouched and uncoupled from
-any specific statistical mechanism.
+any specific statistical mechanism. (Work Package 2 of
+`Media-Mix-Lab: Coding LLM Next Steps After PR #291`, 2026-08-19, now
+populates the *experiment-provenance* half of the section from the real
+saved registry — see `REQ-EXPMODE-001`'s Capability status; this record's
+comparison half is unchanged and remains empty until an approved
+calibration mechanism exists.)
 
 Not yet implemented: the material-change criteria that trigger
 mandatory review (Part 7 `VL-025`, Part 9 `RP-023`); any specific
