@@ -7118,3 +7118,44 @@ untracked and unpushed.
 **Owner:** Marketing Data Science / Model Governance.
 **Status:** Data/lifecycle foundation implemented; statistical method
 and thresholds remain decision-required (Work Package 2 evidence next).
+
+---
+
+**Date:** 2026-08-20
+**Decision:** Record Work Package 2's named-event response evidence as
+decision support. The standalone package
+`scripts/wp2_named_event_response/` (never imported by
+`ancestry_mmm/**`, enforced by conformance tests) fits candidates
+S1-S5 against a deterministic synthetic DGP grid (8 single-market
+scenarios, multi-market shared/Model-C variants, holdout, wrong-window,
+oracle-fixed and wide-prior sensitivities) with the pinned stack
+(PyMC 5.28.5 / PyTensor 2.38.3 / ArviZ 0.23.4). The recorded CI run
+`32349484897` (workflow `Tests`, job "Named-event response evidence")
+produced `docs/wp2_named_event_response_results.json` (46 records, 0
+failed) and `docs/wp2_named_event_response_evidence.md`. Recorded
+observations include: flexible encodings recover timing well at
+adequate repeats while the fixed generic profile under-recovers
+(prior shrinkage confirmed by a wide-prior sensitivity); wrong-window
+support degrades recovery; sparse repeats inflate amplitude recovery;
+separation from an aligned seasonal bulge remains hard; and pooled
+S5 r-hat sits at the diagnostic edge. No candidate is selected; all
+statistical and threshold decisions remain with the human owners.
+**Reason:** The brief's Work Package 2 authorises evidence only -
+"measure performance before adding approximation" - and reserves
+response-structure/prior/pooling/threshold choices for human decision.
+**Alternatives considered:** Running the evidence in blocking PR CI
+(rejected - real NUTS sampling is too slow; the schedule/manual
+`named-event-response-recovery` job in tests.yml mirrors the existing
+candidate-a-recovery policy); selecting a method from the results
+(rejected - not authorised); evaluating only the parametric kernel
+(rejected - the brief names the full candidate set).
+**Impact:** New `scripts/wp2_named_event_response/` (6 modules),
+`docs/wp2_named_event_response_evidence.md`,
+`docs/wp2_named_event_response_results.json`, schedule/manual CI job,
+merge-gate skipped-check entry, and
+`ancestry_mmm/tests/test_wp2_named_event_response_evidence.py`
+conformance tests. No production modelling code changed. PRD sources
+remain untracked and unpushed.
+**Owner:** Marketing Data Science / Model Governance.
+**Status:** Evidence recorded; no candidate selected (decision remains
+open for the human owners).
