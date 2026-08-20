@@ -11,7 +11,7 @@ from typing import Dict, Optional
 import arviz as az
 import numpy as np
 
-from .candidates import RETENTION, _FIXED_REFERENCE, _SPLINE_BASIS
+from .candidates import RETENTION, _SPLINE_BASIS
 from .dgp import MAX_LAG, MAX_LEAD, REL_OFFSETS, Scenario
 
 
@@ -20,17 +20,19 @@ def _mean(idata: az.InferenceData, name: str) -> np.ndarray:
 
 
 def _event_weights(
-    idata: az.InferenceData, candidate: str
+    idata: az.InferenceData,
+    candidate: str,
+    offsets: np.ndarray = REL_OFFSETS,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Posterior-mean event weights `(weights, weights_per_draw)`.
-    `weights` is (K,); `weights_per_draw` is (n_draws, K)."""
+    `weights` is (K,); `weights_per_draw` is (n_draws, K). `offsets` must
+    be the relative-week grid the candidate was actually fit on."""
     post = idata.posterior.stack(sample=("chain", "draw"))
     if candidate == "S1_fixed_profile":
         scale = float(idata.posterior["event_scale"].mean(dim=("chain", "draw")).values)
         scale_draws = np.asarray(post["event_scale"].values)
-        return scale * _FIXED_REFERENCE, scale_draws[:, None] * _FIXED_REFERENCE[
-            None, :
-        ]
+        reference = _fixed_reference_for(offsets)
+        return scale * reference, scale_draws[:, None] * reference[None, :]
     if candidate == "S2_parametric":
         center = float(
             idata.posterior["event_center"].mean(dim=("chain", "draw")).values
@@ -39,12 +41,12 @@ def _event_weights(
         amplitude = float(
             idata.posterior["event_amplitude"].mean(dim=("chain", "draw")).values
         )
-        weights = amplitude * np.exp(-0.5 * ((REL_OFFSETS - center) / width) ** 2)
+        weights = amplitude * np.exp(-0.5 * ((offsets - center) / width) ** 2)
         center_d = np.asarray(post["event_center"].values)
         width_d = np.asarray(post["event_width"].values)
         amplitude_d = np.asarray(post["event_amplitude"].values)
         weights_d = amplitude_d[:, None] * np.exp(
-            -0.5 * ((REL_OFFSETS[None, :] - center_d[:, None]) / width_d[:, None]) ** 2
+            -0.5 * ((offsets[None, :] - center_d[:, None]) / width_d[:, None]) ** 2
         )
         return weights, weights_d
     if candidate in ("S3_spline_basis", "S5_pooled_basis"):
@@ -52,13 +54,14 @@ def _event_weights(
             idata.posterior["event_coefs"].mean(dim=("chain", "draw")).values
         )
         weights = _SPLINE_BASIS @ coefs
-        weights_d = np.asarray(post["event_coefs"].values) @ _SPLINE_BASIS.T
+        # xarray stacks coefficient dims before samples: (n_coef, n_draws).
+        weights_d = (np.asarray(post["event_coefs"].values).T) @ _SPLINE_BASIS.T
         return weights, weights_d
     if candidate == "S4_dummies":
         coefs = np.asarray(
             idata.posterior["event_coefs"].mean(dim=("chain", "draw")).values
         )
-        return coefs, np.asarray(post["event_coefs"].values)
+        return coefs, np.asarray(post["event_coefs"].values).T
     raise ValueError(f"unknown candidate {candidate}")
 
 
@@ -93,12 +96,20 @@ def _reconstructed_media(idata: az.InferenceData, x_media: np.ndarray) -> np.nda
     return saturated @ beta
 
 
+def _fixed_reference_for(offsets: np.ndarray) -> np.ndarray:
+    """The fixed S1 reference profile evaluated on `offsets` - the same
+    generic normal shape centred at the event week, renormalised."""
+    reference = np.exp(-0.5 * ((offsets - 0.0) / 1.0) ** 2)
+    return reference / reference.sum()
+
+
 def compute_single_market_metrics(
     scenario: Scenario,
     candidate: str,
     idata: az.InferenceData,
     runtime: float,
     event_design: np.ndarray | None = None,
+    offsets: np.ndarray = REL_OFFSETS,
 ) -> Dict:
     """Metrics for one single-market fit. All values are floats, safe to
     JSON-serialise. `event_design` overrides the scenario's design for
@@ -110,7 +121,7 @@ def compute_single_market_metrics(
         lo, hi = max(0, week - MAX_LEAD), min(scenario.y.shape[0], week + MAX_LAG + 1)
         event_window[lo:hi] = True
 
-    weights, weights_d = _event_weights(idata, candidate)
+    weights, weights_d = _event_weights(idata, candidate, offsets=offsets)
     est_event = design @ weights
     true_event = true["event_contrib"]
     event_rmse = float(np.sqrt(np.mean((est_event - true_event) ** 2)))

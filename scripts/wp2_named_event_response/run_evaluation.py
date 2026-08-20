@@ -31,6 +31,7 @@ from .candidates import (
 )
 from .dgp import (
     KERNELS,
+    WEEKS,
     Scenario,
     build_multi_market_scenario,
     build_scenarios,
@@ -83,6 +84,17 @@ def _wrong_window_design(event_weeks: np.ndarray, offsets: np.ndarray) -> np.nda
             if 0 <= target < n_weeks:
                 design[target, k] = 1.0
     return design
+
+
+def _truncate_true(true: Dict[str, Any], n_weeks: int) -> Dict[str, Any]:
+    """Truncate the 156-week true-series entries of a scenario's truth
+    dict to the first `n_weeks` rows; small parameter arrays (media
+    coefficients, kernels) are left untouched."""
+    truncated = dict(true)
+    for key, value in truncated.items():
+        if isinstance(value, np.ndarray) and value.shape and value.shape[0] == WEEKS:
+            truncated[key] = value[:n_weeks]
+    return truncated
 
 
 def main() -> int:
@@ -155,8 +167,8 @@ def main() -> int:
     holdout_scenario.y = anticipatory.y[:train_weeks]
     holdout_scenario.x_media = anticipatory.x_media[:train_weeks]
     holdout_scenario.x_promo = anticipatory.x_promo[:train_weeks]
-    holdout_scenario.event_design = anticipatory.event_design
-    holdout_scenario.true = anticipatory.true
+    holdout_scenario.event_design = anticipatory.event_design[:train_weeks]
+    holdout_scenario.true = _truncate_true(anticipatory.true, train_weeks)
     for candidate in (
         "S1_fixed_profile",
         "S2_parametric",
@@ -255,7 +267,12 @@ def main() -> int:
                     }
                 elif run == "sensitivity_wrong_window":
                     metrics = compute_single_market_metrics(
-                        scenario, candidate, idata, runtime, event_design=wrong_design
+                        scenario,
+                        candidate,
+                        idata,
+                        runtime,
+                        event_design=wrong_design,
+                        offsets=wrong_offsets,
                     )
                 elif run in ("multi_market_shared", "multi_market_model_c"):
                     metrics = compute_multi_market_metrics(
