@@ -20,10 +20,26 @@ from ancestry_mmm.application.experiment_service import (
     adopt_experiment_record,
     register_experiment_record,
 )
+from ancestry_mmm.application.event_service import (
+    adopt_source_event_occurrence,
+    new_family,
+    new_response_definition,
+    register_family,
+    register_occurrence,
+    register_response_definition,
+    registry_problems,
+)
 from ancestry_mmm.core.experiments import (
     EXPERIMENT_DESIGNS,
     ExperimentRecord,
     ExperimentToModelUse,
+)
+from ancestry_mmm.core.named_events import (
+    DEFAULT_EVENT_EVIDENCE_STATUS,
+    EVENT_TREATMENTS,
+    EventResponseDefinition,
+    NamedEventFamily,
+    NamedEventOccurrence,
 )
 from ancestry_mmm.components import (
     apply_theme,
@@ -1320,6 +1336,312 @@ if sources:
             width="stretch",
             column_config=dataframe_column_config(_uses_df),
         )
+    # --- Governed named events (REQ-EVENT-001, Work Package 1) ----------
+    st.markdown("---")
+    st.markdown("### Named events")
+    st.caption(
+        "Named calendar/business events are analytical resources with a "
+        "factual occurrence date - distinct from application domain events "
+        "like a finished model run. The optional Context `events` table "
+        "supplies raw rows; adopting one into the governed registry records "
+        "its factual dates, market scope and source lineage. The factual "
+        "date is never shifted, family classification or temporal "
+        "treatment is never inferred from the event name, and no "
+        "event-response mathematics is implemented anywhere in this "
+        "application."
+    )
+
+    _event_rows: list = []
+    _active_versions = get_state("active_source_upload_version") or {}
+    for _source_id, _frame in (get_state("raw_sources") or {}).items():
+        if source_table_name(_source_id) != "events":
+            continue
+        _source_version = _active_versions.get(_source_id)
+        for _row in _frame.to_dict(orient="records"):
+            _event_rows.append(
+                {
+                    "source_id": _source_id,
+                    "source_version": _source_version,
+                    **{str(k): v for k, v in _row.items()},
+                }
+            )
+
+    _families = [
+        NamedEventFamily.from_dict(item)
+        for item in (get_state("named_event_families") or [])
+    ]
+    _occurrences = [
+        NamedEventOccurrence.from_dict(item)
+        for item in (get_state("named_event_occurrences") or [])
+    ]
+    _definitions = [
+        EventResponseDefinition.from_dict(item)
+        for item in (get_state("named_event_response_definitions") or [])
+    ]
+
+    if _event_rows:
+        st.markdown("#### Source rows awaiting adoption")
+        _rows_df = pd.DataFrame(_event_rows)
+        st.dataframe(
+            _rows_df,
+            width="stretch",
+            column_config=dataframe_column_config(_rows_df),
+        )
+        _row_keys = [
+            f"{str(row.get('event_id') or '')} ({row.get('source_id')})"
+            for row in _event_rows
+        ]
+        _selected_key = st.selectbox(
+            "Row to adopt",
+            options=_row_keys,
+            key="ne_adopt_row_select",
+            format_func=lambda value: f"{value} (source row)",
+        )
+        _selected_row = _event_rows[_row_keys.index(_selected_key)]
+        with st.form("ne_adopt_form"):
+            _ne_market = st.text_input(
+                "Market scope (comma-separated)",
+                key="ne_adopt_market",
+                help=(
+                    "The market(s) this occurrence applies to - required "
+                    "governed scope, never inferred from the event name."
+                ),
+            )
+            _ne_family = st.text_input(
+                "Family id (optional)",
+                key="ne_adopt_family",
+                help=(
+                    "Link to a governed family (e.g. mothers_day) only if "
+                    "that family has been reviewed and registered below. "
+                    "Leave blank while the mapping is unreviewed."
+                ),
+            )
+            _ne_adopt_submitted = st.form_submit_button("Adopt occurrence")
+        if _ne_adopt_submitted:
+            _ne_markets = [
+                m.strip() for m in (_ne_market or "").split(",") if m.strip()
+            ]
+            try:
+                _ne_record = adopt_source_event_occurrence(
+                    {
+                        k: _selected_row.get(k)
+                        for k in (
+                            "event_id",
+                            "event_name",
+                            "start_date",
+                            "end_date",
+                        )
+                    },
+                    {
+                        "market": _ne_markets,
+                        "source_id": _selected_row.get("source_id"),
+                        "source_version": _selected_row.get("source_version"),
+                        "family_id": _ne_family or None,
+                    },
+                )
+                set_state(
+                    "named_event_occurrences",
+                    [
+                        occ.to_dict()
+                        for occ in register_occurrence(_occurrences, _ne_record)
+                    ],
+                )
+                st.success(
+                    f"Adopted occurrence {_ne_record.event_id!r} with its "
+                    "factual dates unchanged. Registry edits are new "
+                    "versions, never mutations."
+                )
+            except ValueError as exc:
+                st.error(str(exc))
+    else:
+        st.info(
+            "No Context events table rows supplied. The optional standard "
+            "Context template's `events` sheet carries event_id, "
+            "event_name, start_date and end_date."
+        )
+
+    if _occurrences:
+        st.markdown("#### Registered occurrences (factual dates)")
+        _occ_df = pd.DataFrame(
+            [
+                {
+                    "event_id": occ.event_id,
+                    "version": occ.event_version,
+                    "display_name": occ.display_name,
+                    "start_date": occ.start_date,
+                    "end_date": occ.end_date,
+                    "market_scope": ", ".join(occ.market_scope),
+                    "family_id": occ.family_id or "(unmapped)",
+                    "source_id": occ.source_id,
+                }
+                for occ in _occurrences
+            ]
+        )
+        st.dataframe(
+            _occ_df,
+            width="stretch",
+            column_config=dataframe_column_config(_occ_df),
+        )
+
+    st.markdown("#### Event families")
+    with st.form("ne_family_form"):
+        _ne_f1, _ne_f2 = st.columns(2)
+        _ne_family_id = _ne_f1.text_input(
+            "Family id", key="ne_family_id", help="Stable governed identity."
+        )
+        _ne_family_name = _ne_f2.text_input(
+            "Display name", key="ne_family_name", help="Free-text label only."
+        )
+        _ne_classification = st.text_input(
+            "Classification",
+            key="ne_family_classification",
+            help=(
+                "The governed, analyst-supplied classification (e.g. "
+                "gifting, commercial, holiday, cultural). Never inferred "
+                "from the display name."
+            ),
+        )
+        _ne_classification_status = st.text_input(
+            "Classification status",
+            value=DEFAULT_EVENT_EVIDENCE_STATUS,
+            key="ne_family_status",
+            help="Registration is never approval.",
+        )
+        _ne_family_submitted = st.form_submit_button("Register family")
+    if _ne_family_submitted:
+        try:
+            _ne_new_family = new_family(
+                family_id=_ne_family_id,
+                display_name=_ne_family_name,
+                classification=_ne_classification,
+                classification_status=_ne_classification_status,
+            )
+            set_state(
+                "named_event_families",
+                [fam.to_dict() for fam in register_family(_families, _ne_new_family)],
+            )
+            st.success(f"Registered family {_ne_new_family.family_id!r}.")
+        except ValueError as exc:
+            st.error(str(exc))
+
+    if _families:
+        st.markdown("#### Registered families")
+        _fam_df = pd.DataFrame(
+            [
+                {
+                    "family_id": fam.family_id,
+                    "version": fam.family_version,
+                    "display_name": fam.display_name,
+                    "classification": fam.classification,
+                    "classification_status": fam.classification_status,
+                }
+                for fam in _families
+            ]
+        )
+        st.dataframe(
+            _fam_df,
+            width="stretch",
+            column_config=dataframe_column_config(_fam_df),
+        )
+
+        st.markdown("#### Event response definitions")
+        with st.form("ne_definition_form"):
+            _ne_def_id = st.text_input("Response definition id", key="ne_definition_id")
+            _ne_def_family = st.selectbox(
+                "Family",
+                options=[fam.family_id for fam in _families],
+                key="ne_definition_family",
+            )
+            _ne_def_treatment = st.selectbox(
+                "Temporal treatment",
+                options=list(EVENT_TREATMENTS),
+                key="ne_definition_treatment",
+            )
+            _ne_d1, _ne_d2 = st.columns(2)
+            _ne_max_lead = _ne_d1.number_input(
+                "Maximum lead (weeks)",
+                min_value=0,
+                value=0,
+                key="ne_definition_lead",
+                help="Governed support only - not evidence of effect.",
+            )
+            _ne_max_lag = _ne_d2.number_input(
+                "Maximum lag (weeks)",
+                min_value=0,
+                value=0,
+                key="ne_definition_lag",
+                help="Governed support only - not evidence of effect.",
+            )
+            _ne_method_ref = st.text_input(
+                "Transformation method reference",
+                key="ne_definition_method",
+                help=(
+                    "A governed, opaque reference to a future approved "
+                    "transformation method. No kernel is selected or "
+                    "computed by this application."
+                ),
+            )
+            _ne_definition_submitted = st.form_submit_button(
+                "Register response definition"
+            )
+        if _ne_definition_submitted:
+            try:
+                _ne_new_definition = new_response_definition(
+                    response_definition_id=_ne_def_id,
+                    family_id=_ne_def_family,
+                    treatment=_ne_def_treatment,
+                    max_lead=int(_ne_max_lead),
+                    max_lag=int(_ne_max_lag),
+                    transformation_method_reference=_ne_method_ref,
+                )
+                set_state(
+                    "named_event_response_definitions",
+                    [
+                        definition.to_dict()
+                        for definition in register_response_definition(
+                            _definitions, _ne_new_definition
+                        )
+                    ],
+                )
+                st.success(
+                    f"Registered response definition {_ne_new_definition.response_definition_id!r}."
+                )
+            except ValueError as exc:
+                st.error(str(exc))
+
+        if _definitions:
+            _def_df = pd.DataFrame(
+                [
+                    {
+                        "response_definition_id": definition.response_definition_id,
+                        "version": definition.response_definition_version,
+                        "family_id": definition.family_id,
+                        "treatment": definition.treatment,
+                        "max_lead": definition.max_lead,
+                        "max_lag": definition.max_lag,
+                        "transformation_method_reference": (
+                            definition.transformation_method_reference
+                        ),
+                        "evidence_status": definition.evidence_status,
+                    }
+                    for definition in _definitions
+                ]
+            )
+            st.dataframe(
+                _def_df,
+                width="stretch",
+                column_config=dataframe_column_config(_def_df),
+            )
+
+    _ne_problems = registry_problems(_families, _occurrences, _definitions)
+    for _ne_problem in _ne_problems:
+        st.warning(_ne_problem)
+    st.caption(
+        "The registry is immutable: an edit creates a new version - it "
+        "never rewrites history. Occurrences keep their factual dates; "
+        "family classification and temporal treatment come only from "
+        "governed registration above."
+    )
 else:
     render_empty_state(
         "No sources loaded yet. Load the demo data or upload a file above to get started.",

@@ -55,6 +55,7 @@ from ancestry_mmm.core.persistence import (
     resolve_imported_outcome_group_treatments,
     resolve_imported_outcome_reconciliation_groups,
     resolve_imported_experiments,
+    resolve_imported_named_events,
     verify_imported_approval,
     UnsafeZipEntryError,
     audit_project_resumability,
@@ -63,10 +64,19 @@ from ancestry_mmm.application.experiment_service import (
     registry_has_content,
     registry_to_dict,
 )
+from ancestry_mmm.application.event_service import (
+    registry_has_content as named_event_registry_has_content,
+    registry_to_dict as named_event_registry_to_dict,
+)
 from ancestry_mmm.core.experiments import (
     CompatibilityAssessment,
     ExperimentRecord,
     ExperimentToModelUse,
+)
+from ancestry_mmm.core.named_events import (
+    EventResponseDefinition,
+    NamedEventFamily,
+    NamedEventOccurrence,
 )
 from ancestry_mmm.application.project_service import verify_imported_readiness
 from ancestry_mmm.application.diagnostics_service import DiagnosticsArtefact
@@ -177,6 +187,7 @@ _CONTAINS_LABELS = {
     "context_variable_metadata": "Context variable metadata",
     "source_domain_semantics": "Source semantic adoption statuses",
     "experiment_registry": "Experiment evidence registry",
+    "named_event_registry": "Governed named-event registry",
 }
 
 _CHECKPOINT_LABELS = {
@@ -221,6 +232,28 @@ def _experiments_for_export() -> dict | None:
     if not registry_has_content(records, uses, assessments, evidence_rows):
         return None
     return registry_to_dict(records, uses, assessments, evidence_rows)
+
+
+def _named_events_for_export() -> dict | None:
+    """The governed named-event registry as one exportable payload
+    (families, factual occurrences, response definitions under one
+    record-level schema version) - None while the registry is empty, so
+    older bundles remain byte-comparable."""
+    families = [
+        NamedEventFamily.from_dict(item)
+        for item in (get_state("named_event_families") or [])
+    ]
+    occurrences = [
+        NamedEventOccurrence.from_dict(item)
+        for item in (get_state("named_event_occurrences") or [])
+    ]
+    definitions = [
+        EventResponseDefinition.from_dict(item)
+        for item in (get_state("named_event_response_definitions") or [])
+    ]
+    if not named_event_registry_has_content(families, occurrences, definitions):
+        return None
+    return named_event_registry_to_dict(families, occurrences, definitions)
 
 
 def _render_contains_checklist(contains: dict) -> None:
@@ -770,6 +803,11 @@ if st.button("Build export bundle", type="primary"):
             # under one record-level schema version. None (omitted) while
             # the registry is empty.
             experiments=_experiments_for_export(),
+            # REQ-EVENT-001 (Work Package 1): the governed named-event
+            # registry travels with the project - families, factual
+            # occurrences and response definitions under one record-level
+            # schema version. None (omitted) while the registry is empty.
+            named_events=_named_events_for_export(),
         )
     st.success("Durable project bundle built and ready to download.")
     # Read back this bundle's own manifest.json (written by
@@ -1076,6 +1114,24 @@ if uploaded_zip is not None and st.button("Import bundle"):
         set_state("experiment_evidence_rows", _resolved_experiment_rows)
         for _experiment_warning in _experiment_warnings:
             st.warning(_experiment_warning)
+        # REQ-EVENT-001 (Work Package 1): restore the quarantine-checked
+        # governed named-event registry. A bundle with no named_events.json
+        # (every bundle exported before this capability existed, or an
+        # empty registry) resolves to empty lists - "no registry yet"
+        # restored as none, never fabricated; malformed records, orphan
+        # response definitions and unreviewed family links are named in
+        # warnings, and factual occurrence dates are never rewritten.
+        (
+            _resolved_event_families,
+            _resolved_event_occurrences,
+            _resolved_event_definitions,
+            _named_event_warnings,
+        ) = resolve_imported_named_events(imported)
+        set_state("named_event_families", _resolved_event_families)
+        set_state("named_event_occurrences", _resolved_event_occurrences)
+        set_state("named_event_response_definitions", _resolved_event_definitions)
+        for _named_event_warning in _named_event_warnings:
+            st.warning(_named_event_warning)
         # REQ-COVERAGE-001 S4 (Work Package 4): restore the join key
         # columns, mode and diagnostics from the most recent "Join
         # sources" click - a bundle with no join_config.json (every bundle

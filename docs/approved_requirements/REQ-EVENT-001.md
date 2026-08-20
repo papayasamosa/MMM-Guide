@@ -50,13 +50,29 @@ record.
 
 ## Capability status
 
-Zero governed named-event resource set exists. The only current
-implementation is raw-source groundwork: the optional Context
-`events` table (`ancestry_mmm/data/templates.py`) carrying only
-`event_id`, `event_name`, `start_date`, `end_date`, retained by
-`ancestry_mmm/data/source_inventory.py` as "irregular events". There
-is no event-family identity, no event-response definition, no governed
-classification, and no event-relative feature construction.
+Implemented (2026-08-19, Work Package 1 of the brief cited above):
+
+- `core.named_events` provides the governed `NamedEventFamily`,
+  `NamedEventOccurrence` and `EventResponseDefinition` records, the
+  closed four-value temporal-treatment vocabulary, reference
+  validation, version immutability and deterministic fingerprints;
+- `application.event_service` provides the explicit adoption boundary
+  from uploaded Context `events` rows (identity + factual dates +
+  free-text display label only - market scope, source lineage and
+  family link are analyst-supplied; nothing derives classification or
+  treatment from `event_name`);
+- the registry persists through the project bundle
+  (`config/named_events.json` under `EVENT_REGISTRY_SCHEMA_VERSION`,
+  manifest flag `named_event_registry`, quarantine-on-import via
+  `core.persistence.resolve_imported_named_events`, future schema
+  versions rejected) and has a review/adopt/edit UI on
+  `pages/01_Data_Upload.py`.
+
+Still not implemented (by design): event-relative feature
+construction (requirement 5), any consumption of
+`transformation_method_reference` by a model component, and every
+statistical response method - those remain decision-required, see
+"Explicitly excluded" below.
 
 ## Requirement
 
@@ -175,14 +191,12 @@ summary, this record does not approve:
 
 ## Affected modules
 
-None yet — target-state contract only. Anticipated future affected
-modules (not created by this record): the optional Context `events`
-contract in `data/templates.py`/`data/source_inventory.py`/`data/
-pipeline.py`; a governed event-family/occurrence/response-definition
-registry in `core/`; `core/persistence.py` (bundle schema, export/
-import); `core/fingerprint.py` (staleness participation);
-`application/validation_service.py`; `pages/01_Data_Upload.py` and
-related review/edit UI.
+`core/named_events.py` (new), `application/event_service.py` (new),
+`core/persistence.py` (`config/named_events.json` export/import,
+`resolve_imported_named_events`, manifest flag),
+`pages/01_Data_Upload.py` (review/adopt/edit UI),
+`pages/09_Project_Export.py` (export payload and import restore),
+`utils/session_state.py` (registry keys).
 
 ## Required tests
 
@@ -194,11 +208,25 @@ related review/edit UI.
 - `ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists`
 - `ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable`
 - `ancestry_mmm/tests/test_named_event_authority_reconciliation.py::TestNamedEventOverlayReconciled::test_req_event_001_indexed_and_classified_incomplete`
+- `ancestry_mmm/tests/test_named_events.py::TestClosedTemporalVocabulary::test_closed_vocabulary_is_exactly_four_treatments`
+- `ancestry_mmm/tests/test_named_events.py::TestFactualDatePreservation::test_occurrence_dates_round_trip_verbatim`
+- `ancestry_mmm/tests/test_named_events.py::TestNoTextInference::test_family_classification_is_explicitly_supplied`
+- `ancestry_mmm/tests/test_named_events.py::TestReferenceValidation::test_definition_must_reference_a_registered_family`
+- `ancestry_mmm/tests/test_named_events.py::TestFingerprints::test_registry_fingerprint_changes_when_any_current_record_changes`
+- `ancestry_mmm/tests/test_event_service.py::TestAdoptionBoundary::test_no_classification_or_treatment_is_derived`
+- `ancestry_mmm/tests/test_event_service.py::TestRegistryImmutability::test_re_adopting_different_content_raises_never_mutates`
+- `ancestry_mmm/tests/test_persistence.py::TestResolveImportedNamedEvents::test_factual_dates_survive_the_resolver_verbatim`
+- `ancestry_mmm/tests/test_persistence.py::TestResolveImportedNamedEvents::test_future_schema_version_is_quarantined`
+- `ancestry_mmm/tests/test_persistence.py::TestResolveImportedNamedEvents::test_bundle_without_registry_still_imports_with_no_warnings`
+- `ancestry_mmm/tests/test_named_event_registry_apptest.py::test_adopting_a_row_registers_version_1_with_factual_dates`
 
 ## Migration impact
 
-None. No schema, persisted artefact, or application code changes as a
-result of this record.
+None for existing bundles: the registry is an optional additive bundle
+file (`config/named_events.json`) with no project-bundle schema-version
+bump, mirroring the experiment registry. Every older bundle imports
+with an empty registry ("no registry yet") and no warnings. New
+registry records are versioned and immutable.
 
 ## Unresolved decisions
 

@@ -51,11 +51,12 @@ is approved by this record.
 
 ## Capability status
 
-Zero implementation. The sequential simulator replays media, baseline
-and promotion structure only; there is no governed event family,
-occurrence calendar or response definition to replay, and no
-event-relative feature path in `core.sequential_simulation` or
-`core.sequential_scenario_evaluation`.
+Zero implementation. `REQ-EVENT-001`'s governed occurrence/family/
+response-definition resources now exist (Work Package 1, 2026-08-19),
+but the sequential simulator still replays media, baseline and
+promotion structure only; there is no event-relative feature path in
+`core.sequential_simulation` or `core.sequential_scenario_evaluation`
+and no future event-calendar replay.
 
 ## Requirement
 

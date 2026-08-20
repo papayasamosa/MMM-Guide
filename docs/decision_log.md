@@ -7079,3 +7079,42 @@ untracked and unpushed.
 and threshold decisions).
 **Status:** Authority reconciled; named-event statistical method and
 thresholds remain decision-required (Work Package 2 evidence next).
+
+---
+
+**Date:** 2026-08-19
+**Decision:** Implement Work Package 1's governed named-event
+data/lifecycle foundation under `REQ-EVENT-001`. New
+`core/named_events.py` (frozen, lineage-versioned `NamedEventFamily` /
+`NamedEventOccurrence` / `EventResponseDefinition` records; closed
+four-value temporal-treatment vocabulary; reference validation;
+deterministic fingerprints that exclude free-text display labels) and
+`application/event_service.py` (explicit adoption boundary from
+uploaded Context `events` rows: a source row supplies identity, factual
+dates and a free-text display label only - market scope, source lineage
+and family link are analyst-supplied, and nothing derives classification
+or treatment from `event_name`). The registry persists through the
+project bundle (`config/named_events.json` under
+`EVENT_REGISTRY_SCHEMA_VERSION=1`, manifest flag `named_event_registry`,
+quarantine-on-import via `core.persistence.resolve_imported_named_events`;
+older bundles import with an empty registry and no warnings - no bundle
+schema-version bump, mirroring the experiment registry) and has a
+review/adopt/edit UI on `pages/01_Data_Upload.py`. No event-relative
+feature construction and no statistical response method is implemented.
+**Reason:** The brief's Work Package 1 authorises the governed
+foundation only; the response structure/kernel/priors/thresholds remain
+decision-required under `docs/wp2_named_event_statistical_method_
+decision_package.md`.
+**Alternatives considered:** Implementing an event-relative basis
+preview now (rejected - a basis family is an unapproved statistical
+choice); auto-adopting every uploaded events row (rejected - adoption
+is explicit per REQ-EVENT-001); deriving family classification from
+`event_name` (rejected - prohibited invariant); a new source domain
+(rejected - the optional Context `events` table is extended).
+**Impact:** 4 new/changed production modules, Data Upload and Project
+Export pages, 55 core/service tests, 12 persistence tests, 8 AppTest
+tests. No project-bundle schema-version bump. PRD sources remain
+untracked and unpushed.
+**Owner:** Marketing Data Science / Model Governance.
+**Status:** Data/lifecycle foundation implemented; statistical method
+and thresholds remain decision-required (Work Package 2 evidence next).

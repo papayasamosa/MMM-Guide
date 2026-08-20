@@ -30,6 +30,12 @@ from ancestry_mmm.core.experiments import (
     ExperimentRecord,
     ExperimentToModelUse,
 )
+from ancestry_mmm.core.named_events import (
+    EVENT_REGISTRY_SCHEMA_VERSION,
+    EventResponseDefinition,
+    NamedEventFamily,
+    NamedEventOccurrence,
+)
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
     fingerprint_model_spec,
@@ -65,6 +71,7 @@ from ancestry_mmm.core.persistence import (
     resolve_imported_causal_graphs,
     resolve_imported_experiments,
     resolve_imported_media_outcome_pathways,
+    resolve_imported_named_events,
     resolve_imported_outcome_approvals,
     resolve_imported_search_objects,
     resolve_imported_source_definitions,
@@ -4899,3 +4906,192 @@ def test_experiment_registry_round_trips_through_export_import(
     assert uses == []
     assert assessments == []
     assert rows == payload["evidence_rows"]
+
+
+# ---------------------------------------------------------------------------
+# REQ-EVENT-001 (Work Package 1): named-event registry persistence
+# ---------------------------------------------------------------------------
+
+
+class TestResolveImportedNamedEvents:
+    def _payload(self, *, schema_version=EVENT_REGISTRY_SCHEMA_VERSION, **overrides):
+        family = {
+            "family_id": "mothers_day",
+            "family_version": 1,
+            "display_name": "Mother's Day",
+            "classification": "gifting",
+            "classification_status": "draft_review_required",
+            "market_scope": ["UK"],
+            "product_scope": [],
+            "outcome_scope": [],
+            "metadata": {},
+        }
+        occurrence = {
+            "event_id": "md-2026",
+            "event_version": 1,
+            "display_name": "Mother's Day 2026",
+            "start_date": "2026-03-22",
+            "end_date": "2026-03-22",
+            "market_scope": ["UK"],
+            "source_id": "events",
+            "source_version": 1,
+            "family_id": "mothers_day",
+            "transformation_version": 1,
+            "metadata": {},
+        }
+        definition = {
+            "response_definition_id": "md-def",
+            "response_definition_version": 1,
+            "family_id": "mothers_day",
+            "treatment": "anticipatory",
+            "max_lead": 3,
+            "max_lag": 0,
+            "transformation_method_reference": "governed-ref",
+            "transformation_version": 1,
+            "market_scope": ["UK"],
+            "product_scope": [],
+            "outcome_scope": [],
+            "evidence_status": "draft_review_required",
+            "metadata": {},
+        }
+        payload = {
+            "schema_version": schema_version,
+            "families": [family],
+            "occurrences": [occurrence],
+            "response_definitions": [definition],
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_no_registry_file_is_no_registry_not_an_error(self):
+        families, occurrences, definitions, warnings = resolve_imported_named_events({})
+        assert families == [] and occurrences == [] and definitions == []
+        assert warnings == []
+
+    def test_round_trip_preserves_every_registry_part(self):
+        payload = self._payload()
+        families, occurrences, definitions, warnings = resolve_imported_named_events(
+            {"named_events": payload}
+        )
+        assert warnings == []
+        assert families == [
+            NamedEventFamily.from_dict(payload["families"][0]).to_dict()
+        ]
+        assert occurrences == [
+            NamedEventOccurrence.from_dict(payload["occurrences"][0]).to_dict()
+        ]
+        assert definitions == [
+            EventResponseDefinition.from_dict(
+                payload["response_definitions"][0]
+            ).to_dict()
+        ]
+
+    def test_factual_dates_survive_the_resolver_verbatim(self):
+        payload = self._payload()
+        _, occurrences, _, warnings = resolve_imported_named_events(
+            {"named_events": payload}
+        )
+        assert warnings == []
+        assert occurrences[0]["start_date"] == "2026-03-22"
+        assert occurrences[0]["end_date"] == "2026-03-22"
+
+    def test_future_schema_version_is_quarantined(self):
+        payload = self._payload(schema_version=99)
+        families, occurrences, definitions, warnings = resolve_imported_named_events(
+            {"named_events": payload}
+        )
+        assert families == [] and occurrences == [] and definitions == []
+        assert any("unrecognised future version" in w for w in warnings)
+
+    def test_invalid_schema_version_type_is_quarantined(self):
+        payload = self._payload(schema_version="1")
+        _, _, _, warnings = resolve_imported_named_events({"named_events": payload})
+        assert any("not a valid integer" in w for w in warnings)
+
+    def test_non_mapping_registry_is_quarantined(self):
+        _, _, _, warnings = resolve_imported_named_events({"named_events": []})
+        assert any("not a mapping" in w for w in warnings)
+
+    def test_malformed_occurrence_is_quarantined_by_index(self):
+        payload = self._payload()
+        payload["occurrences"][0]["start_date"] = "2026-03-25"
+        payload["occurrences"][0]["end_date"] = "2026-03-20"
+        _, occurrences, _, warnings = resolve_imported_named_events(
+            {"named_events": payload}
+        )
+        assert occurrences == []
+        assert any("was malformed" in w and "md-2026" in w for w in warnings)
+
+    def test_orphan_response_definition_is_quarantined(self):
+        payload = self._payload()
+        payload["families"] = []
+        families, occurrences, definitions, warnings = resolve_imported_named_events(
+            {"named_events": payload}
+        )
+        assert definitions == []
+        assert any("orphan definition was quarantined" in w for w in warnings)
+
+    def test_orphan_occurrence_family_link_keeps_factual_record(self):
+        payload = self._payload()
+        payload["families"] = []
+        _, occurrences, _, warnings = resolve_imported_named_events(
+            {"named_events": payload}
+        )
+        assert len(occurrences) == 1
+        assert occurrences[0]["start_date"] == "2026-03-22"
+        assert occurrences[0]["family_id"] == "mothers_day"
+        assert any("family link needs review" in w for w in warnings)
+
+    def test_bundle_round_trip(self, tmp_path, sample_project):
+        """REQ-EVENT-001: the full registry travels through the project
+        bundle under its own record-level schema version and resolves to
+        the same content on import - quarantining nothing."""
+        payload = self._payload()
+        project = dict(sample_project)
+        project["named_events"] = payload
+        output_path = export_project(tmp_path / "named_events.zip", **project)
+        imported = import_project(output_path)
+        assert imported["named_events"] == payload
+        families, occurrences, definitions, warnings = resolve_imported_named_events(
+            imported
+        )
+        assert warnings == []
+        assert families == [
+            NamedEventFamily.from_dict(payload["families"][0]).to_dict()
+        ]
+        assert occurrences == [
+            NamedEventOccurrence.from_dict(payload["occurrences"][0]).to_dict()
+        ]
+        assert definitions == [
+            EventResponseDefinition.from_dict(
+                payload["response_definitions"][0]
+            ).to_dict()
+        ]
+
+    def test_bundle_without_registry_still_imports_with_no_warnings(
+        self, tmp_path, sample_project
+    ):
+        """Backward compatibility: every bundle exported before this
+        capability existed has no named_events.json - that is "no registry
+        yet", never an error and never a fabricated registry."""
+        project = dict(sample_project)
+        output_path = export_project(tmp_path / "legacy.zip", **project)
+        imported = import_project(output_path)
+        assert imported.get("named_events") is None
+        families, occurrences, definitions, warnings = resolve_imported_named_events(
+            imported
+        )
+        assert families == [] and occurrences == [] and definitions == []
+        assert warnings == []
+
+    def test_manifest_flags_registry_presence(self, tmp_path, sample_project):
+        project = dict(sample_project)
+        project["named_events"] = self._payload()
+        output_path = export_project(tmp_path / "with_events.zip", **project)
+        with zipfile.ZipFile(output_path) as zf:
+            manifest = json.loads(zf.read("manifest.json"))
+        assert manifest["contains"]["named_event_registry"] is True
+        legacy_path = export_project(tmp_path / "without_events.zip", **sample_project)
+        with zipfile.ZipFile(legacy_path) as zf:
+            legacy_manifest = json.loads(zf.read("manifest.json"))
+        assert legacy_manifest["contains"]["named_event_registry"] is False

@@ -318,6 +318,7 @@ def export_project(
     context_variable_metadata: Optional[List[dict]] = None,
     source_domain_semantics: Optional[List[dict]] = None,
     experiments: Optional[dict] = None,
+    named_events: Optional[dict] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp_str:
@@ -600,6 +601,15 @@ def export_project(
             (tmp / "config" / "experiments.json").write_text(
                 json.dumps(experiments, indent=2, default=str)
             )
+        # REQ-EVENT-001 (Work Package 1): the governed named-event
+        # registry - families, factual occurrences and response
+        # definitions, under one record-level schema version
+        # (application.event_service.registry_to_dict). Written only
+        # when the registry has content.
+        if named_events is not None and bool(named_events):
+            (tmp / "config" / "named_events.json").write_text(
+                json.dumps(named_events, indent=2, default=str)
+            )
         if diagnostics is not None:
             for name, value in diagnostics.items():
                 if value is None:
@@ -700,6 +710,7 @@ def export_project(
                 "source_domain_semantics": source_domain_semantics is not None
                 and bool(source_domain_semantics),
                 "experiment_registry": experiments is not None and bool(experiments),
+                "named_event_registry": named_events is not None and bool(named_events),
             },
         }
         (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
@@ -1074,6 +1085,14 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "experiments.json").exists():
             result["experiments"] = json.loads(
                 (config_dir / "experiments.json").read_text()
+            )
+        # REQ-EVENT-001 (Work Package 1): raw named-event-registry file.
+        # Validation/quarantine happens in
+        # resolve_imported_named_events - this loader never guesses an
+        # unrecognised record-level schema.
+        if (config_dir / "named_events.json").exists():
+            result["named_events"] = json.loads(
+                (config_dir / "named_events.json").read_text()
             )
         # G2A.7 (REQ-OUT-002): outcome approvals persisted alongside outcome
         # definitions. Absent in legacy bundles — treated as no approvals on
@@ -1844,6 +1863,136 @@ def resolve_imported_experiments(
         [use.to_dict() for use in uses],
         [assessment.to_dict() for assessment in assessments],
         evidence_rows,
+        warnings,
+    )
+
+
+def resolve_imported_named_events(
+    imported: Dict[str, Any],
+) -> Tuple[List[dict], List[dict], List[dict], List[str]]:
+    """REQ-EVENT-001 (Work Package 1): resolve the governed named-event
+    registry an imported bundle should use.
+
+    Returns `(families, occurrences, response_definitions, warnings)` -
+    three dict lists ready for session state, plus quarantine warnings.
+    Every record round-trips through its own `from_dict`/`to_dict` for
+    validation: a malformed record, or a registry file carrying an
+    unrecognised future `schema_version`, is quarantined (dropped) and
+    named in `warnings`, never silently trusted. After records resolve,
+    reference validation runs: a response definition referencing a family
+    this registry does not contain is quarantined; an occurrence whose
+    `family_id` points at a missing family is kept with its factual dates
+    and identity intact but reported in `warnings` (an occurrence exists
+    independently of its family mapping - it is never silently re-mapped).
+
+    A bundle with no `named_events.json` (every bundle exported before
+    this capability existed, or a project with an empty registry)
+    resolves to three empty lists with no warnings - "no registry yet",
+    never fabricated.
+    """
+    from .named_events import (
+        EVENT_REGISTRY_SCHEMA_VERSION,
+        EventResponseDefinition,
+        NamedEventFamily,
+        NamedEventOccurrence,
+    )
+
+    warnings: List[str] = []
+    raw = imported.get("named_events")
+    if raw is None:
+        return [], [], [], warnings
+    if not isinstance(raw, Mapping):
+        warnings.append(
+            "The named-event registry file is not a mapping and was "
+            "quarantined (dropped, not silently kept)."
+        )
+        return [], [], [], warnings
+
+    schema_version = raw.get("schema_version")
+    if type(schema_version) is not int or schema_version < 1:
+        warnings.append(
+            f"Named-event registry schema_version {schema_version!r} is not "
+            "a valid integer >= 1 - the whole registry was quarantined."
+        )
+        return [], [], [], warnings
+    if schema_version != EVENT_REGISTRY_SCHEMA_VERSION:
+        warnings.append(
+            f"Named-event registry schema_version {schema_version} is an "
+            "unrecognised future version - the whole registry was "
+            "quarantined rather than guessed."
+        )
+        return [], [], [], warnings
+
+    families: List[NamedEventFamily] = []
+    for index, item in enumerate(raw.get("families") or []):
+        if not isinstance(item, Mapping):
+            warnings.append(
+                f"Named-event family {index} is not a mapping and was quarantined."
+            )
+            continue
+        try:
+            families.append(NamedEventFamily.from_dict(item))
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            family_id = item.get("family_id", "<unknown>")
+            warnings.append(
+                f"Named-event family {index} (family_id={family_id!r}) "
+                f"was malformed and was quarantined: {exc}"
+            )
+
+    occurrences: List[NamedEventOccurrence] = []
+    for index, item in enumerate(raw.get("occurrences") or []):
+        if not isinstance(item, Mapping):
+            warnings.append(
+                f"Named-event occurrence {index} is not a mapping and was quarantined."
+            )
+            continue
+        try:
+            occurrences.append(NamedEventOccurrence.from_dict(item))
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            event_id = item.get("event_id", "<unknown>")
+            warnings.append(
+                f"Named-event occurrence {index} (event_id={event_id!r}) "
+                f"was malformed and was quarantined: {exc}"
+            )
+
+    family_ids = {family.family_id for family in families}
+    definitions: List[EventResponseDefinition] = []
+    for index, item in enumerate(raw.get("response_definitions") or []):
+        if not isinstance(item, Mapping):
+            warnings.append(
+                f"Event response definition {index} is not a mapping and was quarantined."
+            )
+            continue
+        try:
+            definition = EventResponseDefinition.from_dict(item)
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            warnings.append(
+                f"Event response definition {index} was malformed and was "
+                f"quarantined: {exc}"
+            )
+            continue
+        if definition.family_id not in family_ids:
+            warnings.append(
+                f"Event response definition {index} references family "
+                f"{definition.family_id!r}, which this registry does not "
+                "contain - the orphan definition was quarantined."
+            )
+            continue
+        definitions.append(definition)
+
+    for occurrence in occurrences:
+        if occurrence.family_id and occurrence.family_id not in family_ids:
+            warnings.append(
+                f"Named-event occurrence {occurrence.event_id!r} references "
+                f"family {occurrence.family_id!r}, which this registry does "
+                "not contain - the occurrence is kept with its factual dates "
+                "and identity intact, and its family link needs review."
+            )
+
+    return (
+        [family.to_dict() for family in families],
+        [occurrence.to_dict() for occurrence in occurrences],
+        [definition.to_dict() for definition in definitions],
         warnings,
     )
 
