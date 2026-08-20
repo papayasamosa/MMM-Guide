@@ -138,6 +138,23 @@ Model A / Model C variants. For each candidate, measure:
 - computational cost (fit and replay);
 - future-replay fidelity (same definition, future factual dates).
 
+## WP2 evidence (2026-08-20)
+
+Work Package 2 delivered the decision-support evidence via the
+standalone package `scripts/wp2_named_event_response/` (outside
+`ancestry_mmm`, never imported by production) and the schedule/manual
+CI job `named-event-response-recovery` in `.github/workflows/
+tests.yml`. The runner fits every candidate on the deterministic
+synthetic DGP grid with the pinned stack and writes
+`docs/wp2_named_event_response_results.json`.
+
+Recorded results and the recorded CI run: see
+`docs/wp2_named_event_response_evidence.md`. No candidate is selected
+by the evidence - this section deliberately does not restate the
+numbers, so the machine-readable results file and the evidence
+document remain the single sources of truth (enforced by
+`ancestry_mmm/tests/test_wp2_named_event_response_evidence.py`).
+
 The comparison must use the pinned runtime (PyMC 5.28.5, PyTensor
 2.38.3, ArviZ 0.23.4) and official upstream APIs; any upstream
 reference consulted must be recorded per the repository's
