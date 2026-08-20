@@ -49,18 +49,17 @@ def _load_results() -> dict:
 def test_evidence_document_exists_and_selects_no_candidate():
     assert EVIDENCE_PATH.exists()
     content = EVIDENCE_PATH.read_text()
-    assert (
-        "decision support only" in content.lower() or "Decision support only" in content
-    )
+    flattened = " ".join(content.split())
+    assert "Decision support only" in flattened
+    assert "enabled, selected, or implemented" in flattened
     for phrase in (
-        "no candidate is selected",
         "No statistical response method is approved",
         "workflow",
         "PyMC 5.28.5",
         "PyTensor 2.38.3",
         "ArviZ 0.23.4",
     ):
-        assert phrase.lower() in content.lower(), f"evidence doc missing: {phrase}"
+        assert phrase.lower() in flattened.lower(), f"evidence doc missing: {phrase}"
 
 
 def test_results_json_exists_with_versions():
@@ -129,6 +128,8 @@ def test_evaluation_code_is_not_importable_from_production():
 
     hits = []
     for py_file in (REPO_ROOT / "ancestry_mmm").rglob("*.py"):
+        if "tests" in py_file.parts:
+            continue  # tests may legitimately reference the package by name
         text = py_file.read_text(encoding="utf-8", errors="ignore")
         if "wp2_named_event_response" in text:
             hits.append(str(py_file))
