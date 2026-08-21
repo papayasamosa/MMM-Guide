@@ -31,7 +31,7 @@ def _base_df() -> pd.DataFrame:
     n = 12
     return pd.DataFrame(
         {
-            "date": pd.date_range("2024-01-01", periods=n, freq="W-MON"),
+            "date": pd.date_range("2024-01-07", periods=n, freq="W-SUN"),
             "market": ["UK"] * n,
             "tv_spend": np.arange(n, dtype=float) * 100 + 500,
             "fh_new_gsa": np.arange(n, dtype=float) + 10,
@@ -122,10 +122,10 @@ def _matrix_with_one_approved_record(matrix_id: str) -> VariableCoverageMatrix:
         market="UK",
         frequency=frequency,
         coverage_segments=(),
-        observed_start="2024-01-01",
-        observed_end="2024-03-18",
-        expected_start="2024-01-01",
-        expected_end="2024-03-18",
+        observed_start="2024-01-07",
+        observed_end="2024-03-24",
+        expected_start="2024-01-07",
+        expected_end="2024-03-24",
         proposed_treatment="use as-is",
         approved_treatment="use as-is",
         treatment_status="approved",

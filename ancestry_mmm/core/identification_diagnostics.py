@@ -40,7 +40,7 @@ uses, so a UI page can render both lists identically.
 
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import arviz as az
 import numpy as np
@@ -308,6 +308,138 @@ def transformed_media_correlation_matrix(
     values = np.asarray(transformed_media, dtype=float)
     labels = list(channels or range(values.shape[1]))
     return pd.DataFrame(np.corrcoef(values, rowvar=False), index=labels, columns=labels)
+
+
+def equation_identification_diagnostics(
+    predictors: Any,
+    labels: Optional[List[str]] = None,
+    *,
+    transformed_predictors: Any = None,
+    near_zero_variance_threshold: float = 1e-12,
+) -> Dict[str, Any]:
+    """Compute equation-level pre-fit identification evidence.
+
+    This is deliberately a diagnostic bundle, not a variable-selection
+    routine.  It accepts the complete predictor matrix for one equation,
+    including media, controls, trend, seasonality, or a mediator's spend
+    predictor, so the result cannot be mistaken for a media-spend-only
+    screen.  VIF is calculated by regressing each standardized predictor on
+    the others; exact rank deficiency and a standardized full-equation
+    condition number are reported separately.  No column is removed.
+
+    ``transformed_predictors`` is optional evidence for the same columns
+    after a governed adstock/saturation or other deterministic preparation.
+    ``temporal_overlap`` reports the fraction of periods in which two columns
+    are both non-zero, divided by the periods in which either is non-zero;
+    this is useful for flight-overlap review and is not a causal conclusion.
+    """
+
+    if isinstance(predictors, pd.DataFrame):
+        frame = predictors.copy()
+    else:
+        values = np.asarray(predictors, dtype=float)
+        if values.ndim != 2:
+            raise ValueError("predictors must be a two-dimensional matrix")
+        frame = pd.DataFrame(values)
+    if frame.empty or frame.shape[1] == 0:
+        raise ValueError("predictors must contain at least one column")
+    if labels is not None:
+        if len(labels) != frame.shape[1] or len(set(labels)) != len(labels):
+            raise ValueError("labels must be unique and match predictor columns")
+        frame.columns = labels
+    else:
+        frame.columns = [str(column) for column in frame.columns]
+    numeric = frame.apply(pd.to_numeric, errors="coerce")
+    if numeric.isna().any().any():
+        raise ValueError("predictors must contain finite numeric values")
+    values = numeric.to_numpy(dtype=float)
+    if not np.isfinite(values).all():
+        raise ValueError("predictors must contain finite numeric values")
+
+    names = list(numeric.columns)
+    variance = numeric.var(axis=0, ddof=0)
+    near_zero = [
+        name
+        for name, value in variance.items()
+        if float(value) <= float(near_zero_variance_threshold)
+    ]
+    pearson = numeric.corr(method="pearson").fillna(0.0)
+    spearman = numeric.corr(method="spearman").fillna(0.0)
+    standardized = values.copy()
+    scales = standardized.std(axis=0)
+    nonconstant = scales > 0
+    standardized[:, nonconstant] = (
+        standardized[:, nonconstant] - standardized[:, nonconstant].mean(axis=0)
+    ) / scales[nonconstant]
+    standardized[:, ~nonconstant] = 0.0
+    design = np.column_stack([np.ones(values.shape[0]), standardized])
+    rank = int(np.linalg.matrix_rank(design))
+    condition_number = float(np.linalg.cond(design))
+    if not np.isfinite(condition_number):
+        condition_number = float("inf")
+
+    vif: Dict[str, float] = {}
+    for index, name in enumerate(names):
+        if not nonconstant[index]:
+            vif[name] = float("inf")
+            continue
+        others = np.delete(standardized, index, axis=1)
+        if others.shape[1] == 0:
+            vif[name] = 1.0
+            continue
+        fitted, *_ = np.linalg.lstsq(others, standardized[:, index], rcond=None)
+        residual = standardized[:, index] - others @ fitted
+        ss_total = float(np.sum(standardized[:, index] ** 2))
+        r_squared = 1.0 - float(np.sum(residual**2)) / ss_total if ss_total else 1.0
+        vif[name] = (
+            float("inf")
+            if r_squared >= 1.0 - 1e-12
+            else 1.0 / max(1.0 - r_squared, 1e-15)
+        )
+
+    overlap: Dict[str, Dict[str, float | None]] = {}
+    active = values != 0
+    for i, left in enumerate(names):
+        for j in range(i + 1, len(names)):
+            right = names[j]
+            union = int(np.logical_or(active[:, i], active[:, j]).sum())
+            both = int(np.logical_and(active[:, i], active[:, j]).sum())
+            overlap[f"{left} / {right}"] = {
+                "both_nonzero_periods": both,
+                "either_nonzero_periods": union,
+                "overlap_ratio": float(both / union) if union else None,
+            }
+
+    transformed = None
+    if transformed_predictors is not None:
+        if isinstance(transformed_predictors, pd.DataFrame):
+            transformed_frame = transformed_predictors.copy()
+            if list(transformed_frame.columns) != names:
+                transformed_frame.columns = names
+        else:
+            transformed_frame = pd.DataFrame(
+                np.asarray(transformed_predictors, dtype=float), columns=names
+            )
+        if transformed_frame.shape != numeric.shape:
+            raise ValueError("transformed_predictors must match predictors shape")
+        transformed = transformed_frame.corr(method="pearson").fillna(0.0).to_dict()
+
+    return {
+        "n_observations": int(values.shape[0]),
+        "n_predictors": int(values.shape[1]),
+        "predictor_names": names,
+        "pearson_correlation": pearson.to_dict(),
+        "spearman_correlation": spearman.to_dict(),
+        "vif": vif,
+        "condition_number": condition_number,
+        "matrix_rank": rank,
+        "full_design_columns": ["intercept", *names],
+        "exact_rank_deficient": rank < design.shape[1],
+        "near_zero_variance": near_zero,
+        "variance": {name: float(value) for name, value in variance.items()},
+        "temporal_overlap": overlap,
+        "transformed_pearson_correlation": transformed,
+    }
 
 
 def posterior_variable_correlation(

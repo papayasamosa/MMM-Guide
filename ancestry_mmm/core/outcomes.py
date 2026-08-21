@@ -156,8 +156,10 @@ AGGREGATION_TYPES = ("count", "rate", "currency", "index")
 # assumed from the outcome's metric alone.
 DATE_BASIS_VALUES = (
     "event_date",
+    "signup_date",
     "signup_date_attributed",
     "billing_date",
+    "order_purchase_date",
     "purchase_date",
     "activation_date",
 )

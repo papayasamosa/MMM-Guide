@@ -455,8 +455,10 @@ class TestPlannedMetricKeysAndAggregationType:
     def test_date_basis_values_matches_roadmap_vocabulary(self):
         assert set(DATE_BASIS_VALUES) == {
             "event_date",
+            "signup_date",
             "signup_date_attributed",
             "billing_date",
+            "order_purchase_date",
             "purchase_date",
             "activation_date",
         }

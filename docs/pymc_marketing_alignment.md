@@ -1,6 +1,7 @@
 # PyMC Marketing alignment
 
-Status: G2A.5 / Candidate A Search engine, reviewed 2026-08-15.
+Status: G2A.5 / Candidate A Search engine plus observed-mediator historical
+capability, reviewed 2026-08-21.
 
 The product claim is: **Built in PyMC and informed by PyMC Marketing.**
 
@@ -34,6 +35,14 @@ Official references inspected for this alignment:
 - [lift-test calibration](https://www.pymc-marketing.io/en/stable/api/generated/pymc_marketing.mmm.lift_test.html)
 - [PyMC v5.28.5 Censored distribution](https://github.com/pymc-devs/pymc/blob/v5.28.5/pymc/distributions/censored.py)
 - [PyMC v5.28.5 NegativeBinomial distribution](https://github.com/pymc-devs/pymc/blob/v5.28.5/pymc/distributions/discrete.py)
+- [PyMC v5.28.5 NUTS implementation](https://github.com/pymc-devs/pymc/blob/v5.28.5/pymc/step_methods/hmc/nuts.py)
+
+For the 2026-08-20 UK readiness fit, the NUTS implementation's documented
+diagnostic response was applied: unresolved post-tuning divergences remain a
+validation blocker, and the remedial runs raise `target_accept` to 0.99 (DNA)
+and 0.995 (Family History) while retaining the same PyMC model and
+likelihood.  This is sampler adaptation, not a change to the business
+estimand or production engine.
 
 ## Alignment matrix
 
@@ -50,6 +59,7 @@ Official references inspected for this alignment:
 | Calibration | Lift-test measurements and cost-per-target calibration | Existing calibration records and custom pathway/model workflow | Informed by upstream; direct API adoption deferred |
 | Optimization | `BudgetOptimizer` evaluates posterior response distributions and supports channel masks, `cost_per_unit`, constraints, and custom/risk-aware utilities | Typed incremental objectives, activity-aware constraints, explicit counterfactual policies, mixed economics, and paired posterior re-evaluation of candidate versus current plan | Semantically aligned; custom implementation retained for multi-outcome pathways and governed mixed-input plans |
 | Search mediation/capacity | PyMC `Censored`/`NegativeBinomial` primitives and PyMC-Marketing MMM transformations | `core.search_capacity` Candidate A linked latent-demand, hard-cap, capture-reconciliation and outcome-scale counterfactual contract; typed graph compiler extension | Custom linked PyMC engine; not native PyMC-Marketing. Candidate C is diagnostic-only, Candidate B is deferred, and Search planning/optimisation remain disabled |
+| Observed Search mediation | PyMC `NegativeBinomial` likelihoods and named dimensions | `core.observed_mediation` fits observed Paid Brand Search delivery/clicks jointly with upstream-to-mediator and direct upstream-to-outcome paths after `core.graph_model_compiler` validates an approved graph | Custom PyMC capability; not PyMC-Marketing-native. It does not fabricate branded demand, cap, organic/direct capture, or spend/delivery equivalence; historical use remains validation/sensitivity-only until identification and source gates pass |
 | Sequential simulation | `GeometricAdstock`'s finite `l_max`-truncated convolution; forward-simulation notebooks prime that window by prepending `l_max` "warm-up" periods into the same array (no explicit carry-in state parameter) | `core.sequential_simulation`: an explicit `initial_state` carry-in scalar threaded through the repository's own already-divergent infinite-horizon recursive `geometric_adstock` (see the "Adstock normalization" row above), reconstructed from real historical media, never a warm-up-window prepend | Intentional divergence, consistent with the pre-existing infinite-horizon adstock divergence already recorded above - a warm-up-prepend would truncate the decay to a finite window not present in what was actually fit. Numerical equivalence with the existing batch replay is tested directly (`test_sequential_simulation.py::TestGoldenEquivalence`) |
 
 ## Media input and money

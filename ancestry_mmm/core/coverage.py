@@ -849,7 +849,10 @@ def _observed_dates_for_market(
 # construct a calendar from - see _expected_periods's fallback.
 _FREQUENCY_TO_PANDAS_ALIAS = {
     "daily": "D",
-    "weekly": "W-MON",
+    # Weekly model periods are Sunday-Saturday.  Weekly periods cannot use a
+    # simple pandas end-of-week alias here because the alias labels the end
+    # date; build Sunday labels explicitly in ``_expected_periods`` below.
+    "weekly": "7D",
     "monthly": "MS",
     "quarterly": "QS",
 }
@@ -875,7 +878,13 @@ def _expected_periods(
     own observed dates, the best obtainable basis, rather than raising or
     guessing a step.
     """
-    alias = _FREQUENCY_TO_PANDAS_ALIAS.get(target_frequency.strip().lower())
+    frequency_key = target_frequency.strip().lower()
+    if frequency_key == "weekly":
+        sunday_start = project_start - pd.Timedelta(
+            days=(int(project_start.weekday()) + 1) % 7
+        )
+        return list(pd.date_range(start=sunday_start, end=project_end, freq="7D"))
+    alias = _FREQUENCY_TO_PANDAS_ALIAS.get(frequency_key)
     if alias is None:
         return project_dates
     return list(pd.date_range(start=project_start, end=project_end, freq=alias))

@@ -10,6 +10,7 @@ from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.identification_diagnostics import (
     channel_spend_correlation_matrix,
     design_matrix_condition_number,
+    equation_identification_diagnostics,
     high_correlation_pairs,
     identification_report,
     leave_one_channel_out_sensitivity,
@@ -261,3 +262,36 @@ class TestIdentificationReport:
         for f in flags:
             assert set(f.keys()) == {"level", "channel", "message"}
             assert f["level"] in ("warning", "error")
+
+
+def test_equation_diagnostics_reports_vif_rank_and_temporal_overlap_without_deleting_columns():
+    rng = np.random.default_rng(42)
+    tv = rng.uniform(1.0, 10.0, 40)
+    radio = tv.copy()
+    search_spend = np.zeros(40)
+    search_spend[10:30] = 5.0
+    result = equation_identification_diagnostics(
+        pd.DataFrame({"tv": tv, "radio": radio, "search_spend": search_spend}),
+        transformed_predictors=pd.DataFrame(
+            {"tv": tv, "radio": radio, "search_spend": search_spend}
+        ),
+    )
+    assert result["exact_rank_deficient"] is True
+    assert result["vif"]["tv"] > 1e6 or np.isinf(result["vif"]["tv"])
+    assert result["temporal_overlap"]["tv / radio"]["overlap_ratio"] == pytest.approx(
+        1.0
+    )
+    assert result["transformed_pearson_correlation"]["tv"]["radio"] == pytest.approx(
+        1.0
+    )
+    assert set(result["predictor_names"]) == {"tv", "radio", "search_spend"}
+
+
+def test_equation_diagnostics_flags_constant_predictors_as_near_zero_variance():
+    result = equation_identification_diagnostics(
+        pd.DataFrame(
+            {"intercept_like": np.ones(8), "varying": np.arange(8, dtype=float)}
+        )
+    )
+    assert "intercept_like" in result["near_zero_variance"]
+    assert np.isinf(result["vif"]["intercept_like"])

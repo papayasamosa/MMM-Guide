@@ -21,7 +21,7 @@ of scope here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 import numpy as np
 import pymc as pm
@@ -368,6 +368,60 @@ def _market_grouped_adstock_and_saturation(
     return saturated
 
 
+def _market_grouped_adstock_and_saturation_with_history(
+    X_media: np.ndarray,
+    market_bounds: List[tuple],
+    X_media_history: np.ndarray,
+    history_market_bounds: List[tuple],
+    decay_rate: pt.TensorVariable,
+    hill_K: pt.TensorVariable,
+    hill_S: pt.TensorVariable,
+) -> tuple[pt.TensorVariable, list[pt.TensorVariable]]:
+    """Adstock target observations with an explicit historical carry-in.
+
+    The likelihood remains limited to ``X_media``.  For each market, the
+    target block is concatenated after its pre-window history, transformed as
+    one continuous sequence, and then sliced back to the target rows.  The
+    full transformed blocks are also returned so delayed pathway lags can
+    see the same historical state instead of resetting at the fit boundary.
+
+    This is deliberately opt-in through the prepared frame.  Existing
+    exploratory and synthetic callers that do not supply a history retain
+    the original zero-initialised behaviour.
+    """
+    if len(market_bounds) != len(history_market_bounds):
+        raise ValueError(
+            "market_bounds and history_market_bounds must contain the same "
+            "number of markets for adstock carry-in."
+        )
+    if X_media_history.ndim != 2 or X_media_history.shape[1] != X_media.shape[1]:
+        raise ValueError(
+            "X_media_history must be a 2D array with the same channel count as X_media."
+        )
+
+    target_blocks: list[pt.TensorVariable] = []
+    full_blocks: list[pt.TensorVariable] = []
+    for (target_start, target_end), (history_start, history_end) in zip(
+        market_bounds, history_market_bounds
+    ):
+        target_block = pt.as_tensor_variable(X_media[target_start:target_end])
+        history_block = pt.as_tensor_variable(
+            X_media_history[history_start:history_end]
+        )
+        full_input = pt.concatenate([history_block, target_block], axis=0)
+        full_adstocked = pt_geometric_adstock_matrix(
+            full_input, decay_rate, normalize=True
+        )
+        full_saturated = pt_hill_function(full_adstocked, hill_K, hill_S)
+        history_length = int(history_end - history_start)
+        full_blocks.append(full_saturated)
+        target_blocks.append(full_saturated[history_length:])
+
+    if not target_blocks:
+        raise ValueError("At least one market block is required for adstock.")
+    return pt.concatenate(target_blocks, axis=0), full_blocks
+
+
 def _market_grouped_lag(
     X: pt.TensorVariable,
     market_bounds: List[tuple],
@@ -603,12 +657,34 @@ def build_fh_hierarchical_model(
             dims="channel",
         )
 
-        sat_media = pm.Deterministic(
-            "sat_media",
-            _market_grouped_adstock_and_saturation(
+        X_media_history = frame.get("X_media_history")
+        history_market_bounds = frame.get("history_market_bounds")
+        if X_media_history is not None or history_market_bounds is not None:
+            if X_media_history is None or history_market_bounds is None:
+                raise ValueError(
+                    "Historical adstock carry-in requires both "
+                    "X_media_history and history_market_bounds."
+                )
+            history_bounds = cast(List[tuple], history_market_bounds)
+            sat_media_value, full_sat_media_blocks = (
+                _market_grouped_adstock_and_saturation_with_history(
+                    X_media,
+                    market_bounds,
+                    np.asarray(X_media_history, dtype=float),
+                    history_bounds,
+                    decay_rate,
+                    hill_K,
+                    hill_S,
+                )
+            )
+        else:
+            sat_media_value = _market_grouped_adstock_and_saturation(
                 X_media, market_bounds, decay_rate, hill_K, hill_S
-            ),
-            dims=("obs", "channel"),
+            )
+            full_sat_media_blocks = None
+
+        sat_media = pm.Deterministic(
+            "sat_media", sat_media_value, dims=("obs", "channel")
         )
 
         # -----------------------------------------------------------------
@@ -686,17 +762,50 @@ def build_fh_hierarchical_model(
         exploratory_cells = pathway_masks.exploratory_cells(outcome_ids, channels)
 
         all_cross_cells = active_cells + exploratory_cells
-        lagged_media_by_weeks = {
-            lag: _market_grouped_lag(sat_media, market_bounds, lag)
-            for lag in sorted(
-                {
-                    pathway_masks.lag_for_component(
-                        outcome_ids[cell[0]], channels[cell[1]]
+        cross_product_lags = sorted(
+            {
+                pathway_masks.lag_for_component(outcome_ids[cell[0]], channels[cell[1]])
+                for cell in all_cross_cells
+            }
+        )
+        if full_sat_media_blocks is None:
+            lagged_media_by_weeks = {
+                lag: _market_grouped_lag(sat_media, market_bounds, lag)
+                for lag in cross_product_lags
+            }
+        else:
+            history_lagged_blocks = {
+                lag: [
+                    _market_grouped_lag(
+                        block,
+                        [
+                            (
+                                0,
+                                int(
+                                    (target_end - target_start)
+                                    + (history_end - history_start)
+                                ),
+                            )
+                        ],
+                        lag,
                     )
-                    for cell in all_cross_cells
-                }
-            )
-        }
+                    for block, (target_start, target_end), (
+                        history_start,
+                        history_end,
+                    ) in zip(
+                        full_sat_media_blocks,
+                        market_bounds,
+                        history_bounds,
+                    )
+                ]
+                for lag in cross_product_lags
+            }
+            lagged_media_by_weeks = {}
+            for lag, blocks in history_lagged_blocks.items():
+                target_blocks = []
+                for block, (history_start, history_end) in zip(blocks, history_bounds):
+                    target_blocks.append(block[int(history_end - history_start) :])
+                lagged_media_by_weeks[lag] = pt.concatenate(target_blocks, axis=0)
 
         def _cross_product_eta(
             cells: list, var_name: str, role_default: float
@@ -906,7 +1015,6 @@ def build_fh_hierarchical_model(
             "y_obs", mu=mu, alpha=alpha[None, :], observed=Y, dims=("obs", "outcome")
         )
 
-    outcome_catalogue: List[Any] = frame.get("outcomes") or []
     _no_search_candidate_a_graph_engine = (
         GRAPH_ENGINE_PYMC_HIERARCHICAL if causal_graph is not None else ""
     )

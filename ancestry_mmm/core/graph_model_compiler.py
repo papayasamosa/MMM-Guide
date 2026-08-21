@@ -45,6 +45,7 @@ from .causal_graph import (
     GRAPH_STATUS_APPROVED,
     GraphCompilationPlan,
     NODE_ROLE_INTERVENTION,
+    NODE_ROLE_MEDIATOR,
     NODE_ROLE_OUTCOME,
     NODE_ROLE_CAPACITY_OR_CAP,
     NODE_ROLE_DEMAND_CAPTURE,
@@ -75,6 +76,7 @@ from .pathways import (
 )
 
 GRAPH_ENGINE_PYMC_HIERARCHICAL = "pymc_hierarchical"
+GRAPH_ENGINE_PYMC_OBSERVED_MEDIATION = "pymc_observed_mediation"
 
 # The only edge roles the current PyMC hierarchical/market-specific engine
 # can compile. `excluded_diagnostic_only` is always supported (it compiles
@@ -120,6 +122,170 @@ class SearchCandidateAGraphPlan:
             "search_capture_edge_ids": list(self.search_capture_edge_ids),
             "formulation_id": self.formulation_id,
         }
+
+
+@dataclass(frozen=True)
+class ObservedMediationGraphPlan:
+    """The narrowly typed graph contract for an observed mediator model.
+
+    This is intentionally separate from Candidate A's latent demand/capacity
+    graph.  It models an observed delivery series (for this historical
+    reference run, Paid Brand Search clicks) as a fitted mediator while
+    retaining a direct upstream-media pathway to the final outcome.
+    """
+
+    outcome_node_id: str
+    mediator_node_id: str
+    upstream_intervention_node_ids: Tuple[str, ...]
+    upstream_to_mediator_edge_ids: Tuple[str, ...]
+    mediator_to_outcome_edge_id: str
+    direct_edge_ids: Tuple[str, ...]
+    formulation_id: str = "observed_mediation_v1"
+
+    def to_dict(self) -> dict:
+        return {
+            "outcome_node_id": self.outcome_node_id,
+            "mediator_node_id": self.mediator_node_id,
+            "upstream_intervention_node_ids": list(self.upstream_intervention_node_ids),
+            "upstream_to_mediator_edge_ids": list(self.upstream_to_mediator_edge_ids),
+            "mediator_to_outcome_edge_id": self.mediator_to_outcome_edge_id,
+            "direct_edge_ids": list(self.direct_edge_ids),
+            "formulation_id": self.formulation_id,
+        }
+
+
+def observed_mediation_graph_issues(
+    graph: CausalGraph,
+    *,
+    mediator_node_id: Optional[str] = None,
+) -> tuple[str, ...]:
+    """Validate the supported observed-mediator graph shape.
+
+    The compiler deliberately supports one mediator and one final outcome at
+    this boundary.  More complex graphs remain blocked until an approved
+    engine implementation exists; they must not be silently flattened into a
+    direct MMM.
+    """
+
+    issues: list[str] = []
+    node_by_id = {node.node_id: node for node in graph.nodes}
+    outcomes = [node for node in graph.nodes if node.role == NODE_ROLE_OUTCOME]
+    mediators = [node for node in graph.nodes if node.role == NODE_ROLE_MEDIATOR]
+    if len(outcomes) != 1:
+        issues.append("observed mediation requires exactly one final outcome node")
+    if len(mediators) != 1:
+        issues.append("observed mediation requires exactly one mediator node")
+    if mediator_node_id and mediator_node_id not in node_by_id:
+        issues.append(f"mediator node {mediator_node_id!r} is not in the graph")
+    if issues:
+        return tuple(issues)
+
+    outcome = outcomes[0]
+    mediator = mediators[0]
+    if mediator_node_id and mediator.node_id != mediator_node_id:
+        issues.append(
+            f"graph mediator node is {mediator.node_id!r}, expected {mediator_node_id!r}"
+        )
+    upstream = [
+        node
+        for node in graph.nodes
+        if node.role == NODE_ROLE_INTERVENTION
+        and node.node_id not in {mediator.node_id, outcome.node_id}
+    ]
+    if not upstream:
+        issues.append("observed mediation requires at least one upstream intervention")
+
+    mediated_upstream = {
+        (edge.source_node_id, edge.target_node_id): edge
+        for edge in graph.edges
+        if edge.role == EDGE_ROLE_MEDIATED
+    }
+    for node in upstream:
+        if (node.node_id, mediator.node_id) not in mediated_upstream:
+            issues.append(
+                f"upstream intervention {node.node_id!r} lacks a mediated edge to "
+                f"observed mediator {mediator.node_id!r}"
+            )
+        if not any(
+            edge.source_node_id == node.node_id
+            and edge.target_node_id == outcome.node_id
+            and edge.role == EDGE_ROLE_DIRECT
+            for edge in graph.edges
+        ):
+            issues.append(
+                f"upstream intervention {node.node_id!r} lacks its direct "
+                f"edge to outcome {outcome.node_id!r}"
+            )
+    mediator_to_outcome = [
+        edge
+        for edge in graph.edges
+        if edge.source_node_id == mediator.node_id
+        and edge.target_node_id == outcome.node_id
+        and edge.role == EDGE_ROLE_MEDIATED
+    ]
+    if len(mediator_to_outcome) != 1:
+        issues.append(
+            "observed mediation requires exactly one mediated mediator-to-outcome edge"
+        )
+
+    allowed_pairs = {
+        (node.node_id, mediator.node_id, EDGE_ROLE_MEDIATED) for node in upstream
+    }
+    allowed_pairs.update(
+        (node.node_id, outcome.node_id, EDGE_ROLE_DIRECT) for node in upstream
+    )
+    allowed_pairs.add((mediator.node_id, outcome.node_id, EDGE_ROLE_MEDIATED))
+    for edge in graph.edges:
+        if edge.role == EDGE_ROLE_EXCLUDED_DIAGNOSTIC_ONLY:
+            continue
+        if (edge.source_node_id, edge.target_node_id, edge.role) not in allowed_pairs:
+            issues.append(
+                f"observed mediation does not support edge {edge.edge_id!r} "
+                f"({edge.source_node_id!r} -> {edge.target_node_id!r}, {edge.role!r})"
+            )
+    return tuple(dict.fromkeys(issues))
+
+
+def compile_observed_mediation_graph(
+    graph: CausalGraph,
+    *,
+    mediator_node_id: Optional[str] = None,
+) -> ObservedMediationGraphPlan:
+    issues = observed_mediation_graph_issues(graph, mediator_node_id=mediator_node_id)
+    if issues:
+        raise UnsupportedGraphStructureError(
+            "Graph is not supported by observed mediation engine: " + "; ".join(issues)
+        )
+    outcome = next(node for node in graph.nodes if node.role == NODE_ROLE_OUTCOME)
+    mediator = next(node for node in graph.nodes if node.role == NODE_ROLE_MEDIATOR)
+    upstream = tuple(
+        node.node_id for node in graph.nodes if node.role == NODE_ROLE_INTERVENTION
+    )
+    upstream_edges = tuple(
+        edge.edge_id
+        for edge in graph.edges
+        if edge.role == EDGE_ROLE_MEDIATED and edge.target_node_id == mediator.node_id
+    )
+    mediator_edge = next(
+        edge
+        for edge in graph.edges
+        if edge.role == EDGE_ROLE_MEDIATED
+        and edge.source_node_id == mediator.node_id
+        and edge.target_node_id == outcome.node_id
+    )
+    direct_edges = tuple(
+        edge.edge_id
+        for edge in graph.edges
+        if edge.role == EDGE_ROLE_DIRECT and edge.target_node_id == outcome.node_id
+    )
+    return ObservedMediationGraphPlan(
+        outcome_node_id=outcome.node_id,
+        mediator_node_id=mediator.node_id,
+        upstream_intervention_node_ids=upstream,
+        upstream_to_mediator_edge_ids=upstream_edges,
+        mediator_to_outcome_edge_id=mediator_edge.edge_id,
+        direct_edge_ids=direct_edges,
+    )
 
 
 def _current_search_object_by_id(
@@ -460,6 +626,8 @@ def check_engine_capability(
     `validate_causal_graph`'s own checks - call that first."""
     if engine == SEARCH_CANDIDATE_A_ENGINE:
         return list(candidate_a_graph_issues(graph, search_objects=search_objects))
+    if engine == GRAPH_ENGINE_PYMC_OBSERVED_MEDIATION:
+        return list(observed_mediation_graph_issues(graph))
     reasons: List[str] = []
     node_by_id = {n.node_id: n for n in graph.nodes}
     for edge in graph.edges:
@@ -591,6 +759,7 @@ class GraphCompilationResult:
     pathway_masks: ResolvedPathwayMasks
     causal_graph_structural_fingerprint: str
     search_candidate_a: Optional[SearchCandidateAGraphPlan] = None
+    observed_mediation: Optional[ObservedMediationGraphPlan] = None
 
 
 class GraphModelCompiler:
@@ -641,6 +810,7 @@ class GraphModelCompiler:
             graph, activity_definitions=self.activity_definitions
         )
         search_candidate_a = None
+        observed_mediation = None
         if self.engine == SEARCH_CANDIDATE_A_ENGINE:
             search_candidate_a = compile_candidate_a_search_graph(
                 graph, search_objects=self.search_objects
@@ -654,6 +824,15 @@ class GraphModelCompiler:
                     | set(search_candidate_a.capacity_edge_ids)
                 ),
             )
+        elif self.engine == GRAPH_ENGINE_PYMC_OBSERVED_MEDIATION:
+            observed_mediation = compile_observed_mediation_graph(graph)
+            mediated_ids = set(observed_mediation.upstream_to_mediator_edge_ids)
+            mediated_ids.add(observed_mediation.mediator_to_outcome_edge_id)
+            pathway_masks = resolved_pathway_masks_from_graph(
+                graph,
+                activity_definitions=self.activity_definitions,
+                excluded_edge_ids=mediated_ids,
+            )
         else:
             pathway_masks = resolved_pathway_masks_from_graph(
                 graph, activity_definitions=self.activity_definitions
@@ -663,6 +842,7 @@ class GraphModelCompiler:
             pathway_masks=pathway_masks,
             causal_graph_structural_fingerprint=graph.structural_fingerprint(),
             search_candidate_a=search_candidate_a,
+            observed_mediation=observed_mediation,
         )
 
 
