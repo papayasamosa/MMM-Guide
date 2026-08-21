@@ -209,17 +209,32 @@ def _write_workbook_tables(payload: bytes) -> dict[str, pd.DataFrame]:
 
 
 def _rewrite_synthetic_workbook(payload: bytes, case: str, domain: str) -> bytes:
-    if case == "pass" and domain != DOMAIN_OUTCOMES:
-        return payload
     if case == "mixed_frequency" and domain != DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS:
         return payload
+    if case == "pass":
+        tables = _write_workbook_tables(payload)
+        # The governed weekly calendar is Sunday-Saturday.  Keep the generic
+        # downloadable template unchanged, but make the synthetic lifecycle
+        # fixture natively Sunday-labelled so a complete pass case does not
+        # manufacture a Monday-to-Sunday alignment.
+        for table in tables.values():
+            if "period_start" in table.columns:
+                dates = pd.to_datetime(table["period_start"], errors="coerce")
+                table["period_start"] = dates - pd.to_timedelta(
+                    (dates.dt.weekday + 1) % 7, unit="D"
+                )
+        if domain == DOMAIN_OUTCOMES:
+            # The standard teaching template deliberately contains an AU example
+            # row. Synthetic pass mode is a complete UK fixture, so retain the
+            # source-native values while assigning both generated periods to UK.
+            tables["outcomes"]["market"] = "UK"
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            for sheet, table in tables.items():
+                table.to_excel(writer, sheet_name=sheet, index=False)
+        return output.getvalue()
     tables = _write_workbook_tables(payload)
-    if case == "pass" and domain == DOMAIN_OUTCOMES:
-        # The standard teaching template deliberately contains an AU example
-        # row. Synthetic pass mode is a complete UK fixture, so retain the
-        # source-native values while assigning both generated periods to UK.
-        tables["outcomes"]["market"] = "UK"
-    elif case == "mixed_frequency":
+    if case == "mixed_frequency":
         tables["context_data"]["native_frequency"] = "monthly"
         tables["variable_dictionary"]["native_frequency"] = "monthly"
     elif case == "coverage_gap" and domain == DOMAIN_ACTIVITY_AND_MEDIA:
@@ -553,7 +568,7 @@ def _run_source_path(
             for item in adoption.context_variable_metadata
             if item.get("native_frequency")
         }
-        if frequencies and frequencies != {"weekly"}:
+        if synthetic and frequencies and frequencies != {"weekly"}:
             stages.append(
                 _stage(
                     "calendar_coverage_preparation",
@@ -606,11 +621,17 @@ def _run_source_path(
                 _stage(
                     "calendar_coverage_preparation",
                     "pass",
-                    "Official native-weekly preparation succeeded; model-specific coverage remains to be reviewed.",
+                    "Official native-frequency preparation succeeded; model-specific coverage and any required frequency alignment remain to be reviewed.",
                     started,
                     details={
                         "union_period_count": len(prepared.union_periods),
                         "frame": _safe_frame_summary(frame),
+                        "native_frequencies": sorted(frequencies),
+                        "native_data_preserved": True,
+                        "conversion_performed": bool(prepared.conversion_evidence),
+                        "non_weekly_context_requires_consumed_variable_review": bool(
+                            frequencies - {"weekly"}
+                        ),
                         "join_diagnostics": {
                             "source_count": len(sources),
                             "join_type": "outer_union",
@@ -1073,9 +1094,9 @@ def run_uk_readiness(
             for domain, payload in synthetic_source_workbooks(synthetic_case)
         )
         if governed_start is None:
-            governed_start = "2026-01-05"
+            governed_start = "2026-01-04"
         if governed_end is None:
-            governed_end = "2026-01-12"
+            governed_end = "2026-01-11"
         if governed_frequency is None:
             governed_frequency = "weekly"
     elif source_paths:

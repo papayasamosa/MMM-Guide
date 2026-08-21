@@ -67,6 +67,26 @@ timings. The report contains no source rows or parsed source values. Keep the
 report and any generated bundle on D: and outside the repository; do not copy
 real Ancestry data, reports, or logs into Git or browser artefact directories.
 
+## Approved UK production fit
+
+The approved production run uses PyMC with PyTensor and the portable compiler
+under `D:\Ancestry-MMM\tools\mingw64`. Use the repository wrapper so the
+compiler and PyTensor compilation cache are selected explicitly on D: and are
+not taken from an ambient installation:
+
+```powershell
+scripts\run_uk_production_fit.ps1 `
+  --pack-dir "D:\Ancestry-MMM\test-artifacts\uk-readiness\approved-uk-packs-20260820-v3" `
+  --output-dir "D:\Ancestry-MMM\test-artifacts\uk-readiness\production-fit-20260820"
+```
+
+The wrapper sets `PYTENSOR_FLAGS` with `cxx=D:/Ancestry-MMM/tools/mingw64/bin/g++.exe`
+and `base_compiledir=D:/Ancestry-MMM/cache/pytensor` for the child process. It
+does not switch to JAX/NumPyro or install machine-wide tooling. Keep real fit
+artefacts outside Git and review convergence, posterior predictive evidence,
+and governance approval before using results for official reporting or
+optimisation.
+
 The harness stops at unresolved governance or decision boundaries. In
 particular, mixed-frequency variables remain native and unconverted, missing
 coverage remains unresolved, and a real source-only run does not claim model

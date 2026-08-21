@@ -12,6 +12,7 @@ from ancestry_mmm.application.uk_readiness import (
     ReadinessInputError,
     ensure_d_drive_path,
     run_uk_readiness,
+    synthetic_source_workbooks,
 )
 from ancestry_mmm.core.coverage import (
     DOMAIN_ACTIVITY_AND_MEDIA,
@@ -134,3 +135,37 @@ def test_local_source_paths_report_identity_but_do_not_claim_a_fit(
     assert _stage(report, "calendar_coverage_preparation").status == "pass"
     assert _stage(report, "model_preparation_and_fit").status == "decision_required"
     assert _stage(report, "governance_readiness").status == "decision_required"
+
+
+def test_real_source_preparation_preserves_optional_mixed_frequency_context(
+    tmp_path: Path,
+) -> None:
+    """Optional native-frequency context must not block source preparation.
+
+    The source-only readiness boundary has no approved consumed-variable set,
+    so it preserves monthly/native context and leaves any weekly alignment
+    decision to the later model-specific coverage gate.  Synthetic mixed-
+    frequency CI mode remains a deliberate unsupported case above.
+    """
+
+    source_paths: list[tuple[str, Path]] = []
+    for domain, payload in synthetic_source_workbooks("mixed_frequency"):
+        path = tmp_path / f"source-{domain}.xlsx"
+        path.write_bytes(payload)
+        source_paths.append((domain, path))
+
+    report = run_uk_readiness(
+        source_paths=source_paths,
+        output_dir=tmp_path / "readiness-output",
+        enforce_d_drive=False,
+        governed_start="2026-01-05",
+        governed_end="2026-01-12",
+        governed_frequency="weekly",
+    )
+
+    stage = _stage(report, "calendar_coverage_preparation")
+    assert stage.status == "pass"
+    assert stage.details["native_data_preserved"] is True
+    assert stage.details["conversion_performed"] is False
+    assert stage.details["non_weekly_context_requires_consumed_variable_review"] is True
+    assert _stage(report, "model_preparation_and_fit").status == "decision_required"

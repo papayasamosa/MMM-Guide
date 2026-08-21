@@ -239,6 +239,31 @@ class TestSingleChannelSingleMarketSurvivesPmDraw:
             val = pm.draw(model.named_vars["sat_media"], draws=1, random_seed=0)
         assert np.asarray(val).shape == (3, 1)
 
+    def test_sat_media_uses_explicit_pre_window_history(self):
+        """The official UK window must inherit adstock from retained media
+        history rather than starting its first target week at zero."""
+        import pymc as pm
+
+        from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+        from ancestry_mmm.core.schema import ModelSpec
+
+        frame = self._single_channel_single_market_frame()
+        frame["X_media_history"] = np.array([[80.0], [120.0]])
+        frame["history_market_bounds"] = [(0, 2)]
+        spec = ModelSpec(
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["TV"],
+        )
+        model, _meta = build_fh_hierarchical_model(frame, spec)
+        with model:
+            with_history = pm.draw(
+                model.named_vars["sat_media"], draws=1, random_seed=0
+            )
+        assert np.asarray(with_history).shape == (3, 1)
+
     def test_both_builders_resolve_pathway_masks_identically(self):
         """PR G1 required test case: "Model A and Model C parity" for the
         operational pathway masking itself - both builders must call

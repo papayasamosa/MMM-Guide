@@ -195,7 +195,7 @@ def _outcome_rows() -> list[dict[str, object]]:
 
 def _outcomes_template_tables() -> dict[str, pd.DataFrame]:
     rows = _outcome_rows()
-    periods = pd.to_datetime(["2026-01-05", "2026-01-12"])
+    periods = pd.to_datetime(["2026-01-04", "2026-01-11"])
     values: dict[str, list[int]] = {}
     for index, row in enumerate(rows, start=1):
         values[str(row["source_column"])] = [index * 10, index * 10 + 2]
@@ -224,7 +224,7 @@ def _activity_template_tables() -> dict[str, pd.DataFrame]:
     return {
         "activity_data": pd.DataFrame(
             {
-                "period_start": pd.to_datetime(["2026-01-05", "2026-01-12"]),
+                "period_start": pd.to_datetime(["2026-01-04", "2026-01-11"]),
                 "market": ["UK", "UK"],
                 "activity_id": ["example_tv_brand", "example_tv_brand"],
                 "spend": [1000.0, 1100.0],
@@ -269,7 +269,7 @@ def _context_template_tables() -> dict[str, pd.DataFrame]:
     return {
         "context_data": pd.DataFrame(
             {
-                "period_start": pd.to_datetime(["2026-01-05", "2026-01-12"]),
+                "period_start": pd.to_datetime(["2026-01-04", "2026-01-11"]),
                 "market": ["UK", "UK"],
                 "variable_id": ["example_cpi", "example_cpi"],
                 "value": [100.0, 100.4],

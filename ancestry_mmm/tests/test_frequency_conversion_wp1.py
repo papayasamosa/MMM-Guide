@@ -40,7 +40,7 @@ def _spec(**overrides) -> AlignmentSpecification:
     return AlignmentSpecification(**values)
 
 
-def _target_periods(start="2024-01-01", end="2024-03-25"):
+def _target_periods(start="2023-12-31", end="2024-03-31"):
     return pd.date_range(start, end, freq="7D").strftime("%Y-%m-%d").tolist()
 
 
@@ -63,14 +63,14 @@ def test_flow_overlap_reconciles_leap_year_months_and_partial_weeks():
         _spec(),
         date_col="period_start",
         value_col="value",
-        target_periods=_target_periods(end="2024-03-04"),
+        target_periods=_target_periods(end="2024-03-03"),
     )
 
     assert result.frame["value"].sum() == pytest.approx(600.0)
     february_tail = result.frame.loc[
-        result.frame["period_start"] == pd.Timestamp("2024-02-26"), "value"
+        result.frame["period_start"] == pd.Timestamp("2024-02-25"), "value"
     ]
-    assert february_tail.iloc[0] == pytest.approx(40.0)
+    assert february_tail.iloc[0] == pytest.approx(50.0)
     assert len(result.evidence["reconciliation"]) == 10
 
 
@@ -92,14 +92,14 @@ def test_release_aware_locf_has_no_backward_fill_and_respects_release_date():
         spec,
         date_col="period_start",
         value_col="value",
-        target_periods=_target_periods(end="2024-03-04"),
+        target_periods=_target_periods(end="2024-03-31"),
     )
 
     values = result.frame.set_index("period_start")["value"]
-    assert pd.isna(values.loc[pd.Timestamp("2024-01-01")])
-    assert pd.isna(values.loc[pd.Timestamp("2024-01-22")])
-    assert values.loc[pd.Timestamp("2024-01-29")] == 10.0
-    assert values.loc[pd.Timestamp("2024-02-26")] == 20.0
+    assert pd.isna(values.loc[pd.Timestamp("2023-12-31")])
+    assert pd.isna(values.loc[pd.Timestamp("2024-01-21")])
+    assert values.loc[pd.Timestamp("2024-01-28")] == 10.0
+    assert values.loc[pd.Timestamp("2024-02-25")] == 20.0
 
 
 def test_release_aware_locf_fails_closed_on_definition_break():
@@ -149,7 +149,7 @@ def test_event_point_and_duration_alignment_preserve_calendar_placement():
         value_col="value",
         target_periods=_target_periods(end="2024-01-29"),
     )
-    assert point_result.frame.iloc[0]["event_start"] == pd.Timestamp("2024-01-15")
+    assert point_result.frame.iloc[0]["event_start"] == pd.Timestamp("2024-01-14")
 
     duration = pd.DataFrame(
         {
@@ -170,9 +170,104 @@ def test_event_point_and_duration_alignment_preserve_calendar_placement():
         ),
         date_col="event_start",
         value_col="value",
-        target_periods=_target_periods(start="2024-02-26", end="2024-03-04"),
+        target_periods=_target_periods(start="2024-02-25", end="2024-03-03"),
     )
-    assert duration_result.frame["value"].tolist() == pytest.approx([1.0, 1 / 7])
+    assert duration_result.frame["value"].tolist() == pytest.approx([6 / 7, 2 / 7])
+
+
+def test_sunday_calendar_handles_months_starting_and_ending_mid_week():
+    source = pd.DataFrame(
+        {
+            "period_start": pd.to_datetime(["2024-01-01", "2024-02-01"]),
+            "value": [310.0, 290.0],
+        }
+    )
+    result = execute_frequency_conversion(
+        source,
+        _spec(),
+        date_col="period_start",
+        value_col="value",
+        target_periods=["2023-12-31", "2024-01-07", "2024-01-14", "2024-01-21", "2024-01-28", "2024-02-04", "2024-02-11", "2024-02-18", "2024-02-25"],
+    )
+    assert set(result.frame["period_start"]) == set(
+        pd.to_datetime(
+            [
+                "2023-12-31",
+                "2024-01-07",
+                "2024-01-14",
+                "2024-01-21",
+                "2024-01-28",
+                "2024-02-04",
+                "2024-02-11",
+                "2024-02-18",
+                "2024-02-25",
+            ]
+        )
+    )
+    assert result.frame["value"].sum() == pytest.approx(600.0)
+
+
+@pytest.mark.parametrize(
+    ("source_date", "expected_week"),
+    [("2024-01-01", "2024-01-07"), ("2024-01-07", "2024-01-07")],
+)
+def test_weekly_source_monday_or_sunday_is_aligned_to_sunday_start(
+    source_date, expected_week
+):
+    source = pd.DataFrame(
+        {"period_start": pd.to_datetime([source_date]), "value": [5.0]}
+    )
+    result = execute_frequency_conversion(
+        source,
+        _spec(
+            native_frequency="weekly",
+            variable_class="rate_index",
+            method_id="weekly_anchor_alignment",
+            parameters={"week_anchor": "monday" if source_date == "2024-01-01" else "sunday"},
+        ),
+        date_col="period_start",
+        value_col="value",
+        target_periods=["2023-12-31", "2024-01-07"],
+    )
+    assert result.frame["period_start"].tolist() == [pd.Timestamp(expected_week)]
+    assert result.frame.loc[
+        result.frame["period_start"] == pd.Timestamp(expected_week), "value"
+    ].iloc[0] == pytest.approx(5.0)
+
+
+def test_monthly_survey_step_is_as_of_release_and_does_not_leak_future_value():
+    source = pd.DataFrame(
+        {
+            "period_start": pd.to_datetime(["2024-01-01", "2024-02-01"]),
+            "released_on": pd.to_datetime(["2024-02-11", "2024-03-11"]),
+            "value": [40.0, 50.0],
+        }
+    )
+    result = execute_frequency_conversion(
+        source,
+        _spec(
+            variable_class="survey_measurement",
+            method_id="release_aware_locf",
+            publication_timing={"release_date_column": "released_on"},
+        ),
+        date_col="period_start",
+        value_col="value",
+        target_periods=[
+            "2024-01-28",
+            "2024-02-04",
+            "2024-02-11",
+            "2024-03-03",
+            "2024-03-10",
+            "2024-03-17",
+        ],
+    )
+    values = result.frame.set_index("period_start")["value"]
+    assert pd.isna(values.loc[pd.Timestamp("2024-01-28")])
+    assert pd.isna(values.loc[pd.Timestamp("2024-02-04")])
+    assert values.loc[pd.Timestamp("2024-02-11")] == 40.0
+    assert values.loc[pd.Timestamp("2024-03-03")] == 40.0
+    assert values.loc[pd.Timestamp("2024-03-10")] == 50.0
+    assert values.loc[pd.Timestamp("2024-03-17")] == 50.0
 
 
 def test_unknown_method_and_missingness_fail_closed():

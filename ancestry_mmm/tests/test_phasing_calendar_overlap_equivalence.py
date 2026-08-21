@@ -100,37 +100,32 @@ def _assert_equivalent(monthly_values: dict, calendar: CanonicalCalendar) -> Non
 class TestCalendarOverlapNumericalEquivalence:
     def test_leap_year_february(self):
         # 2028 is a leap year - February has 29 days. `phasing.canonical_weeks`
-        # anchors weeks on `calendar.start` as given (`core.official_
-        # preparation`/`core.frequency_alignment`'s own weekly convention is
-        # Monday-anchored in production), while `frequency_conversion`'s
-        # target-period handling always re-normalises every target period to
-        # its Monday (`_week_start`) regardless of what is passed in - so a
-        # non-Monday calendar start would compare two different week
-        # anchorings, not exercise real equivalence. 2027-12-27 is a Monday.
-        self._run({"2028-02": 2900.0}, _calendar("2027-12-27", "2028-03-31"))
+        # Both planning and source conversion now use the governed
+        # Sunday-Saturday calendar.  2027-12-26 is a Sunday.
+        self._run({"2028-02": 2900.0}, _calendar("2027-12-26", "2028-03-31"))
 
     def test_thirty_day_month(self):
-        # 2026-03-02 is a Monday (see note above).
-        self._run({"2026-04": 3000.0}, _calendar("2026-03-02", "2026-05-31"))
+        # 2026-03-01 is a Sunday.
+        self._run({"2026-04": 3000.0}, _calendar("2026-03-01", "2026-05-31"))
 
     def test_thirty_one_day_month(self):
-        self._run({"2026-01": 3100.0}, _calendar("2025-12-29", "2026-02-28"))
+        self._run({"2026-01": 3100.0}, _calendar("2025-12-28", "2026-02-28"))
 
     def test_boundary_week_shared_between_two_months(self):
-        # 2025-12-29..2026-02-28 covers a January that begins and ends
-        # mid-week against 7-day canonical weeks starting 2025-12-29.
-        self._run({"2026-01": 3100.0}, _calendar("2025-12-29", "2026-02-28"))
+        # 2025-12-28..2026-02-28 covers a January that begins and ends
+        # mid-week against Sunday-Saturday canonical weeks.
+        self._run({"2026-01": 3100.0}, _calendar("2025-12-28", "2026-02-28"))
 
     def test_partial_narrow_calendar_covering_exactly_one_month(self):
         # The canonical calendar need not be a large multi-year window -
         # equivalence must hold even when it covers only the weeks one
         # month actually touches.
-        self._run({"2026-06": 1800.0}, _calendar("2026-05-25", "2026-07-05"))
+        self._run({"2026-06": 1800.0}, _calendar("2026-05-24", "2026-07-05"))
 
     def test_consecutive_tracked_months_share_a_boundary_week(self):
         self._run(
             {"2026-01": 3100.0, "2026-02": 2800.0},
-            _calendar("2025-12-29", "2026-02-28"),
+            _calendar("2025-12-28", "2026-02-28"),
         )
 
     @staticmethod

@@ -73,6 +73,11 @@ class TestNBTCompletenessGate:
         metadata = _complete_metadata(outcome)
         assert validate_nbt_completeness_metadata_for_outcome(outcome, metadata) == []
 
+    def test_canonical_signup_date_basis_is_accepted(self):
+        outcome = _nbt_outcome(date_basis="signup_date")
+        metadata = _complete_metadata(outcome, date_basis="signup_date")
+        assert validate_nbt_completeness_metadata_for_outcome(outcome, metadata) == []
+
     def test_complete_metadata_accepted_as_dict(self):
         outcome = _nbt_outcome()
         metadata = _complete_metadata(outcome)

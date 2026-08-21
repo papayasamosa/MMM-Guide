@@ -21,6 +21,7 @@ import pandas as pd
 
 NBT_METRIC_KEY = "fh_net_billthrough_count"
 NBT_DATE_BASIS = "signup_date_attributed"
+NBT_DATE_BASES = ("signup_date", NBT_DATE_BASIS)
 NBT_UNIT = "bill-through subscriber"
 
 
@@ -108,10 +109,10 @@ def validate_supplied_net_billthrough(
             f"Supplied net bill-through data is missing columns: {missing_columns}."
         ]
 
-    if metadata.metric_key != NBT_METRIC_KEY or metadata.date_basis != NBT_DATE_BASIS:
+    if metadata.metric_key != NBT_METRIC_KEY or metadata.date_basis not in NBT_DATE_BASES:
         errors.append(
             "Net bill-through must use metric_key 'fh_net_billthrough_count' "
-            "and signup_date_attributed, not finance-date GSA."
+            "and a signup-date basis, not finance-date GSA."
         )
     if metadata.aggregation_type != "count" or metadata.unit != NBT_UNIT:
         errors.append(
