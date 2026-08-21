@@ -311,9 +311,13 @@ def build_observed_mediation_model(
         # contemporaneous observed clicks in this likelihood while using
         # lagged generated clicks for intervention reporting, which made the
         # fitted estimand and reported effect disagree.
-        observed_mediator_lagged = pt.as_tensor_variable(mediator_observed_std)[lag_index]
-        outcome_eta = outcome_intercept + direct_eta + (
-            outcome_mediator_beta * observed_mediator_lagged
+        observed_mediator_lagged = pt.as_tensor_variable(mediator_observed_std)[
+            lag_index
+        ]
+        outcome_eta = (
+            outcome_intercept
+            + direct_eta
+            + (outcome_mediator_beta * observed_mediator_lagged)
         )
         mu = pm.Deterministic(
             "mu", pt.clip(pt.exp(outcome_eta), 1e-6, 1e12), dims="obs"
@@ -348,7 +352,9 @@ def build_observed_mediation_model(
         mu_without_upstream = pm.Deterministic(
             "mu_without_upstream",
             pt.clip(
-                pt.exp(outcome_intercept + outcome_mediator_beta * baseline_mediator_std),
+                pt.exp(
+                    outcome_intercept + outcome_mediator_beta * baseline_mediator_std
+                ),
                 1e-6,
                 1e12,
             ),

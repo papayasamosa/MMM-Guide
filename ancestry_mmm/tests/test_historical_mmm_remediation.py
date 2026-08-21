@@ -13,23 +13,17 @@ from scripts.run_historical_mmm_remediation import (
 def test_structural_zero_classifier_distinguishes_pre_and_post_campaign() -> None:
     approved = pd.DataFrame(
         {
-            "period_start": pd.to_datetime(
-                ["2023-01-01", "2023-01-08", "2023-02-01"]
-            ),
+            "period_start": pd.to_datetime(["2023-01-01", "2023-01-08", "2023-02-01"]),
             "measure": [0.0, 10.0, 0.0],
         }
     )
 
     assert (
-        _classify_structural_zero(
-            pd.Timestamp("2022-12-25"), approved, "measure"
-        )
+        _classify_structural_zero(pd.Timestamp("2022-12-25"), approved, "measure")
         == "structural_zero_pre_launch"
     )
     assert (
-        _classify_structural_zero(
-            pd.Timestamp("2023-02-05"), approved, "measure"
-        )
+        _classify_structural_zero(pd.Timestamp("2023-02-05"), approved, "measure")
         == "structural_zero_post_campaign"
     )
 

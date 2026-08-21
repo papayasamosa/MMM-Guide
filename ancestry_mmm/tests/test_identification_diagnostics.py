@@ -278,14 +278,20 @@ def test_equation_diagnostics_reports_vif_rank_and_temporal_overlap_without_dele
     )
     assert result["exact_rank_deficient"] is True
     assert result["vif"]["tv"] > 1e6 or np.isinf(result["vif"]["tv"])
-    assert result["temporal_overlap"]["tv / radio"]["overlap_ratio"] == pytest.approx(1.0)
-    assert result["transformed_pearson_correlation"]["tv"]["radio"] == pytest.approx(1.0)
+    assert result["temporal_overlap"]["tv / radio"]["overlap_ratio"] == pytest.approx(
+        1.0
+    )
+    assert result["transformed_pearson_correlation"]["tv"]["radio"] == pytest.approx(
+        1.0
+    )
     assert set(result["predictor_names"]) == {"tv", "radio", "search_spend"}
 
 
 def test_equation_diagnostics_flags_constant_predictors_as_near_zero_variance():
     result = equation_identification_diagnostics(
-        pd.DataFrame({"intercept_like": np.ones(8), "varying": np.arange(8, dtype=float)})
+        pd.DataFrame(
+            {"intercept_like": np.ones(8), "varying": np.arange(8, dtype=float)}
+        )
     )
     assert "intercept_like" in result["near_zero_variance"]
     assert np.isinf(result["vif"]["intercept_like"])

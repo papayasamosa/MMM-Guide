@@ -146,12 +146,8 @@ class ObservedMediationGraphPlan:
         return {
             "outcome_node_id": self.outcome_node_id,
             "mediator_node_id": self.mediator_node_id,
-            "upstream_intervention_node_ids": list(
-                self.upstream_intervention_node_ids
-            ),
-            "upstream_to_mediator_edge_ids": list(
-                self.upstream_to_mediator_edge_ids
-            ),
+            "upstream_intervention_node_ids": list(self.upstream_intervention_node_ids),
+            "upstream_to_mediator_edge_ids": list(self.upstream_to_mediator_edge_ids),
             "mediator_to_outcome_edge_id": self.mediator_to_outcome_edge_id,
             "direct_edge_ids": list(self.direct_edge_ids),
             "formulation_id": self.formulation_id,
@@ -255,26 +251,20 @@ def compile_observed_mediation_graph(
     *,
     mediator_node_id: Optional[str] = None,
 ) -> ObservedMediationGraphPlan:
-    issues = observed_mediation_graph_issues(
-        graph, mediator_node_id=mediator_node_id
-    )
+    issues = observed_mediation_graph_issues(graph, mediator_node_id=mediator_node_id)
     if issues:
         raise UnsupportedGraphStructureError(
-            "Graph is not supported by observed mediation engine: "
-            + "; ".join(issues)
+            "Graph is not supported by observed mediation engine: " + "; ".join(issues)
         )
     outcome = next(node for node in graph.nodes if node.role == NODE_ROLE_OUTCOME)
     mediator = next(node for node in graph.nodes if node.role == NODE_ROLE_MEDIATOR)
     upstream = tuple(
-        node.node_id
-        for node in graph.nodes
-        if node.role == NODE_ROLE_INTERVENTION
+        node.node_id for node in graph.nodes if node.role == NODE_ROLE_INTERVENTION
     )
     upstream_edges = tuple(
         edge.edge_id
         for edge in graph.edges
-        if edge.role == EDGE_ROLE_MEDIATED
-        and edge.target_node_id == mediator.node_id
+        if edge.role == EDGE_ROLE_MEDIATED and edge.target_node_id == mediator.node_id
     )
     mediator_edge = next(
         edge
@@ -286,8 +276,7 @@ def compile_observed_mediation_graph(
     direct_edges = tuple(
         edge.edge_id
         for edge in graph.edges
-        if edge.role == EDGE_ROLE_DIRECT
-        and edge.target_node_id == outcome.node_id
+        if edge.role == EDGE_ROLE_DIRECT and edge.target_node_id == outcome.node_id
     )
     return ObservedMediationGraphPlan(
         outcome_node_id=outcome.node_id,

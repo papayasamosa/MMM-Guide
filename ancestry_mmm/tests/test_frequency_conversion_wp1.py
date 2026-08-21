@@ -187,7 +187,17 @@ def test_sunday_calendar_handles_months_starting_and_ending_mid_week():
         _spec(),
         date_col="period_start",
         value_col="value",
-        target_periods=["2023-12-31", "2024-01-07", "2024-01-14", "2024-01-21", "2024-01-28", "2024-02-04", "2024-02-11", "2024-02-18", "2024-02-25"],
+        target_periods=[
+            "2023-12-31",
+            "2024-01-07",
+            "2024-01-14",
+            "2024-01-21",
+            "2024-01-28",
+            "2024-02-04",
+            "2024-02-11",
+            "2024-02-18",
+            "2024-02-25",
+        ],
     )
     assert set(result.frame["period_start"]) == set(
         pd.to_datetime(
@@ -223,7 +233,9 @@ def test_weekly_source_monday_or_sunday_is_aligned_to_sunday_start(
             native_frequency="weekly",
             variable_class="rate_index",
             method_id="weekly_anchor_alignment",
-            parameters={"week_anchor": "monday" if source_date == "2024-01-01" else "sunday"},
+            parameters={
+                "week_anchor": "monday" if source_date == "2024-01-01" else "sunday"
+            },
         ),
         date_col="period_start",
         value_col="value",

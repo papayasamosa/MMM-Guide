@@ -102,9 +102,9 @@ def test_observed_mediation_graph_change_changes_fit_identity() -> None:
     first = GraphModelCompiler(engine=GRAPH_ENGINE_PYMC_OBSERVED_MEDIATION).compile(
         _graph(lag=1)
     )
-    changed = GraphModelCompiler(
-        engine=GRAPH_ENGINE_PYMC_OBSERVED_MEDIATION
-    ).compile(_graph(lag=2))
+    changed = GraphModelCompiler(engine=GRAPH_ENGINE_PYMC_OBSERVED_MEDIATION).compile(
+        _graph(lag=2)
+    )
     assert (
         first.causal_graph_structural_fingerprint
         != changed.causal_graph_structural_fingerprint
@@ -134,7 +134,9 @@ def test_observed_mediation_model_has_fitted_mediator_and_outcome_likelihoods() 
     rng = np.random.default_rng(7)
     X = rng.uniform(0.0, 1.0, size=(12, 2))
     mediator = np.rint(np.exp(2.0 + 0.8 * X[:, 0] + 0.4 * X[:, 1])).astype(float)
-    outcome = np.rint(np.exp(2.2 + 0.4 * X[:, 0] + 0.7 * np.log1p(mediator))).astype(float)
+    outcome = np.rint(np.exp(2.2 + 0.4 * X[:, 0] + 0.7 * np.log1p(mediator))).astype(
+        float
+    )
     model = build_observed_mediation_model(
         upstream_media=X,
         observed_mediator=mediator,
@@ -159,9 +161,10 @@ def test_observed_mediation_model_has_fitted_mediator_and_outcome_likelihoods() 
         "total_media_effect",
     } <= {variable.name for variable in model.deterministics}
     assert "mediator_spend_beta" in {variable.name for variable in model.free_RVs}
-    assert model._observed_mediation_metadata[
-        "search_spend_entered_mediator_likelihood"
-    ] is True
+    assert (
+        model._observed_mediation_metadata["search_spend_entered_mediator_likelihood"]
+        is True
+    )
     assert model._observed_mediation_metadata["mediator_lag_index"][:3] == [0, 0, 1]
 
 
@@ -170,7 +173,9 @@ def test_observed_mediation_lag_index_is_consistent_and_market_safe(lag: int) ->
     rng = np.random.default_rng(12 + lag)
     X = rng.uniform(0.0, 1.0, size=(10, 2))
     mediator = np.rint(np.exp(2.0 + X[:, 0])).astype(float)
-    outcome = np.rint(np.exp(2.2 + 0.4 * X[:, 1] + 0.3 * np.log1p(mediator))).astype(float)
+    outcome = np.rint(np.exp(2.2 + 0.4 * X[:, 1] + 0.3 * np.log1p(mediator))).astype(
+        float
+    )
     graph = _graph(lag=lag)
     model = build_observed_mediation_model(
         upstream_media=X,
@@ -211,7 +216,10 @@ def test_observed_mediation_synthetic_recovery() -> None:
     mediator_mu = np.exp(2.1 + 0.9 * X[:, 0] + 0.5 * X[:, 1])
     mediator = rng.negative_binomial(12.0, 12.0 / (12.0 + mediator_mu)).astype(float)
     outcome_mu = np.exp(
-        2.0 + 0.35 * X[:, 0] + 0.25 * X[:, 1] + 0.75 * (np.log1p(mediator) - np.log1p(mediator).mean())
+        2.0
+        + 0.35 * X[:, 0]
+        + 0.25 * X[:, 1]
+        + 0.75 * (np.log1p(mediator) - np.log1p(mediator).mean())
     )
     outcome = rng.negative_binomial(15.0, 15.0 / (15.0 + outcome_mu)).astype(float)
     model = build_observed_mediation_model(

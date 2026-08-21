@@ -109,7 +109,10 @@ def validate_supplied_net_billthrough(
             f"Supplied net bill-through data is missing columns: {missing_columns}."
         ]
 
-    if metadata.metric_key != NBT_METRIC_KEY or metadata.date_basis not in NBT_DATE_BASES:
+    if (
+        metadata.metric_key != NBT_METRIC_KEY
+        or metadata.date_basis not in NBT_DATE_BASES
+    ):
         errors.append(
             "Net bill-through must use metric_key 'fh_net_billthrough_count' "
             "and a signup-date basis, not finance-date GSA."

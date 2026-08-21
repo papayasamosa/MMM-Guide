@@ -391,9 +391,13 @@ def equation_identification_diagnostics(
         residual = standardized[:, index] - others @ fitted
         ss_total = float(np.sum(standardized[:, index] ** 2))
         r_squared = 1.0 - float(np.sum(residual**2)) / ss_total if ss_total else 1.0
-        vif[name] = float("inf") if r_squared >= 1.0 - 1e-12 else 1.0 / max(1.0 - r_squared, 1e-15)
+        vif[name] = (
+            float("inf")
+            if r_squared >= 1.0 - 1e-12
+            else 1.0 / max(1.0 - r_squared, 1e-15)
+        )
 
-    overlap: Dict[str, Dict[str, float]] = {}
+    overlap: Dict[str, Dict[str, float | None]] = {}
     active = values != 0
     for i, left in enumerate(names):
         for j in range(i + 1, len(names)):

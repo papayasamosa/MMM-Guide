@@ -21,7 +21,7 @@ of scope here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 import numpy as np
 import pymc as pm
@@ -396,8 +396,7 @@ def _market_grouped_adstock_and_saturation_with_history(
         )
     if X_media_history.ndim != 2 or X_media_history.shape[1] != X_media.shape[1]:
         raise ValueError(
-            "X_media_history must be a 2D array with the same channel count "
-            "as X_media."
+            "X_media_history must be a 2D array with the same channel count as X_media."
         )
 
     target_blocks: list[pt.TensorVariable] = []
@@ -666,12 +665,13 @@ def build_fh_hierarchical_model(
                     "Historical adstock carry-in requires both "
                     "X_media_history and history_market_bounds."
                 )
+            history_bounds = cast(List[tuple], history_market_bounds)
             sat_media_value, full_sat_media_blocks = (
                 _market_grouped_adstock_and_saturation_with_history(
                     X_media,
                     market_bounds,
                     np.asarray(X_media_history, dtype=float),
-                    list(history_market_bounds),
+                    history_bounds,
                     decay_rate,
                     hill_K,
                     hill_S,
@@ -764,9 +764,7 @@ def build_fh_hierarchical_model(
         all_cross_cells = active_cells + exploratory_cells
         cross_product_lags = sorted(
             {
-                pathway_masks.lag_for_component(
-                    outcome_ids[cell[0]], channels[cell[1]]
-                )
+                pathway_masks.lag_for_component(outcome_ids[cell[0]], channels[cell[1]])
                 for cell in all_cross_cells
             }
         )
@@ -797,7 +795,7 @@ def build_fh_hierarchical_model(
                     ) in zip(
                         full_sat_media_blocks,
                         market_bounds,
-                        history_market_bounds,
+                        history_bounds,
                     )
                 ]
                 for lag in cross_product_lags
@@ -805,9 +803,7 @@ def build_fh_hierarchical_model(
             lagged_media_by_weeks = {}
             for lag, blocks in history_lagged_blocks.items():
                 target_blocks = []
-                for block, (history_start, history_end) in zip(
-                    blocks, history_market_bounds
-                ):
+                for block, (history_start, history_end) in zip(blocks, history_bounds):
                     target_blocks.append(block[int(history_end - history_start) :])
                 lagged_media_by_weeks[lag] = pt.concatenate(target_blocks, axis=0)
 
@@ -1019,7 +1015,6 @@ def build_fh_hierarchical_model(
             "y_obs", mu=mu, alpha=alpha[None, :], observed=Y, dims=("obs", "outcome")
         )
 
-    outcome_catalogue: List[Any] = frame.get("outcomes") or []
     _no_search_candidate_a_graph_engine = (
         GRAPH_ENGINE_PYMC_HIERARCHICAL if causal_graph is not None else ""
     )
