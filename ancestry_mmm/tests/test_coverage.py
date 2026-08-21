@@ -1041,8 +1041,8 @@ class TestApprovedForOfficialUseTypeValidation:
 # ---------------------------------------------------------------------------
 
 
-def _weekly_dates(n=12, start="2025-01-06"):
-    return pd.date_range(start, periods=n, freq="W-MON")
+def _weekly_dates(n=12, start="2025-01-05"):
+    return pd.date_range(start, periods=n, freq="W-SUN")
 
 
 def _frame_and_freq():
@@ -1086,7 +1086,7 @@ class TestBuildCoverageMatrixFromFrame:
         )
         uk_record = next(r for r in matrix.records if r.market == "UK")
         assert uk_record.coverage_segments == ()
-        assert uk_record.observed_start == "2025-01-06"
+        assert uk_record.observed_start == "2025-01-05"
 
     def test_partial_window_variable_gap_is_not_backfilled(self):
         df, freq = _frame_and_freq()
@@ -1107,12 +1107,12 @@ class TestBuildCoverageMatrixFromFrame:
         # backfilled to expected_start.
         assert len(au_record.coverage_segments) == 1
         assert au_record.coverage_segments[0].state == STATE_UNKNOWN
-        assert au_record.coverage_segments[0].period_start == "2025-01-06"
-        assert au_record.coverage_segments[0].period_end == "2025-01-13"
-        assert au_record.observed_start == "2025-01-20"
+        assert au_record.coverage_segments[0].period_start == "2025-01-05"
+        assert au_record.coverage_segments[0].period_end == "2025-01-12"
+        assert au_record.observed_start == "2025-01-19"
         # expected_start/end are the PROJECT's window, not shrunk to AU's
         # own supported range.
-        assert au_record.expected_start == "2025-01-06"
+        assert au_record.expected_start == "2025-01-05"
         assert au_record.expected_end == df["date"].max().strftime("%Y-%m-%d")
 
     def test_missing_frequency_metadata_raises_rather_than_defaulting(self):
@@ -1193,7 +1193,7 @@ class TestBuildCoverageMatrixFromFrame:
         assert au_record.observed_start is None
         assert au_record.observed_end is None
         assert len(au_record.coverage_segments) == 1
-        assert au_record.coverage_segments[0].period_start == "2025-01-06"
+        assert au_record.coverage_segments[0].period_start == "2025-01-05"
         assert au_record.coverage_segments[0].period_end == dates[-1].strftime(
             "%Y-%m-%d"
         )
