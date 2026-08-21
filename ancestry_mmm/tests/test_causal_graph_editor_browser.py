@@ -268,7 +268,10 @@ def streamlit_base_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str
 def _add_node(page: Page, node_id: str, role: str) -> None:
     page.get_by_role("textbox", name="Node id").fill(node_id)
     _select_option(page, "Role", role, nth=0)
-    page.get_by_role("button", name="Add node").click()
+    # Streamlit can briefly retain the previous form submit button across a
+    # rerender, so the accessible role may resolve to two equivalent buttons.
+    # The last form is the live node-creation form.
+    page.get_by_role("button", name="Add node").last.click()
     page.wait_for_timeout(1500)
 
 
