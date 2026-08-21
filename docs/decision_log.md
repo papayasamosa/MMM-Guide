@@ -4347,6 +4347,37 @@ replay implemented as a bounded capability. Application-layer integration
 (Scenario Planner UI, optimiser objective) is a documented follow-up, not
 attempted in this targeted work package.
 
+---
+
+**Date:** 2026-08-21
+**Decision:** Implement the staged product-specific historical Search
+preparation boundary under `REQ-SEARCH-003`. Family History and DNA retain
+separate governed spend/click identities even though the source workbook uses
+shared physical `spend`/`clicks` column names. Missing spend remains unresolved
+unless an explicit structural-zero evidence set names the period; zero clicks
+never infer zero spend. The observed Search graph contract allows spend to
+explain its product-specific click mediator, prohibits a direct spend-to-
+outcome edge, and keeps click mediation separate from ordinary direct media.
+Mediator-path adstock has a separate parameter namespace and equation-level
+diagnostics remain non-deletion evidence.
+**Reason:** The sequential UK brief requires product-specific Search coverage
+resolution and graph contracts before any Model B fit. The real approved pack
+contains zero-click rows after the supplied Search spend ends, but no source
+evidence that those rows are zero spend; zero-filling would fabricate data.
+**Alternatives considered:** Treating zero clicks as zero spend (rejected -
+the brief explicitly prohibits that inference); pooling FH and DNA Search
+(rejected - separate accounts and outcomes); using spend as a direct outcome
+predictor alongside clicks (rejected - duplicate credit); silently shortening
+the target window (rejected - the canonical window remains governed).
+**Impact:** Added `REQ-SEARCH-003`, product-specific Search preparation and
+graph validation contracts, focused tests, and the PyMC alignment note. The
+local real-data coverage resolution remains unresolved for the post-
+2025-04-06 Search spend periods, so no Model A/B fit or graph approval is
+authorised by this decision.
+**Owner:** Marketing Data Science / Model Governance.
+**Status:** Preparation contract implemented; real-UK Search spend coverage
+and downstream fit gates remain unresolved.
+
 ## Reconcile authority docs and index sequential-planning requirements (Work Package 0)
 
 **Date:** 2026-08-16

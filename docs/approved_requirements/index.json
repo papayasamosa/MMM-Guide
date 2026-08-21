@@ -316,6 +316,32 @@
       ]
     },
     {
+      "requirement_id": "REQ-SEARCH-003",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-SEARCH-003.md",
+      "affected_modules": [
+        "ancestry_mmm/core/search_preparation.py",
+        "ancestry_mmm/core/search_objects.py",
+        "ancestry_mmm/core/graph_model_compiler.py",
+        "ancestry_mmm/core/observed_mediation.py",
+        "ancestry_mmm/tests/test_search_preparation.py",
+        "scripts/resolve_search_spend_coverage.py",
+        "docs/approved_requirements/REQ-SEARCH-003.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_search_preparation.py::test_fh_and_dna_search_objects_are_distinct_even_with_shared_source_columns",
+        "ancestry_mmm/tests/test_search_preparation.py::test_missing_spend_is_not_zero_filled_from_zero_clicks",
+        "ancestry_mmm/tests/test_search_preparation.py::test_explicit_structural_zero_evidence_resolves_missing_spend_only",
+        "ancestry_mmm/tests/test_search_preparation.py::test_search_mediator_adstock_has_its_own_parameter_namespace",
+        "ancestry_mmm/tests/test_search_preparation.py::test_search_equation_diagnostics_reports_flight_overlap_without_deleting_columns",
+        "ancestry_mmm/tests/test_search_preparation.py::test_product_search_graph_contract_forbids_spend_direct_path",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+      ]
+    },
+    {
       "requirement_id": "REQ-COVERAGE-001",
       "status": "approved_for_implementation",
       "record_path": "docs/approved_requirements/REQ-COVERAGE-001.md",

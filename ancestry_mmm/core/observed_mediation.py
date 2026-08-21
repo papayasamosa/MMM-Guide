@@ -48,6 +48,8 @@ class ObservedMediationFitSpec:
     upstream_unit: str = "governed_delivery"
     mediator_unit: str = "clicks"
     spend_column: Optional[str] = None
+    spend_object_id: Optional[str] = None
+    product: str = ""
 
     def __post_init__(self) -> None:
         if not self.upstream_names:
@@ -68,6 +70,10 @@ class ObservedMediationFitSpec:
             raise ObservedMediationValidationError(
                 "spend_column must be non-empty when supplied"
             )
+        if self.spend_object_id is not None and not str(self.spend_object_id).strip():
+            raise ObservedMediationValidationError(
+                "spend_object_id must be non-empty when supplied"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -78,6 +84,8 @@ class ObservedMediationFitSpec:
             "upstream_unit": self.upstream_unit,
             "mediator_unit": self.mediator_unit,
             "spend_column": self.spend_column,
+            "spend_object_id": self.spend_object_id,
+            "product": self.product,
         }
 
 
@@ -86,12 +94,14 @@ def compile_observed_mediation_plan(
     *,
     mediator_node_id: Optional[str] = None,
     activity_definitions: Optional[Sequence[Any]] = None,
+    search_objects: Optional[Sequence[Any]] = None,
 ) -> tuple[ObservedMediationGraphPlan, str, int]:
     """Compile and fingerprint the approved graph for this model."""
 
     result = GraphModelCompiler(
         engine=GRAPH_ENGINE_PYMC_OBSERVED_MEDIATION,
         activity_definitions=activity_definitions,
+        search_objects=search_objects,
     ).compile(graph)
     if result.observed_mediation is None:  # pragma: no cover - compiler invariant
         raise ObservedMediationValidationError(
@@ -166,6 +176,7 @@ def build_observed_mediation_model(
     fit_spec: ObservedMediationFitSpec,
     mediator_node_id: Optional[str] = None,
     prior_config: Optional[Mapping[str, float]] = None,
+    search_objects: Optional[Sequence[Any]] = None,
 ):
     """Build the supported PyMC observed-mediator model.
 
@@ -181,7 +192,7 @@ def build_observed_mediation_model(
     import pytensor.tensor as pt
 
     plan, graph_fingerprint, graph_lag = compile_observed_mediation_plan(
-        graph, mediator_node_id=mediator_node_id
+        graph, mediator_node_id=mediator_node_id, search_objects=search_objects
     )
     if tuple(plan.upstream_intervention_node_ids) != fit_spec.upstream_names:
         raise ObservedMediationValidationError(
@@ -199,6 +210,11 @@ def build_observed_mediation_model(
     if fit_spec.mediator_lag_weeks != graph_lag:
         raise ObservedMediationValidationError(
             "fit_spec.mediator_lag_weeks must match the graph edge lag"
+        )
+    if plan.spend_node_id and fit_spec.spend_object_id != plan.spend_node_id:
+        raise ObservedMediationValidationError(
+            "fit_spec.spend_object_id must match the product-specific Search "
+            "spend node in the approved graph"
         )
 
     X = _as_matrix(upstream_media, "upstream_media")

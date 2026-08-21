@@ -465,8 +465,8 @@ def validate_search_object_catalogue(
       versions` resolves which one is current - but two records both
       claiming to *be* the same version of the same lineage is a genuine
       identity collision, e.g. corrupted or hand-edited import data);
-    - no two *current* records at the same `(market, source_column)` may
-      claim *different* `search_role`s - a column already governed as
+    - no two *current* records at the same `(market, product, source_column)`
+      may claim *different* `search_role`s - a column already governed as
       `paid_search_delivery` (e.g. a click column) can never simultaneously
       be registered as `paid_search_cap`, and equally for any other pair
       (REQ-SEARCH-001 S14, S2: "no two of S1.1-S1.6 may ever share a
@@ -515,10 +515,16 @@ def validate_search_object_catalogue(
 
     current_definitions = current_search_object_versions(definitions)
 
-    by_column: Dict[Tuple[str, str], List[SearchObjectDefinition]] = {}
+    # The raw activity workbooks use shared physical names such as ``spend``
+    # and ``clicks`` for distinct product accounts.  Product is therefore
+    # part of the governed source identity; treating ``UK/spend`` as one
+    # global alias would incorrectly collapse FH and DNA Search accounts.
+    by_column: Dict[Tuple[str, str, str], List[SearchObjectDefinition]] = {}
     for defn in current_definitions:
-        by_column.setdefault((defn.market, defn.source_column), []).append(defn)
-    for (market, column), group in by_column.items():
+        by_column.setdefault(
+            (defn.market, defn.product, defn.source_column), []
+        ).append(defn)
+    for (market, product, column), group in by_column.items():
         distinct_roles = {member.search_role for member in group}
         if len(distinct_roles) <= 1:
             continue
@@ -532,7 +538,8 @@ def validate_search_object_catalogue(
                     market=market,
                     issue_type="incompatible_column_alias",
                     detail=(
-                        f"source_column {column!r} in market {market!r} is "
+                        f"source_column {column!r} in market {market!r}, "
+                        f"product {product!r} is "
                         f"claimed by conflicting search roles: {roles_summary}. "
                         "The same raw column can never serve two different "
                         "Search semantic roles."
