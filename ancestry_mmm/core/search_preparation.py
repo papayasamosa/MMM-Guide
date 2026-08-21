@@ -14,7 +14,7 @@ never evidence of zero spend by itself.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Sequence, cast
 
 import numpy as np
 import pandas as pd
@@ -436,7 +436,7 @@ def resolve_product_search_spend_coverage(
         clicks = None if source_row is None else source_row["clicks"]
         spend_missing = spend is None or bool(pd.isna(spend))
         if period in zero_dates:
-            if not spend_missing and float(spend) != 0.0:
+            if not spend_missing and float(cast(float, spend)) != 0.0:
                 raise ValueError(
                     f"structural-zero evidence conflicts with observed spend on {key}"
                 )
@@ -452,11 +452,11 @@ def resolve_product_search_spend_coverage(
             resolved_spend = None
             unresolved.append(key)
             missing_spend.append(key)
-            if pd.notna(clicks) and float(clicks) == 0.0:
+            if pd.notna(clicks) and float(cast(float, clicks)) == 0.0:
                 zero_click_unresolved.append(key)
             spend_status = "missing_spend"
         else:
-            resolved_spend = float(spend)
+            resolved_spend = float(cast(float, spend))
             if resolved_spend == 0.0:
                 observed_zero.append(key)
                 spend_status = "observed_zero"
@@ -470,7 +470,11 @@ def resolve_product_search_spend_coverage(
                 "source_activity_id": binding.source_activity_id,
                 "spend": resolved_spend,
                 "spend_status": spend_status,
-                "clicks": None if clicks is None or pd.isna(clicks) else float(clicks),
+                "clicks": (
+                    None
+                    if clicks is None or pd.isna(clicks)
+                    else float(cast(float, clicks))
+                ),
                 "source_row_present": present,
             }
         )
@@ -518,11 +522,14 @@ def apply_search_mediator_adstock(
 ) -> np.ndarray:
     """Apply the governed Search-path adstock, distinct from outcome state."""
 
-    return geometric_adstock(
-        values,
-        decay_rate=decay_rate,
-        initial_state=initial_state,
-        normalize=normalize,
+    return cast(
+        np.ndarray,
+        geometric_adstock(
+            np.asarray(values, dtype=float),
+            decay_rate=decay_rate,
+            initial_state=initial_state,
+            normalize=normalize,
+        ),
     )
 
 
@@ -534,10 +541,13 @@ def search_mediator_equation_diagnostics(
 ) -> dict[str, Any]:
     """Expose the full existing diagnostic bundle under the Search contract."""
 
-    result = equation_identification_diagnostics(
-        predictors,
-        labels=list(labels) if labels is not None else None,
-        transformed_predictors=transformed_predictors,
+    result = cast(
+        dict[str, Any],
+        equation_identification_diagnostics(
+            predictors,
+            labels=list(labels) if labels is not None else None,
+            transformed_predictors=transformed_predictors,
+        ),
     )
     # ``temporal_overlap`` is the governed flight-overlap measure in the
     # existing diagnostic service; the explicit alias makes the Search report
