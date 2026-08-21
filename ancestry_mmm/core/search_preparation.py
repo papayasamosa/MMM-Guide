@@ -522,14 +522,11 @@ def apply_search_mediator_adstock(
 ) -> np.ndarray:
     """Apply the governed Search-path adstock, distinct from outcome state."""
 
-    return cast(
-        np.ndarray,
-        geometric_adstock(
-            np.asarray(values, dtype=float),
-            decay_rate=decay_rate,
-            initial_state=initial_state,
-            normalize=normalize,
-        ),
+    return geometric_adstock(
+        np.asarray(values, dtype=float),
+        decay_rate=decay_rate,
+        initial_state=initial_state,
+        normalize=normalize,
     )
 
 
@@ -541,13 +538,10 @@ def search_mediator_equation_diagnostics(
 ) -> dict[str, Any]:
     """Expose the full existing diagnostic bundle under the Search contract."""
 
-    result = cast(
-        dict[str, Any],
-        equation_identification_diagnostics(
-            predictors,
-            labels=list(labels) if labels is not None else None,
-            transformed_predictors=transformed_predictors,
-        ),
+    result = equation_identification_diagnostics(
+        predictors,
+        labels=list(labels) if labels is not None else None,
+        transformed_predictors=transformed_predictors,
     )
     # ``temporal_overlap`` is the governed flight-overlap measure in the
     # existing diagnostic service; the explicit alias makes the Search report
