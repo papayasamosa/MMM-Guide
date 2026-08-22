@@ -37,6 +37,9 @@ from ancestry_mmm.core.outcomes import (
     MetricDefinition,
     OutcomeDefinition,
     OutcomeGroupDefinition,
+    LEGACY_NBT_OUTCOME_ID_ALIASES,
+    apply_explicit_nbt_group_identity_migration,
+    apply_explicit_nbt_identity_migration,
     dna_kit_outcome_columns,
     dna_outcomes_from_columns,
     dna_kit_sale_outcome_ids,
@@ -82,6 +85,52 @@ def _meta(outcome_ids, id_to_product, id_to_metric, id_to_role=None, kit_only=No
 
 
 class TestOutcomeDefinitionRoundTrip:
+    def test_explicit_nbt_migration_changes_ids_but_preserves_source_columns(self):
+        outcomes = [
+            OutcomeDefinition(
+                outcome_id=legacy_id,
+                product=FAMILY_HISTORY,
+                segment=segment,
+                metric="Net Bill Through",
+                source_column=legacy_id,
+                metric_key=METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+            )
+            for legacy_id, segment in (
+                ("fh_gsa_new", "New"),
+                ("fh_gsa_dna_cross_sell", "DNA cross-sell"),
+                ("fh_gsa_winback", "Winback"),
+            )
+        ]
+
+        migrated = apply_explicit_nbt_identity_migration(outcomes)
+
+        assert [item.outcome_id for item in migrated] == list(
+            LEGACY_NBT_OUTCOME_ID_ALIASES.values()
+        )
+        assert [item.source_column for item in migrated] == [
+            "fh_gsa_new",
+            "fh_gsa_dna_cross_sell",
+            "fh_gsa_winback",
+        ]
+        assert [item.outcome_id for item in outcomes] == list(
+            LEGACY_NBT_OUTCOME_ID_ALIASES
+        )
+
+    def test_explicit_nbt_migration_updates_group_members_only(self):
+        group = OutcomeGroupDefinition(
+            group_id="fh_nbt_by_customer_segment",
+            group_label="Family History NBT",
+            product=FAMILY_HISTORY,
+            outcome_family_key=METRIC_KEY_FH_NET_BILLTHROUGH_COUNT,
+            segment_dimension=SEGMENT_DIMENSION_FH_CUSTOMER,
+            member_outcome_ids=tuple(LEGACY_NBT_OUTCOME_ID_ALIASES),
+        )
+
+        migrated = apply_explicit_nbt_group_identity_migration([group])[0]
+
+        assert migrated.member_outcome_ids == tuple(LEGACY_NBT_OUTCOME_ID_ALIASES.values())
+        assert group.member_outcome_ids == tuple(LEGACY_NBT_OUTCOME_ID_ALIASES)
+
     def test_legacy_positional_constructor_still_treats_sixth_value_as_unit(self):
         outcome = OutcomeDefinition("id", FAMILY_HISTORY, "New", "GSA", "col", "GSA")
         assert outcome.unit == "GSA"

@@ -881,32 +881,44 @@ def build_fh_hierarchical_model(
         # Geo hierarchy: market-level baseline offsets, partially pooled by
         # default; markets in `unpooled_markets` get an effectively
         # independent (wide, unpooled) prior instead of sharing strength.
+        # A UK-only fit has no between-market variance to estimate.  Keep a
+        # deterministic zero-shaped offset for replay/persistence compatibility
+        # but do not create market_pool_sigma or market_offset_raw in that
+        # case.  The outcome intercept remains the single UK baseline.
         # -----------------------------------------------------------------
-        market_pool_sigma = pm.HalfNormal(
-            "market_pool_sigma",
-            sigma=prior_config.get("market_pool_sigma_prior", 0.4),
-            dims="outcome",
-        )
-        unpooled_sigma_const = prior_config.get("unpooled_market_sigma", 2.0)
-        sigma_rows = []
-        for m in markets:
-            if m in unpooled_markets:
-                sigma_rows.append(
-                    pt.as_tensor_variable(np.full(n_outcomes, unpooled_sigma_const))
-                )
-            else:
-                sigma_rows.append(market_pool_sigma)
-        market_sigma_stack = pt.stack(sigma_rows)  # (n_market, n_outcome)
+        if len(markets) == 1:
+            market_offset = pm.Deterministic(
+                "market_offset",
+                pt.zeros((1, n_outcomes)),
+                dims=("market", "outcome"),
+            )
+            eta_market = market_offset[market_idx]
+        else:
+            market_pool_sigma = pm.HalfNormal(
+                "market_pool_sigma",
+                sigma=prior_config.get("market_pool_sigma_prior", 0.4),
+                dims="outcome",
+            )
+            unpooled_sigma_const = prior_config.get("unpooled_market_sigma", 2.0)
+            sigma_rows = []
+            for m in markets:
+                if m in unpooled_markets:
+                    sigma_rows.append(
+                        pt.as_tensor_variable(np.full(n_outcomes, unpooled_sigma_const))
+                    )
+                else:
+                    sigma_rows.append(market_pool_sigma)
+            market_sigma_stack = pt.stack(sigma_rows)  # (n_market, n_outcome)
 
-        market_offset_raw = pm.Normal(
-            "market_offset_raw", mu=0, sigma=1, dims=("market", "outcome")
-        )
-        market_offset = pm.Deterministic(
-            "market_offset",
-            market_offset_raw * market_sigma_stack,
-            dims=("market", "outcome"),
-        )
-        eta_market = market_offset[market_idx]
+            market_offset_raw = pm.Normal(
+                "market_offset_raw", mu=0, sigma=1, dims=("market", "outcome")
+            )
+            market_offset = pm.Deterministic(
+                "market_offset",
+                market_offset_raw * market_sigma_stack,
+                dims=("market", "outcome"),
+            )
+            eta_market = market_offset[market_idx]
 
         # -----------------------------------------------------------------
         # Baseline, trend, seasonality (calendar-anchored Fourier).

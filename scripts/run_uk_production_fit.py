@@ -47,6 +47,11 @@ from ancestry_mmm.core.net_billthrough import (  # noqa: E402
     NBT_METRIC_KEY,
     NetBillthroughCompletenessMetadata,
 )
+from ancestry_mmm.core.outcomes import (  # noqa: E402
+    LEGACY_NBT_OUTCOME_ID_ALIASES,
+    apply_explicit_nbt_group_identity_migration,
+    apply_explicit_nbt_identity_migration,
+)
 from ancestry_mmm.core.official_preparation import (  # noqa: E402
     build_official_capability_report,
     prepare_canonical_native_frame,
@@ -67,13 +72,37 @@ DEFAULT_PACK_DIR = Path(
 DEFAULT_OUTPUT_DIR = Path(
     r"D:\Ancestry-MMM\test-artifacts\uk-readiness\production-fit-20260820"
 )
-GOVERNED_START = "2023-01-01"
-GOVERNED_END = "2025-06-29"
-MATURITY_CUTOFF = "2025-07-13"
+COMMON_WINDOW_START = "2023-01-01"
+COMMON_WINDOW_END = "2025-04-06"
 TARGET_FREQUENCY = "weekly"
 NBT_MATURITY_POLICY = (
     "Cohort is complete once 14 days have elapsed after signup; this is a "
     "completeness horizon, not a fixed NBT event lag."
+)
+
+MODEL_A_CONTEXT_CANDIDATES = {
+    "family_history": (
+        "uk_cpih_all_items_index",
+        "uk_unemployment_rate_pct",
+        "uk_new_mortgage_effective_interest_rate_pct",
+        "uk_deaths_registered_monthly",
+        "fh_category_demand_google_trends",
+    ),
+    "dna_kit": (
+        "uk_cpih_all_items_index",
+        "uk_unemployment_rate_pct",
+        "uk_new_mortgage_effective_interest_rate_pct",
+        "dna_category_demand_google_trends",
+    ),
+}
+WEEKLY_CONTEXT_CONTROLS = {
+    "family_history": ("fh_category_demand_google_trends",),
+    "dna_kit": ("dna_category_demand_google_trends",),
+}
+MONTHLY_CONTEXT_BLOCK_REASON = (
+    "Monthly source has no exact publication/release timing in the supplied "
+    "context metadata; governed release-aware LOCF cannot be executed without "
+    "inventing timing or risking leakage."
 )
 
 
@@ -187,7 +216,12 @@ def _load_pack(pack_dir: Path) -> LoadedPack:
 
 
 def _source_only_gate(
-    pack: LoadedPack, pack_dir: Path, output_dir: Path
+    pack: LoadedPack,
+    pack_dir: Path,
+    output_dir: Path,
+    *,
+    governed_start: str,
+    governed_end: str,
 ) -> dict[str, Any]:
     report = run_uk_readiness(
         source_paths=(
@@ -196,8 +230,8 @@ def _source_only_gate(
             ("outcomes", pack_dir / "outcome_data_approved_registry.xlsx"),
         ),
         output_dir=output_dir / "source-readiness",
-        governed_start=GOVERNED_START,
-        governed_end=GOVERNED_END,
+        governed_start=governed_start,
+        governed_end=governed_end,
         governed_frequency=TARGET_FREQUENCY,
     )
     stages = {stage.name: stage for stage in report.stages}
@@ -218,7 +252,12 @@ def _source_only_gate(
             + "; ".join(blockers)
         )
     return {
-        "status": report.status,
+        # The harness overall status includes downstream stages that this
+        # source-only gate intentionally does not run (approved graph,
+        # outcome approvals, and fit validation).  Preserve that raw status,
+        # while exposing the status of the selected source gate itself.
+        "status": "pass",
+        "raw_harness_status": report.status,
         "report_path": str(report.report_path),
         "stages": {
             name: {
@@ -256,7 +295,13 @@ def _check_sampling_runtime() -> None:
         )
 
 
-def _completeness_metadata(outcomes: Sequence[Any]) -> dict[str, dict[str, Any]]:
+def _completeness_metadata(
+    outcomes: Sequence[Any],
+    *,
+    governed_start: str,
+    governed_end: str,
+    maturity_cutoff: str,
+) -> dict[str, dict[str, Any]]:
     """Create a run-level integrity record from the approved source policy.
 
     The supplied workbook's dictionary carries the approved 14-day policy but
@@ -271,10 +316,10 @@ def _completeness_metadata(outcomes: Sequence[Any]) -> dict[str, dict[str, Any]]
         if outcome.metric_key != NBT_METRIC_KEY:
             continue
         result[outcome.outcome_id] = NetBillthroughCompletenessMetadata(
-            data_as_of_date=MATURITY_CUTOFF,
-            model_start_week=GOVERNED_START,
-            model_end_week=GOVERNED_END,
-            latest_complete_net_billthrough_week=GOVERNED_END,
+            data_as_of_date=maturity_cutoff,
+            model_start_week=governed_start,
+            model_end_week=governed_end,
+            latest_complete_net_billthrough_week=governed_end,
             maturity_rule_description=NBT_MATURITY_POLICY,
             source_owner=outcome.business_owner,
             outcome_id=outcome.outcome_id,
@@ -290,6 +335,9 @@ def _coverage_matrix(
     variables: Sequence[str],
     outcome_columns: Sequence[str],
     versions: Mapping[str, tuple[str, int]],
+    context_columns: Sequence[str] = (),
+    governed_start: str,
+    governed_end: str,
 ) -> Any:
     """Build a Sunday-anchored coverage matrix for the governed UK grid.
 
@@ -298,15 +346,16 @@ def _coverage_matrix(
     the fit gate builds the same metadata contract against the already
     resolved Sunday grid rather than manufacturing a different calendar.
     """
-    expected_dates = pd.date_range(GOVERNED_START, GOVERNED_END, freq="7D")
+    expected_dates = pd.date_range(governed_start, governed_end, freq="7D")
     expected_text = tuple(item.strftime("%Y-%m-%d") for item in expected_dates)
     records: list[VariableCoverageRecord] = []
     for variable in variables:
-        source_id, source_version = (
-            versions["outcomes"]
-            if variable in outcome_columns
-            else versions["activity_and_media"]
-        )
+        if variable in outcome_columns:
+            source_id, source_version = versions["outcomes"]
+        elif variable in context_columns:
+            source_id, source_version = versions["context_and_external_factors"]
+        else:
+            source_id, source_version = versions["activity_and_media"]
         for market in sorted(frame["market"].astype(str).unique()):
             scoped = frame[frame["market"].astype(str) == market]
             if variable not in scoped.columns:
@@ -330,7 +379,9 @@ def _coverage_matrix(
                     frequency=FrequencyMetadata(
                         native_frequency="weekly",
                         target_frequency="weekly",
-                        variable_class="flow_count",
+                        variable_class=(
+                            "rate_index" if variable in context_columns else "flow_count"
+                        ),
                     ),
                     coverage_segments=(),
                     observed_start=expected_text[0],
@@ -374,8 +425,11 @@ def _channels_for_model(
 
 def _incomplete_target_inputs(
     activity_data: pd.DataFrame,
+    *,
+    governed_start: str,
+    governed_end: str,
 ) -> dict[str, int]:
-    target_dates = pd.date_range(GOVERNED_START, GOVERNED_END, freq="7D")
+    target_dates = pd.date_range(governed_start, governed_end, freq="7D")
     target = activity_data.copy()
     target["period_start"] = pd.to_datetime(target["period_start"])
     target = target[target["period_start"].isin(target_dates)]
@@ -391,6 +445,9 @@ def _incomplete_target_inputs(
 
 def _no_target_window_variation(
     activity_data: pd.DataFrame,
+    *,
+    governed_start: str,
+    governed_end: str,
 ) -> list[str]:
     """Identify model-input columns with no estimable target-window variation.
 
@@ -401,7 +458,7 @@ def _no_target_window_variation(
     is still preserved for the channels that are selected.
     """
 
-    target_dates = pd.date_range(GOVERNED_START, GOVERNED_END, freq="7D")
+    target_dates = pd.date_range(governed_start, governed_end, freq="7D")
     target = activity_data.copy()
     target["period_start"] = pd.to_datetime(target["period_start"])
     target = target[target["period_start"].isin(target_dates)]
@@ -419,8 +476,10 @@ def _add_history(
     frame: dict[str, Any],
     activity_data: pd.DataFrame,
     spec: ModelSpec,
+    *,
+    governed_start: str,
 ) -> dict[str, Any]:
-    target_start = pd.Timestamp(GOVERNED_START)
+    target_start = pd.Timestamp(governed_start)
     history = activity_data.copy()
     history[spec.date_col] = pd.to_datetime(history[spec.date_col])
     history = history[history[spec.date_col] < target_start].copy()
@@ -430,10 +489,27 @@ def _add_history(
         raise FitGateError(
             f"{spec.markets} has no pre-window activity history for adstock carry-in."
         )
+    missing_columns = [channel for channel in spec.channels if channel not in history.columns]
+    if missing_columns:
+        raise FitGateError(
+            "Historical carry-in is unavailable for selected channel(s): "
+            + ", ".join(missing_columns)
+        )
+    # A source may begin one selected channel one week later than the others.
+    # Trim only leading rows before the first complete selected-channel vector;
+    # this preserves all available carry-in without fabricating a value.  Any
+    # internal or trailing gap after that point remains a hard blocker.
+    complete = ~history[spec.channels].isna().any(axis=1)
+    if not bool(complete.any()):
+        raise FitGateError(
+            f"{spec.markets} has no complete pre-window activity vector for adstock carry-in."
+        )
+    first_complete_position = int(np.flatnonzero(complete.to_numpy())[0])
+    history = history.iloc[first_complete_position:].copy()
     missing = [
         channel
         for channel in spec.channels
-        if channel not in history.columns or history[channel].isna().any()
+        if history[channel].isna().any()
     ]
     if missing:
         raise FitGateError(
@@ -463,6 +539,137 @@ def _add_history(
     }
 
 
+def _prepare_context_audit(
+    context_data: pd.DataFrame,
+    context_metadata: Sequence[Any],
+    *,
+    governed_start: str,
+    governed_end: str,
+) -> dict[str, Any]:
+    """Audit approved Model-A context candidates without filling values.
+
+    The supplied context workbook is a wide union of weekly and monthly
+    native observations.  Weekly category-demand candidates can be consumed
+    directly on the Sunday grid.  Monthly candidates remain explicit blockers
+    here because the source pack carries no release date or approved lag; the
+    release-aware executor must not invent one.
+    """
+
+    typed = context_data.copy()
+    typed["period_start"] = pd.to_datetime(typed["period_start"])
+    target_dates = pd.date_range(governed_start, governed_end, freq="7D")
+    target = typed[typed["period_start"].isin(target_dates)].copy()
+    metadata_by_id = {
+        str(item.get("variable_id") if isinstance(item, Mapping) else item.variable_id): item
+        for item in context_metadata
+    }
+    rows: list[dict[str, Any]] = []
+    for model_name, candidates in MODEL_A_CONTEXT_CANDIDATES.items():
+        for variable_id in candidates:
+            item = metadata_by_id.get(variable_id)
+            native_frequency = str(
+                item.get("native_frequency", "")
+                if isinstance(item, Mapping)
+                else getattr(item, "native_frequency", "")
+            )
+            variable_class = str(
+                item.get("variable_class", "")
+                if isinstance(item, Mapping)
+                else getattr(item, "variable_class", "")
+            )
+            source_role = str(
+                item.get("role", "")
+                if isinstance(item, Mapping)
+                else getattr(item, "role", "")
+            )
+            if variable_id not in typed.columns:
+                status = "unsupported"
+                reason = "Source column is absent from the adopted context table."
+                coverage_rows = 0
+            elif native_frequency == "monthly":
+                status = "blocked"
+                reason = MONTHLY_CONTEXT_BLOCK_REASON
+                coverage_rows = int(target[variable_id].notna().sum())
+            elif native_frequency == "weekly":
+                coverage_rows = int(target[variable_id].notna().sum())
+                if len(target) != len(target_dates) or coverage_rows != len(target_dates):
+                    status = "blocked"
+                    reason = (
+                        "Weekly category-demand source does not provide one non-missing "
+                        "observation for every requested Sunday week; no fill or interpolation applied."
+                    )
+                else:
+                    status = "ready" if variable_id in WEEKLY_CONTEXT_CONTROLS[model_name] else "diagnostic"
+                    reason = (
+                        "Complete native Sunday-week source; consumed as a candidate exogenous "
+                        "control for this product model."
+                        if status == "ready"
+                        else "Retained diagnostic context; not selected for the Model-A equation."
+                    )
+            else:
+                status = "unsupported"
+                reason = "No governed preparation method is registered for this source frequency/class."
+                coverage_rows = int(target[variable_id].notna().sum()) if variable_id in target else 0
+            rows.append(
+                {
+                    "model": model_name,
+                    "variable_id": variable_id,
+                    "source_role": source_role,
+                    "fit_role": "candidate_control" if status == "ready" else "diagnostic_only",
+                    "native_frequency": native_frequency,
+                    "variable_class": variable_class,
+                    "status": status,
+                    "coverage_rows": coverage_rows,
+                    "target_rows": len(target_dates),
+                    "method": (
+                        "native_weekly_calendar_alignment_v1"
+                        if native_frequency == "weekly" and status == "ready"
+                        else "release_aware_step_as_of_v1"
+                        if native_frequency == "monthly"
+                        else None
+                    ),
+                    "publication_timing": (
+                        "not_applicable_native_weekly"
+                        if native_frequency == "weekly"
+                        else "unresolved_missing_source_release_timing"
+                        if native_frequency == "monthly"
+                        else "unresolved"
+                    ),
+                    "reason": reason,
+                }
+            )
+    consumed = {
+        model_name: list(WEEKLY_CONTEXT_CONTROLS[model_name])
+        for model_name in MODEL_A_CONTEXT_CANDIDATES
+    }
+    required_rows = [row for row in rows if row["status"] in {"blocked", "unsupported"}]
+    return {
+        "status": "ready_with_unconsumed_monthly_candidates",
+        "target_window": {
+            "start": governed_start,
+            "end": governed_end,
+            "weeks": len(target_dates),
+            "frequency": "Sunday-Saturday",
+        },
+        "consumed_controls": consumed,
+        "candidates": rows,
+        "required_unresolved_candidates": required_rows,
+        "no_values_filled": True,
+    }
+
+
+def _migrate_outcome_catalogue(pack: LoadedPack) -> tuple[list[Any], list[Any]]:
+    """Apply the approved NBT identity migration at the fit boundary only."""
+
+    outcomes = apply_explicit_nbt_identity_migration(
+        list(pack.outcome_bundle.outcome_definitions)
+    )
+    groups = apply_explicit_nbt_group_identity_migration(
+        list(pack.outcome_bundle.outcome_groups)
+    )
+    return outcomes, groups
+
+
 def _model_meta_payload(meta: FHModelMeta) -> dict[str, Any]:
     masks = meta.resolved_pathway_masks.to_dict()
     return {
@@ -478,9 +685,108 @@ def _model_meta_payload(meta: FHModelMeta) -> dict[str, Any]:
     }
 
 
+def _model_structure_payload(model: Any, meta: FHModelMeta) -> dict[str, Any]:
+    """Persist mechanical evidence that each product fit is one joint model."""
+
+    coords = {
+        str(name): len(values)
+        for name, values in getattr(model, "coords", {}).items()
+    }
+    named_var_dims = {
+        str(name): list(dims)
+        for name, dims in getattr(model, "named_vars_to_dims", {}).items()
+    }
+    names = set(getattr(model, "named_vars", {}))
+    return {
+        "pm_model_count": 1,
+        "outcome_dimension": {
+            "name": "outcome",
+            "size": len(meta.outcome_ids),
+            "ids": list(meta.outcome_ids),
+        },
+        "coords": coords,
+        "named_variable_dimensions": named_var_dims,
+        "shared_hyperparameters": [
+            name
+            for name in (
+                "decay_rate",
+                "hill_K",
+                "hill_S",
+                "mu_channel",
+                "sigma_pool",
+                "z_offset",
+                "beta",
+            )
+            if name in names
+        ],
+        "outcome_effects_are_deviations_from_shared_effect": all(
+            name in names
+            for name in ("mu_channel", "sigma_pool", "z_offset", "beta")
+        ),
+        "market_hierarchy": (
+            "bypassed_one_market_no_between_market_variance"
+            if len(meta.markets) == 1
+            else "estimated_multi_market_partial_pooling"
+        ),
+        "market_variance_variables_present": [
+            name for name in ("market_pool_sigma", "market_offset_raw") if name in names
+        ],
+    }
+
+
 def _posterior_summary(trace: az.InferenceData, path: Path) -> None:
     summary = az.summary(trace, round_to=None)
     summary.to_csv(path)
+
+
+def _write_posterior_outcome_group_summary(
+    trace: az.InferenceData,
+    *,
+    frame: Mapping[str, Any],
+    meta: FHModelMeta,
+    path: Path,
+) -> None:
+    """Aggregate fitted outcome draws into product totals before summarising.
+
+    ``mu`` is summed across member outcomes inside each posterior draw and
+    week.  This prevents a posterior median/mean of a product total from being
+    assembled by adding separately summarised segment rows.
+    """
+
+    posterior_mu = trace.posterior["mu"]
+    outcome_ids = list(meta.outcome_ids)
+    dates = pd.to_datetime(frame["dates"])
+    observed = np.asarray(frame["Y"], dtype=float)
+    rows: list[dict[str, Any]] = []
+    for group in meta.outcome_groups_at_fit:
+        members = [item for item in group.member_outcome_ids if item in outcome_ids]
+        if not members:
+            continue
+        total = posterior_mu.sel(outcome=members).sum(dim="outcome")
+        values = np.asarray(
+            total.stack(posterior_draw=("chain", "draw")).transpose(
+                "posterior_draw", "obs"
+            )
+        )
+        member_indices = [outcome_ids.index(item) for item in members]
+        observed_total = observed[:, member_indices].sum(axis=1)
+        for obs_index, period_start in enumerate(dates):
+            draws = values[:, obs_index]
+            rows.append(
+                {
+                    "outcome_group_id": group.group_id,
+                    "outcome_group_label": group.group_label,
+                    "period_start": period_start.strftime("%Y-%m-%d"),
+                    "observed_total": float(observed_total[obs_index]),
+                    "posterior_mean": float(np.mean(draws)),
+                    "posterior_median": float(np.median(draws)),
+                    "lower_interval": float(np.quantile(draws, 0.05)),
+                    "upper_interval": float(np.quantile(draws, 0.95)),
+                    "posterior_draw_count": int(len(draws)),
+                    "aggregation": "sum_member_outcomes_within_draw",
+                }
+            )
+    pd.DataFrame(rows).to_csv(path, index=False)
 
 
 def _fit_one(
@@ -507,7 +813,7 @@ def _fit_one(
         dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
         prior_config={},
         direct_dna_outcome_ids=(
-            list(spec.segment_outcomes.values()) if name == "dna_kit" else None
+            [item.outcome_id for item in outcomes] if name == "dna_kit" else None
         ),
         causal_graph=None,
         search_objects=(),
@@ -527,6 +833,13 @@ def _fit_one(
     trace.to_netcdf(trace_path)
     summary_path = model_dir / "posterior_summary.csv"
     _posterior_summary(trace, summary_path)
+    group_summary_path = model_dir / "overall_outcome_posterior_summary.csv"
+    _write_posterior_outcome_group_summary(
+        trace,
+        frame=frame,
+        meta=model_result.meta,
+        path=group_summary_path,
+    )
     diagnostics = compute_model_diagnostics(trace)
     return {
         "status": "fit_completed",
@@ -542,7 +855,9 @@ def _fit_one(
         "history_rows": int(np.asarray(frame["X_media_history"]).shape[0]),
         "trace_path": str(trace_path),
         "posterior_summary_path": str(summary_path),
+        "overall_outcome_summary_path": str(group_summary_path),
         "meta": _model_meta_payload(model_result.meta),
+        "model_structure": _model_structure_payload(model_result.model, model_result.meta),
         "diagnostics": {
             "rhat_max": diagnostics.get("rhat_max"),
             "ess_min": diagnostics.get("ess_min"),
@@ -571,10 +886,18 @@ def run(
     seed: int,
     fit_enabled: bool = True,
     only_model: str | None = None,
+    governed_start: str = COMMON_WINDOW_START,
+    governed_end: str = COMMON_WINDOW_END,
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     pack = _load_pack(pack_dir)
-    source_gate = _source_only_gate(pack, pack_dir, output_dir)
+    source_gate = _source_only_gate(
+        pack,
+        pack_dir,
+        output_dir,
+        governed_start=governed_start,
+        governed_end=governed_end,
+    )
     if fit_enabled:
         _check_sampling_runtime()
     sources = adopted_model_input_sources(
@@ -586,21 +909,31 @@ def run(
     if sources is None:
         raise FitGateError("No adopted source tables are available for official preparation.")
 
-    # The selected proposal consumes only weekly outcomes and activity.  The
-    # native monthly/weekly context source remains retained but diagnostic;
-    # it is intentionally not converted or placed in the fit.
+    context_audit = _prepare_context_audit(
+        pack.adoption.context_data,
+        pack.adoption.context_variable_metadata,
+        governed_start=governed_start,
+        governed_end=governed_end,
+    )
+    context_columns = sorted(
+        {
+            variable_id
+            for values in context_audit["consumed_controls"].values()
+            for variable_id in values
+        }
+    )
     canonical = prepare_canonical_native_frame(
         sources,
         date_col="period_start",
         market_col="market",
-        governed_start=GOVERNED_START,
-        governed_end=GOVERNED_END,
+        governed_start=governed_start,
+        governed_end=governed_end,
         governed_frequency=TARGET_FREQUENCY,
-        consumed_variable_ids=(),
+        consumed_variable_ids=tuple(context_columns),
     )
     target = canonical.frame.copy()
     target["period_start"] = pd.to_datetime(target["period_start"])
-    governed_dates = pd.date_range(GOVERNED_START, GOVERNED_END, freq="7D")
+    governed_dates = pd.date_range(governed_start, governed_end, freq="7D")
     target = target[target["period_start"].isin(governed_dates)].copy()
     target = target.sort_values(["market", "period_start"]).reset_index(drop=True)
     if len(target) != len(governed_dates):
@@ -608,8 +941,16 @@ def run(
             "The official consumed-input grid does not contain exactly the "
             f"{len(governed_dates)} requested Sunday-Saturday weeks."
         )
-    outcome_definitions = list(pack.outcome_bundle.outcome_definitions)
-    nbt_metadata_by_outcome = _completeness_metadata(outcome_definitions)
+    outcome_definitions, outcome_groups = _migrate_outcome_catalogue(pack)
+    maturity_cutoff = (
+        pd.Timestamp(governed_end) + pd.Timedelta(days=14)
+    ).strftime("%Y-%m-%d")
+    nbt_metadata_by_outcome = _completeness_metadata(
+        outcome_definitions,
+        governed_start=governed_start,
+        governed_end=governed_end,
+        maturity_cutoff=maturity_cutoff,
+    )
     if len(nbt_metadata_by_outcome) != 3:
         raise FitGateError(
             "The approved Family History NBT definitions did not yield three "
@@ -622,10 +963,14 @@ def run(
         "uk_dna_brand_search",
     }
     incomplete_inputs = _incomplete_target_inputs(
-        pack.activity_bundle.model_input_media
+        pack.activity_bundle.model_input_media,
+        governed_start=governed_start,
+        governed_end=governed_end,
     )
     no_target_window_variation = _no_target_window_variation(
-        pack.activity_bundle.model_input_media
+        pack.activity_bundle.model_input_media,
+        governed_start=governed_start,
+        governed_end=governed_end,
     )
     excluded_inputs.update(incomplete_inputs)
     excluded_inputs.update(no_target_window_variation)
@@ -661,10 +1006,11 @@ def run(
                 market_col="market",
                 markets=["UK"],
                 segment_outcomes={item.segment: item.source_column for item in fh_outcomes},
-                channels=fh_channels,
-                dna_channels=fh_dna_channels,
-                fh_dna_cross_sell_outcome_id="fh_gsa_dna_cross_sell",
-                fourier_harmonics=3,
+                 channels=fh_channels,
+                 dna_channels=fh_dna_channels,
+                 fh_dna_cross_sell_outcome_id="fh_net_billthrough_count_dna_cross_sell",
+                 control_cols=list(context_audit["consumed_controls"]["family_history"]),
+                 fourier_harmonics=3,
             ),
         ),
         (
@@ -676,10 +1022,11 @@ def run(
                 markets=["UK"],
                 segment_outcomes={item.segment: item.source_column for item in dna_outcomes},
                 channels=dna_channels,
-                # DNA is a separate product model; its DNA-specific media are
-                # ordinary direct interventions, not an FH cross-product halo.
-                dna_channels=[],
-                fourier_harmonics=3,
+                 # DNA is a separate product model; its DNA-specific media are
+                 # ordinary direct interventions, not an FH cross-product halo.
+                 dna_channels=[],
+                 control_cols=list(context_audit["consumed_controls"]["dna_kit"]),
+                 fourier_harmonics=3,
             ),
         ),
     )
@@ -697,12 +1044,19 @@ def run(
     models: list[dict[str, Any]] = []
     model_gate: dict[str, Any] = {}
     for model_name, model_outcomes, spec in model_configs:
-        variables = [item.source_column for item in model_outcomes] + list(spec.channels)
+        variables = (
+            [item.source_column for item in model_outcomes]
+            + list(spec.channels)
+            + list(spec.control_cols)
+        )
         matrix = _coverage_matrix(
             target,
             variables=variables,
             outcome_columns=[item.source_column for item in model_outcomes],
             versions=pack.versions,
+            context_columns=context_columns,
+            governed_start=governed_start,
+            governed_end=governed_end,
         )
         capability = build_official_capability_report(
             spec,
@@ -713,8 +1067,8 @@ def run(
         )
         assessment = assess_official_preparation(
             matrix,
-            governed_start=GOVERNED_START,
-            governed_end=GOVERNED_END,
+            governed_start=governed_start,
+            governed_end=governed_end,
             governed_frequency=TARGET_FREQUENCY,
             consumed_variable_ids=tuple(item.variable_id for item in capability.consumed_variables),
             capability_evidence=capability.to_dict(),
@@ -739,11 +1093,20 @@ def run(
             activity_definitions=activities,
             net_billthrough_metadata=next(iter(nbt_metadata_by_outcome.values())),
         )
+        frame["outcome_groups"] = [
+            group
+            for group in outcome_groups
+            if group.product == (
+                "Family History" if model_name == "family_history" else "DNA"
+            )
+            and set(group.member_outcome_ids).issubset(set(frame["outcome_ids"]))
+        ]
         frame["preparation_mode"] = "official"
         history_evidence = _add_history(
             frame,
             pack.activity_bundle.model_input_media,
             spec,
+            governed_start=governed_start,
         )
         model_gate[model_name]["history"] = history_evidence
         try:
@@ -773,7 +1136,7 @@ def run(
                     dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
                     prior_config={},
                     direct_dna_outcome_ids=(
-                        list(spec.segment_outcomes.values())
+                        [item.outcome_id for item in model_outcomes]
                         if model_name == "dna_kit"
                         else None
                     ),
@@ -792,6 +1155,7 @@ def run(
                     "channels": list(frame["channels"]),
                     "history_rows": int(np.asarray(frame["X_media_history"]).shape[0]),
                     "meta": _model_meta_payload(proposed.meta),
+                    "model_structure": _model_structure_payload(proposed.model, proposed.meta),
                 }
         except Exception as exc:
             result = {
@@ -814,16 +1178,16 @@ def run(
             else "prepared_not_fitted"
         ),
         "validation_status": "pending_diagnostics_review" if fit_enabled else "not_run",
-        "run_date": "2026-08-20",
+        "run_date": pd.Timestamp.now(tz="Europe/London").strftime("%Y-%m-%d"),
         "engine": "PyMC",
         "source_pack": str(pack_dir),
         "source_evidence": list(pack.source_evidence),
         "target_window": {
-            "start": GOVERNED_START,
-            "end": GOVERNED_END,
+            "start": governed_start,
+            "end": governed_end,
             "frequency": TARGET_FREQUENCY,
-            "weeks": int(len(pd.date_range(GOVERNED_START, GOVERNED_END, freq="7D"))),
-            "maturity_cutoff": MATURITY_CUTOFF,
+            "weeks": int(len(pd.date_range(governed_start, governed_end, freq="7D"))),
+            "maturity_cutoff": maturity_cutoff,
         },
         "source_readiness_gate": source_gate,
         "model_gate": model_gate,
@@ -857,10 +1221,18 @@ def run(
                 "treatment": "excluded from initial fitted inputs because the requested estimation window has no estimable variation; source series and pre-window history retained",
             },
             "context": {
-                "status": "retained native and diagnostic-only; no monthly-to-weekly fabrication or conversion",
+                "status": context_audit["status"],
+                "audit": context_audit,
             },
         },
         "nbt_completeness_records": nbt_metadata_by_outcome,
+        "outcome_identity_migration": {
+            "status": "explicit_runtime_migration",
+            "legacy_aliases": dict(LEGACY_NBT_OUTCOME_ID_ALIASES),
+            "raw_source_columns_unchanged": True,
+            "canonical_outcome_ids": [item.outcome_id for item in outcome_definitions],
+            "canonical_outcome_groups": [group.to_dict() for group in outcome_groups],
+        },
         "models": models,
         "selected_models": [config[0] for config in model_configs],
     }
@@ -877,6 +1249,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--chains", type=int, default=4)
     parser.add_argument("--target-accept", type=float, default=0.9)
     parser.add_argument("--seed", type=int, default=20260820)
+    parser.add_argument("--governed-start", default=COMMON_WINDOW_START)
+    parser.add_argument("--governed-end", default=COMMON_WINDOW_END)
     parser.add_argument(
         "--only-model",
         choices=("family_history", "dna_kit"),
@@ -903,6 +1277,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             seed=args.seed,
             fit_enabled=not args.prepare_only,
             only_model=args.only_model,
+            governed_start=args.governed_start,
+            governed_end=args.governed_end,
         )
     except (FitGateError, OSError, ValueError) as exc:
         args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -914,8 +1290,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "error": str(exc),
                 "engine": "PyMC",
                 "target_window": {
-                    "start": GOVERNED_START,
-                    "end": GOVERNED_END,
+                    "start": args.governed_start,
+                    "end": args.governed_end,
                     "frequency": TARGET_FREQUENCY,
                 },
             },
