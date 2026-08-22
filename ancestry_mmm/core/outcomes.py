@@ -26,7 +26,7 @@ input, not `spec.segment_outcomes` directly.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
 import pandas as pd
@@ -136,6 +136,71 @@ METRIC_KEY_DNA_KIT_SALE_SELF_ACTIVATED = "dna_kit_sale_self_activated"
 METRIC_KEY_DNA_KIT_SALE_GIFTED_ACTIVATED = "dna_kit_sale_gifted_activated"
 METRIC_KEY_DNA_KIT_SALE_UNACTIVATED = "dna_kit_sale_unactivated"
 METRIC_KEY_DNA_KIT_SALE_TOTAL = "dna_kit_sale_total"
+
+# Explicit migration aliases for the historical UK source registry.  The raw
+# workbook continues to use these source columns, but they are not canonical
+# outcome identities.  Callers must opt into this migration at a governed
+# source boundary; ordinary catalogue loading does not silently rename IDs.
+LEGACY_NBT_OUTCOME_ID_ALIASES: Dict[str, str] = {
+    "fh_gsa_new": "fh_net_billthrough_count_new",
+    "fh_gsa_dna_cross_sell": "fh_net_billthrough_count_dna_cross_sell",
+    "fh_gsa_winback": "fh_net_billthrough_count_winback",
+}
+
+
+def apply_explicit_nbt_identity_migration(
+    outcomes: Sequence["OutcomeDefinition"],
+) -> List["OutcomeDefinition"]:
+    """Return a catalogue with the approved legacy FH NBT IDs migrated.
+
+    This is deliberately an explicit source-boundary operation.  It changes
+    only ``outcome_id``; source columns and the source workbook remain intact.
+    A collision fails closed rather than allowing two source identities to
+    become one model dimension.
+    """
+
+    migrated = [
+        replace(
+            outcome,
+            outcome_id=LEGACY_NBT_OUTCOME_ID_ALIASES.get(
+                outcome.outcome_id, outcome.outcome_id
+            ),
+        )
+        for outcome in outcomes
+    ]
+    ids = [outcome.outcome_id for outcome in migrated]
+    if len(ids) != len(set(ids)):
+        raise ValueError(
+            "Explicit NBT identity migration created duplicate outcome IDs: "
+            + ", ".join(ids)
+        )
+    return migrated
+
+
+def apply_explicit_nbt_group_identity_migration(
+    groups: Sequence["OutcomeGroupDefinition"],
+) -> List["OutcomeGroupDefinition"]:
+    """Migrate member IDs in semantic groups at the same explicit boundary."""
+
+    return [
+        replace(
+            group,
+            member_outcome_ids=tuple(
+                LEGACY_NBT_OUTCOME_ID_ALIASES.get(member, member)
+                for member in group.member_outcome_ids
+            ),
+            supplied_total_outcome_id=(
+                LEGACY_NBT_OUTCOME_ID_ALIASES.get(
+                    group.supplied_total_outcome_id,
+                    group.supplied_total_outcome_id,
+                )
+                if group.supplied_total_outcome_id is not None
+                else None
+            ),
+        )
+        for group in groups
+    ]
+
 
 # The `aggregation_type`s a `MetricDefinition`/`OutcomeDefinition` can carry -
 # "count" is a volume (summable, valid CPA denominator, valid optimiser

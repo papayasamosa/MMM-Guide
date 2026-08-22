@@ -239,6 +239,55 @@ class TestSingleChannelSingleMarketSurvivesPmDraw:
             val = pm.draw(model.named_vars["sat_media"], draws=1, random_seed=0)
         assert np.asarray(val).shape == (3, 1)
 
+    def test_one_market_bypasses_between_market_variance(self):
+        """A UK-only fit must not estimate an unidentifiable market hierarchy."""
+        from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+        from ancestry_mmm.core.schema import ModelSpec
+
+        spec = ModelSpec(
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["TV"],
+        )
+        model, meta = build_fh_hierarchical_model(
+            self._single_channel_single_market_frame(), spec
+        )
+
+        assert "market_pool_sigma" not in model.named_vars
+        assert "market_offset_raw" not in model.named_vars
+        assert "market_offset" in model.named_vars
+        assert meta.markets == ["UK"]
+
+    def test_multiple_markets_retain_between_market_variance(self):
+        """The one-market bypass must not remove the multi-market contract."""
+        from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+        from ancestry_mmm.core.schema import ModelSpec
+
+        frame = self._single_channel_single_market_frame()
+        frame["markets"] = ["UK", "US"]
+        frame["market_idx"] = np.array([0, 0, 0, 1, 1, 1])
+        frame["market_bounds"] = [(0, 3), (3, 6)]
+        frame["X_media"] = np.vstack([frame["X_media"], frame["X_media"]])
+        frame["Y"] = np.vstack([frame["Y"], frame["Y"]])
+        frame["promo"] = np.vstack([frame["promo"], frame["promo"]])
+        frame["fourier"] = np.vstack([frame["fourier"], frame["fourier"]])
+        frame["trend"] = np.tile(frame["trend"], 2)
+        spec = ModelSpec(
+            date_col="date",
+            market_col="market",
+            markets=["UK", "US"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["TV"],
+        )
+
+        model, meta = build_fh_hierarchical_model(frame, spec)
+
+        assert "market_pool_sigma" in model.named_vars
+        assert "market_offset_raw" in model.named_vars
+        assert meta.markets == ["UK", "US"]
+
     def test_sat_media_uses_explicit_pre_window_history(self):
         """The official UK window must inherit adstock from retained media
         history rather than starting its first target week at zero."""

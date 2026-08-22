@@ -4,6 +4,32 @@ Format: Date, Decision, Reason, Alternatives considered, Impact, Owner, Status.
 
 ---
 
+**Date:** 2026-08-22
+**Decision:** Implement the approved common-window historical UK test as two
+separate PyMC joint/shared hierarchical models: three canonical Family History
+NBT outcomes and two DNA kit outcomes, using the Sunday-Saturday window
+2023-01-01 through 2025-04-06. Apply explicit legacy `fh_gsa_*` to canonical
+NBT identity migration only at the fit boundary, consume only complete native
+weekly category-demand controls, and bypass between-market variance for the
+single UK market while preserving the multi-market hierarchy branch.
+**Reason:** The task-specific brief requires a common Search-supported window,
+canonical NBT identity, product separation, no fabricated context observations,
+and a convergence audit before any Search mediator or later model is started.
+**Alternatives considered:** Retaining the 2025-06-29 endpoint despite the
+known Search gap; fitting a five-outcome FH+DNA model; exposing supplied
+`fh_gsa_*` names as GSA; filling or interpolating missing monthly/Search data;
+estimating meaningless between-market variance for one UK market; and
+switching to JAX/NumPyro when the approved PyMC runtime was slow. All rejected
+by the brief.
+**Impact:** The implementation and evidence contract are recorded in
+`docs/common_window_joint_model_remediation.md`; the official preparation
+artefact passes for 119 weeks. Real Model-A convergence remains incomplete
+because the host's PyTensor execution is too slow for a responsible unattended
+run; Model B and Model C remain gated.
+**Owner:** Modelling / Platform engineering.
+**Status:** Implemented; convergence gate open.
+---
+
 **Date:** 2026-07-31
 **Decision:** Approve REQ-CURVE-001 (official response curve authority and evidence contract)
 for implementation, with: `curve_publication` approval mandatory for official artifact
