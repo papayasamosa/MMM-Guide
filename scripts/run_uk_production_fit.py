@@ -451,8 +451,8 @@ def _incomplete_target_inputs(
 def _no_target_window_variation(
     activity_data: pd.DataFrame,
     *,
-    governed_start: str,
-    governed_end: str,
+    governed_start: str = COMMON_WINDOW_START,
+    governed_end: str = COMMON_WINDOW_END,
 ) -> list[str]:
     """Identify model-input columns with no estimable target-window variation.
 
