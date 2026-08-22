@@ -70,7 +70,7 @@ DEFAULT_PACK_DIR = Path(
     r"D:\Ancestry-MMM\test-artifacts\uk-readiness\approved-uk-packs-20260820-v3"
 )
 DEFAULT_OUTPUT_DIR = Path(
-    r"D:\Ancestry-MMM\test-artifacts\uk-readiness\production-fit-20260820"
+    r"D:\Ancestry-MMM\test-artifacts\uk-readiness\production-fit-common-window-20260822"
 )
 COMMON_WINDOW_START = "2023-01-01"
 COMMON_WINDOW_END = "2025-04-06"
@@ -658,7 +658,11 @@ def _prepare_context_audit(
                 }
             )
     consumed = {
-        model_name: list(WEEKLY_CONTEXT_CONTROLS[model_name])
+        model_name: [
+            row["variable_id"]
+            for row in rows
+            if row["model"] == model_name and row["status"] == "ready"
+        ]
         for model_name in MODEL_A_CONTEXT_CANDIDATES
     }
     required_rows = [row for row in rows if row["status"] in {"blocked", "unsupported"}]
