@@ -619,6 +619,19 @@ def build_fh_hierarchical_model(
 
     channel_mean_spend = X_media.mean(axis=0)
     channel_mean_spend = np.where(channel_mean_spend > 0, channel_mean_spend, 1.0)
+    if prior_config.get("K_reference") == "nonzero_median":
+        # Sparse flighted channels have a raw-window mean that can be far
+        # below their active-week support.  A K prior centred on that mean
+        # pushes the Hill curve toward immediate saturation when the channel
+        # is active.  This remains a data-derived weak prior, not a posterior
+        # empirical-Bayes update: it uses only the prepared media frame.
+        positive_media = np.where(X_media > 0, X_media, np.nan)
+        active_median = np.nanmedian(positive_media, axis=0)
+        channel_mean_spend = np.where(
+            np.isfinite(active_median) & (active_median > 0),
+            active_median,
+            channel_mean_spend,
+        )
 
     with pm.Model() as model:
         model.add_coord("obs", np.arange(n_obs))
@@ -702,11 +715,22 @@ def build_fh_hierarchical_model(
             sigma=prior_config.get("channel_effect_sigma", 0.5),
             dims="channel",
         )
-        sigma_pool = pm.HalfNormal(
-            "sigma_pool",
-            sigma=prior_config.get("pooling_sigma_prior", 0.3),
-            dims="channel",
-        )
+        pooling_scale = prior_config.get("pooling_sigma_prior", 0.3)
+        if prior_config.get("pooling_sigma_prior_distribution") == "lognormal":
+            pooling_log_sigma = prior_config.get("pooling_sigma_log_prior_sigma", 0.35)
+            pooling_log_mu = np.log(pooling_scale) - 0.5 * pooling_log_sigma**2
+            sigma_pool = pm.LogNormal(
+                "sigma_pool",
+                mu=pooling_log_mu,
+                sigma=pooling_log_sigma,
+                dims="channel",
+            )
+        else:
+            sigma_pool = pm.HalfNormal(
+                "sigma_pool",
+                sigma=pooling_scale,
+                dims="channel",
+            )
         z_offset = pm.Normal("z_offset", mu=0, sigma=1, dims=("outcome", "channel"))
         log_beta = pm.Deterministic(
             "log_beta",
@@ -872,9 +896,20 @@ def build_fh_hierarchical_model(
         # -----------------------------------------------------------------
         # Outcome-specific promotional sensitivity (non-negative: promos lift).
         # -----------------------------------------------------------------
-        promo_coef = pm.HalfNormal(
-            "promo_coef", sigma=prior_config.get("promo_sigma", 0.5), dims="outcome"
-        )
+        if np.any(np.abs(promo) > 0):
+            promo_coef = pm.HalfNormal(
+                "promo_coef",
+                sigma=prior_config.get("promo_sigma", 0.5),
+                dims="outcome",
+            )
+        else:
+            # Do not sample a coefficient for an all-zero promotion input:
+            # that creates a completely prior-only dimension in every chain
+            # and adds no likelihood information.  Keep the deterministic
+            # name for posterior/replay schema compatibility.
+            promo_coef = pm.Deterministic(
+                "promo_coef", pt.zeros(n_outcomes), dims="outcome"
+            )
         eta_promo = promo * promo_coef[None, :]
 
         # -----------------------------------------------------------------

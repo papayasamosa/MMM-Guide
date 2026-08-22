@@ -260,6 +260,61 @@ class TestSingleChannelSingleMarketSurvivesPmDraw:
         assert "market_offset" in model.named_vars
         assert meta.markets == ["UK"]
 
+    def test_all_zero_promotion_does_not_create_prior_only_coefficient(self):
+        """An absent promotion input must not add an unidentifiable RV."""
+        from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+        from ancestry_mmm.core.schema import ModelSpec
+
+        spec = ModelSpec(
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["TV"],
+        )
+        model, _meta = build_fh_hierarchical_model(
+            self._single_channel_single_market_frame(), spec
+        )
+
+        assert "promo_coef" in model.named_vars
+        assert "promo_coef" not in {rv.name for rv in model.free_RVs}
+
+    def test_candidate_geometry_priors_build_finite_rvs(self):
+        """The diagnostic prior knobs must build real, finite PyMC RVs."""
+        import pymc as pm
+
+        from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+        from ancestry_mmm.core.schema import ModelSpec
+
+        spec = ModelSpec(
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["TV"],
+        )
+        model, _meta = build_fh_hierarchical_model(
+            self._single_channel_single_market_frame(),
+            spec,
+            prior_config={
+                "K_reference": "nonzero_median",
+                "K_alpha": 10.0,
+                "pooling_sigma_prior": 0.12,
+                "pooling_sigma_prior_distribution": "lognormal",
+                "pooling_sigma_log_prior_sigma": 0.35,
+            },
+        )
+
+        assert type(model.named_vars["sigma_pool"].owner.op).__name__ == "LogNormalRV"
+        with model:
+            hill_k, sigma_pool = pm.draw(
+                [model.named_vars["hill_K"], model.named_vars["sigma_pool"]],
+                draws=3,
+                random_seed=0,
+            )
+        assert np.isfinite(hill_k).all()
+        assert np.isfinite(sigma_pool).all()
+
     def test_multiple_markets_retain_between_market_variance(self):
         """The one-market bypass must not remove the multi-market contract."""
         from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
