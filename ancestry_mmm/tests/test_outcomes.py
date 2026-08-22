@@ -128,7 +128,9 @@ class TestOutcomeDefinitionRoundTrip:
 
         migrated = apply_explicit_nbt_group_identity_migration([group])[0]
 
-        assert migrated.member_outcome_ids == tuple(LEGACY_NBT_OUTCOME_ID_ALIASES.values())
+        assert migrated.member_outcome_ids == tuple(
+            LEGACY_NBT_OUTCOME_ID_ALIASES.values()
+        )
         assert group.member_outcome_ids == tuple(LEGACY_NBT_OUTCOME_ID_ALIASES)
 
     def test_legacy_positional_constructor_still_treats_sixth_value_as_unit(self):

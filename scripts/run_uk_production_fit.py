@@ -192,9 +192,7 @@ def _load_pack(pack_dir: Path) -> LoadedPack:
         adoption = adopt_standard_source_bundle(
             bundle,
             activity_definitions=adoption.activity_definitions if adoption else (),
-            activity_model_input=(
-                adoption.activity_model_input if adoption else None
-            ),
+            activity_model_input=(adoption.activity_model_input if adoption else None),
             outcome_data=adoption.outcome_data if adoption else None,
             context_data=adoption.context_data if adoption else None,
             context_variable_metadata=(
@@ -225,8 +223,14 @@ def _source_only_gate(
 ) -> dict[str, Any]:
     report = run_uk_readiness(
         source_paths=(
-            ("activity_and_media", pack_dir / "activity_data_approved_metadata_and_structural_zeros.xlsx"),
-            ("context_and_external_factors", pack_dir / "context_and_external_factors_data_native_preserved.xlsx"),
+            (
+                "activity_and_media",
+                pack_dir / "activity_data_approved_metadata_and_structural_zeros.xlsx",
+            ),
+            (
+                "context_and_external_factors",
+                pack_dir / "context_and_external_factors_data_native_preserved.xlsx",
+            ),
             ("outcomes", pack_dir / "outcome_data_approved_registry.xlsx"),
         ),
         output_dir=output_dir / "source-readiness",
@@ -281,8 +285,7 @@ def _check_sampling_runtime() -> None:
     """
     has_cpp = any(shutil.which(command) for command in ("g++", "clang++", "cl"))
     has_jax_backend = bool(
-        importlib.util.find_spec("jax")
-        and importlib.util.find_spec("numpyro")
+        importlib.util.find_spec("jax") and importlib.util.find_spec("numpyro")
     )
     if not has_cpp and not has_jax_backend:
         raise FitGateError(
@@ -380,7 +383,9 @@ def _coverage_matrix(
                         native_frequency="weekly",
                         target_frequency="weekly",
                         variable_class=(
-                            "rate_index" if variable in context_columns else "flow_count"
+                            "rate_index"
+                            if variable in context_columns
+                            else "flow_count"
                         ),
                     ),
                     coverage_segments=(),
@@ -484,12 +489,16 @@ def _add_history(
     history[spec.date_col] = pd.to_datetime(history[spec.date_col])
     history = history[history[spec.date_col] < target_start].copy()
     history = history[history[spec.market_col].isin(spec.markets)]
-    history = history.sort_values([spec.market_col, spec.date_col]).reset_index(drop=True)
+    history = history.sort_values([spec.market_col, spec.date_col]).reset_index(
+        drop=True
+    )
     if history.empty:
         raise FitGateError(
             f"{spec.markets} has no pre-window activity history for adstock carry-in."
         )
-    missing_columns = [channel for channel in spec.channels if channel not in history.columns]
+    missing_columns = [
+        channel for channel in spec.channels if channel not in history.columns
+    ]
     if missing_columns:
         raise FitGateError(
             "Historical carry-in is unavailable for selected channel(s): "
@@ -506,11 +515,7 @@ def _add_history(
         )
     first_complete_position = int(np.flatnonzero(complete.to_numpy())[0])
     history = history.iloc[first_complete_position:].copy()
-    missing = [
-        channel
-        for channel in spec.channels
-        if history[channel].isna().any()
-    ]
+    missing = [channel for channel in spec.channels if history[channel].isna().any()]
     if missing:
         raise FitGateError(
             "Historical carry-in is unavailable for selected channel(s): "
@@ -560,7 +565,9 @@ def _prepare_context_audit(
     target_dates = pd.date_range(governed_start, governed_end, freq="7D")
     target = typed[typed["period_start"].isin(target_dates)].copy()
     metadata_by_id = {
-        str(item.get("variable_id") if isinstance(item, Mapping) else item.variable_id): item
+        str(
+            item.get("variable_id") if isinstance(item, Mapping) else item.variable_id
+        ): item
         for item in context_metadata
     }
     rows: list[dict[str, Any]] = []
@@ -592,14 +599,20 @@ def _prepare_context_audit(
                 coverage_rows = int(target[variable_id].notna().sum())
             elif native_frequency == "weekly":
                 coverage_rows = int(target[variable_id].notna().sum())
-                if len(target) != len(target_dates) or coverage_rows != len(target_dates):
+                if len(target) != len(target_dates) or coverage_rows != len(
+                    target_dates
+                ):
                     status = "blocked"
                     reason = (
                         "Weekly category-demand source does not provide one non-missing "
                         "observation for every requested Sunday week; no fill or interpolation applied."
                     )
                 else:
-                    status = "ready" if variable_id in WEEKLY_CONTEXT_CONTROLS[model_name] else "diagnostic"
+                    status = (
+                        "ready"
+                        if variable_id in WEEKLY_CONTEXT_CONTROLS[model_name]
+                        else "diagnostic"
+                    )
                     reason = (
                         "Complete native Sunday-week source; consumed as a candidate exogenous "
                         "control for this product model."
@@ -609,13 +622,19 @@ def _prepare_context_audit(
             else:
                 status = "unsupported"
                 reason = "No governed preparation method is registered for this source frequency/class."
-                coverage_rows = int(target[variable_id].notna().sum()) if variable_id in target else 0
+                coverage_rows = (
+                    int(target[variable_id].notna().sum())
+                    if variable_id in target
+                    else 0
+                )
             rows.append(
                 {
                     "model": model_name,
                     "variable_id": variable_id,
                     "source_role": source_role,
-                    "fit_role": "candidate_control" if status == "ready" else "diagnostic_only",
+                    "fit_role": "candidate_control"
+                    if status == "ready"
+                    else "diagnostic_only",
                     "native_frequency": native_frequency,
                     "variable_class": variable_class,
                     "status": status,
@@ -689,8 +708,7 @@ def _model_structure_payload(model: Any, meta: FHModelMeta) -> dict[str, Any]:
     """Persist mechanical evidence that each product fit is one joint model."""
 
     coords = {
-        str(name): len(values)
-        for name, values in getattr(model, "coords", {}).items()
+        str(name): len(values) for name, values in getattr(model, "coords", {}).items()
     }
     named_var_dims = {
         str(name): list(dims)
@@ -720,8 +738,7 @@ def _model_structure_payload(model: Any, meta: FHModelMeta) -> dict[str, Any]:
             if name in names
         ],
         "outcome_effects_are_deviations_from_shared_effect": all(
-            name in names
-            for name in ("mu_channel", "sigma_pool", "z_offset", "beta")
+            name in names for name in ("mu_channel", "sigma_pool", "z_offset", "beta")
         ),
         "market_hierarchy": (
             "bypassed_one_market_no_between_market_variance"
@@ -857,7 +874,9 @@ def _fit_one(
         "posterior_summary_path": str(summary_path),
         "overall_outcome_summary_path": str(group_summary_path),
         "meta": _model_meta_payload(model_result.meta),
-        "model_structure": _model_structure_payload(model_result.model, model_result.meta),
+        "model_structure": _model_structure_payload(
+            model_result.model, model_result.meta
+        ),
         "diagnostics": {
             "rhat_max": diagnostics.get("rhat_max"),
             "ess_min": diagnostics.get("ess_min"),
@@ -907,7 +926,9 @@ def run(
         context_variable_metadata=pack.adoption.context_variable_metadata,
     )
     if sources is None:
-        raise FitGateError("No adopted source tables are available for official preparation.")
+        raise FitGateError(
+            "No adopted source tables are available for official preparation."
+        )
 
     context_audit = _prepare_context_audit(
         pack.adoption.context_data,
@@ -942,9 +963,9 @@ def run(
             f"{len(governed_dates)} requested Sunday-Saturday weeks."
         )
     outcome_definitions, outcome_groups = _migrate_outcome_catalogue(pack)
-    maturity_cutoff = (
-        pd.Timestamp(governed_end) + pd.Timedelta(days=14)
-    ).strftime("%Y-%m-%d")
+    maturity_cutoff = (pd.Timestamp(governed_end) + pd.Timedelta(days=14)).strftime(
+        "%Y-%m-%d"
+    )
     nbt_metadata_by_outcome = _completeness_metadata(
         outcome_definitions,
         governed_start=governed_start,
@@ -982,7 +1003,9 @@ def run(
         activities, product="DNA", excluded_inputs=excluded_inputs
     )
     if not fh_channels or not dna_channels:
-        raise FitGateError("Approved product-specific channel resolution produced an empty model.")
+        raise FitGateError(
+            "Approved product-specific channel resolution produced an empty model."
+        )
 
     fh_outcomes = [
         item
@@ -992,10 +1015,14 @@ def run(
     dna_outcomes = [
         item
         for item in outcome_definitions
-        if item.included_in_fit and item.product == "DNA" and item.metric_key == "dna_kit_sale"
+        if item.included_in_fit
+        and item.product == "DNA"
+        and item.metric_key == "dna_kit_sale"
     ]
     if len(fh_outcomes) != 3 or len(dna_outcomes) != 2:
-        raise FitGateError("Approved outcome registry does not resolve to 3 FH and 2 DNA primary outcomes.")
+        raise FitGateError(
+            "Approved outcome registry does not resolve to 3 FH and 2 DNA primary outcomes."
+        )
 
     model_configs = (
         (
@@ -1005,12 +1032,14 @@ def run(
                 date_col="period_start",
                 market_col="market",
                 markets=["UK"],
-                segment_outcomes={item.segment: item.source_column for item in fh_outcomes},
-                 channels=fh_channels,
-                 dna_channels=fh_dna_channels,
-                 fh_dna_cross_sell_outcome_id="fh_net_billthrough_count_dna_cross_sell",
-                 control_cols=list(context_audit["consumed_controls"]["family_history"]),
-                 fourier_harmonics=3,
+                segment_outcomes={
+                    item.segment: item.source_column for item in fh_outcomes
+                },
+                channels=fh_channels,
+                dna_channels=fh_dna_channels,
+                fh_dna_cross_sell_outcome_id="fh_net_billthrough_count_dna_cross_sell",
+                control_cols=list(context_audit["consumed_controls"]["family_history"]),
+                fourier_harmonics=3,
             ),
         ),
         (
@@ -1020,13 +1049,15 @@ def run(
                 date_col="period_start",
                 market_col="market",
                 markets=["UK"],
-                segment_outcomes={item.segment: item.source_column for item in dna_outcomes},
+                segment_outcomes={
+                    item.segment: item.source_column for item in dna_outcomes
+                },
                 channels=dna_channels,
-                 # DNA is a separate product model; its DNA-specific media are
-                 # ordinary direct interventions, not an FH cross-product halo.
-                 dna_channels=[],
-                 control_cols=list(context_audit["consumed_controls"]["dna_kit"]),
-                 fourier_harmonics=3,
+                # DNA is a separate product model; its DNA-specific media are
+                # ordinary direct interventions, not an FH cross-product halo.
+                dna_channels=[],
+                control_cols=list(context_audit["consumed_controls"]["dna_kit"]),
+                fourier_harmonics=3,
             ),
         ),
     )
@@ -1070,7 +1101,9 @@ def run(
             governed_start=governed_start,
             governed_end=governed_end,
             governed_frequency=TARGET_FREQUENCY,
-            consumed_variable_ids=tuple(item.variable_id for item in capability.consumed_variables),
+            consumed_variable_ids=tuple(
+                item.variable_id for item in capability.consumed_variables
+            ),
             capability_evidence=capability.to_dict(),
         )
         model_gate[model_name] = {
@@ -1096,9 +1129,8 @@ def run(
         frame["outcome_groups"] = [
             group
             for group in outcome_groups
-            if group.product == (
-                "Family History" if model_name == "family_history" else "DNA"
-            )
+            if group.product
+            == ("Family History" if model_name == "family_history" else "DNA")
             and set(group.member_outcome_ids).issubset(set(frame["outcome_ids"]))
         ]
         frame["preparation_mode"] = "official"
@@ -1126,7 +1158,9 @@ def run(
                     target_accept=target_accept,
                 )
             else:
-                from ancestry_mmm.application.model_fit_service import build_model_for_spec
+                from ancestry_mmm.application.model_fit_service import (
+                    build_model_for_spec,
+                )
 
                 proposed = build_model_for_spec(
                     frame=frame,
@@ -1155,7 +1189,9 @@ def run(
                     "channels": list(frame["channels"]),
                     "history_rows": int(np.asarray(frame["X_media_history"]).shape[0]),
                     "meta": _model_meta_payload(proposed.meta),
-                    "model_structure": _model_structure_payload(proposed.model, proposed.meta),
+                    "model_structure": _model_structure_payload(
+                        proposed.model, proposed.meta
+                    ),
                 }
         except Exception as exc:
             result = {

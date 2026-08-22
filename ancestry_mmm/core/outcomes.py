@@ -160,9 +160,12 @@ def apply_explicit_nbt_identity_migration(
     """
 
     migrated = [
-        replace(outcome, outcome_id=LEGACY_NBT_OUTCOME_ID_ALIASES.get(
-            outcome.outcome_id, outcome.outcome_id
-        ))
+        replace(
+            outcome,
+            outcome_id=LEGACY_NBT_OUTCOME_ID_ALIASES.get(
+                outcome.outcome_id, outcome.outcome_id
+            ),
+        )
         for outcome in outcomes
     ]
     ids = [outcome.outcome_id for outcome in migrated]
@@ -197,6 +200,7 @@ def apply_explicit_nbt_group_identity_migration(
         )
         for group in groups
     ]
+
 
 # The `aggregation_type`s a `MetricDefinition`/`OutcomeDefinition` can carry -
 # "count" is a volume (summable, valid CPA denominator, valid optimiser
