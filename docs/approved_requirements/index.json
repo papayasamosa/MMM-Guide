@@ -94,6 +94,23 @@
       ]
     },
     {
+      "requirement_id": "REQ-NBT-002",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-NBT-002.md",
+      "affected_modules": [
+        "ancestry_mmm/core/outcomes.py",
+        "ancestry_mmm/core/net_billthrough.py",
+        "ancestry_mmm/core/outcome_approval.py",
+        "scripts/run_uk_production_fit.py",
+        "docs/decision_log.md"
+        ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_common_window_runner.py::test_historical_test_scope_is_explicitly_non_production",
+        "ancestry_mmm/tests/test_outcomes.py::TestOutcomeDefinitionRoundTrip::test_explicit_nbt_migration_changes_ids_but_preserves_source_columns",
+        "ancestry_mmm/tests/test_net_billthrough.py::TestNBTCompletenessGate::test_complete_metadata_matching_outcome_passes"
+      ]
+    },
+    {
       "requirement_id": "REQ-PLAN-001",
       "status": "approved_for_implementation",
       "record_path": "docs/approved_requirements/REQ-PLAN-001.md",
@@ -678,6 +695,21 @@
         "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluatePosteriorPredictiveMetricDistributions::test_model_c_computes_the_section",
         "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluatePosteriorPredictiveMetricDistributions::test_section_round_trips_and_is_fingerprinted",
         "ancestry_mmm/tests/test_diagnostics_wp2_evidence_apptest.py::test_scorecard_computes_posterior_predictive_metric_distributions"
+      ]
+    },
+    {
+      "requirement_id": "REQ-PREFIT-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-PREFIT-001.md",
+      "affected_modules": [
+        "ancestry_mmm/core/",
+        "ancestry_mmm/application/",
+        "ancestry_mmm/pages/",
+        "docs/approved_requirements/REQ-PREFIT-001.md"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique"
       ]
     },
     {

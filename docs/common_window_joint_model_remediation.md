@@ -16,6 +16,12 @@ draw-level product totals under the approved media-input transformations and
 controls. Monetary CPA/ROI and optimisation remain downstream governed uses;
 no value weights are invented here.
 
+This run is explicitly identified as `window_role =
+historical_test_common_window` and `use_mode = historical_test/non_production`.
+It must not be labelled or persisted as the production-programme default
+window. The separate current production-programme PRD period remains
+2023-07-03 through 2026-06-28 unless a later decision changes it.
+
 ## Approved preparation contract
 
 - The common Sunday-Saturday likelihood window is `2023-01-01` through
@@ -43,6 +49,11 @@ no value weights are invented here.
 - Product totals are formed by summing member outcomes within each posterior
   draw before calculating summaries; separately summarised segment rows are
   never added together.
+- A successful historical observed-mediator Search test may be attempted only
+  after Model A convergence, valid FH/DNA spend/click coverage, graph approval,
+  Search prior-predictive checks, equation-level identification diagnostics
+  and synthetic mediation recovery. This does not approve the richer latent
+  demand/capacity/organic/direct production Search architecture.
 
 ## Implementation and evidence
 
@@ -75,11 +86,15 @@ execution. The earlier full fit also required hours per product and had
 divergences/R-hat failures.
 
 Therefore Model A convergence is still an explicit runtime/convergence gate;
-Model B Search mediation and Model C are not started. The correct next action
-is to diagnose or improve the approved PyMC/PyTensor runtime, then execute the
-brief's staged convergence protocol and require zero divergences where
-possible, R-hat at most 1.01, healthy ESS/BFMI/treedepth/MCSE, and posterior
-predictive checks before any official attribution or optimisation use.
+Model B Search mediation and the later Brand-State Mediation Model are not
+started. The current historical test may continue as non-production using
+static readiness, prior-predictive, identification and short-MCMC evidence,
+but that is not the mandatory full pre-fit workflow for official production
+submission. The correct next action is to diagnose or improve the approved
+PyMC/PyTensor runtime, then execute the brief's staged convergence protocol
+and require zero divergences, R-hat at most 1.01, adequate bulk/tail ESS,
+healthy BFMI/treedepth/MCSE, and broader posterior validation before any
+official attribution or optimisation use.
 
 ## Upstream alignment
 

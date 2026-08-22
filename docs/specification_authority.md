@@ -10,6 +10,44 @@
 | Operating model | Direct internal build by Ancestry Marketing Data Science |
 | Repository | `papayasamosa/Media-Mix-Lab` |
 
+## Current consolidated PRD source authority (approved 2026-08-22)
+
+The supplied analyst decision response approves this per-part map for the
+current repository-coherence and implementation work. Older version tables
+below are historical overlays and must not override this map.
+
+| Part | Current authority |
+|---|---|
+| Part 1 | Cross-Document Coherent v1.4 |
+| Part 2 | Cross-Document Coherent v1.4 |
+| Part 3 | Cross-Document Coherent v1.12, Pre-Fit Model Diagnostics |
+| Part 4 | Cross-Document Coherent v1.7, Pre-Fit Diagnostic Architecture |
+| Part 5 | Cross-Document Coherent v1.5, Governed Named-Event Data Contracts |
+| Part 6 | Cross-Document Coherent v1.10, Pre-Fit Model Diagnostics |
+| Part 7 | Cross-Document Coherent v1.9, Pre-Fit Model Diagnostics |
+| Part 8 | Cross-Document Coherent v1.5, Governed Named-Event Scenario Replay |
+| Part 9 | Cross-Document Coherent v1.6 |
+| Part 10 | Cross-Document Coherent v1.7, Pre-Fit Model Diagnostics UX |
+| Part 11 | Cross-Document Coherent v1.7, Pre-Fit Model Diagnostics Service/API |
+
+The standalone Data Input Contract amendment is historical proposal material
+whose substantive source-input contract is incorporated into the current
+approved Parts 3-7/10/11 wording. The FX addendum is the approved normative
+product/architecture contract for FX semantics; Finance-owned provider,
+rate-set, operational and future-assumption choices remain separately
+deferred.
+
+The current bounded UK historical test is identified as
+`window_role=historical_test_common_window` and
+`use_mode=historical_test_non_production`, with 2023-01-01 through 2025-04-06
+as its 119-week estimation window. This does not change the separate PRD
+production-programme period of 2023-07-03 through 2026-06-28.
+
+The initial UK Family History test is governed by `REQ-NBT-002` as supplied
+NBT, not GSA. Future brand work is named **Brand-State Mediation Model** with
+machine identifier `brand_state_mediation` (BSM); the repository's existing
+market-specific Model C is not renamed.
+
 ## Version history: v1.4 to v1.5
 
 v1.5 is a **focused update**, not a full-suite rewrite:
@@ -354,6 +392,29 @@ Each row below is one of two distinct states, not to be conflated:
 | Experiment evidence modes and provenance (`REQ-EXPMODE-001`) | Requirement exists but capability incomplete | Approved 2026-08-17 (Work Package 0), core registry implemented Work Package 4 (2026-08-18): `core.experiments` provides an immutable, versioned `ExperimentRecord` (mirroring `core.causal_graph`/`core.search_objects`'s lineage pattern), `ExperimentToModelUse`'s closed four-value evidence-mode vocabulary, a caller-evidenced `CompatibilityAssessment` across all nine required dimensions, a fail-closed `build_calibrating_use` gate, a double-counting check, and a per-experiment (never averaged) provenance report. Durable adoption/persistence/Diagnostics workflow implemented Work Package 2 of `...Post PR291` (2026-08-19): `application.experiment_service` is the explicit analyst-reviewed adoption boundary (source rows never auto-adopt; missing required fields fail closed; the registry is immutable with versioned edits; calibrating uses require a fully compatible assessment, explicit prior/likelihood identity, and a dependence-handling method when a new use would create a double-counted dependence), the registry persists through the project bundle (`config/experiments.json`, `EXPERIMENT_REGISTRY_SCHEMA_VERSION`, quarantine-on-import via `core.persistence.resolve_imported_experiments`, future schema versions rejected), and the schema v8 `experiment_calibration` Diagnostics section is populated from the real saved registry (`provenance_for_model`, per-experiment, never averaged, with a live staleness note). Adoption/review UI on `pages/01_Data_Upload.py`; use declaration and provenance on `pages/06_Diagnostics.py`. Not yet implemented: any specific likelihood-/prior-calibration statistical mechanism (reserved for a future decision-support package per this record's own text) — the calibrated-vs-uncalibrated comparison half of the Diagnostics section therefore stays empty. |
 | Calibrated-versus-uncalibrated model comparison (`REQ-CALIB-001`) | Requirement exists but capability incomplete | Approved 2026-08-17 (Work Package 0), core comparison contract implemented Work Package 4 (2026-08-18): `core.calibration_comparison` reuses `core.model_identity.ModelIdentity` directly (resolving this record's own identity-architecture open question), rejecting construction unless the calibrated and uncalibrated identities are genuinely distinct (Requirement 1). Generic per-metric and per-experiment-agreement comparison, with no threshold/verdict/"preferred" field anywhere — verified by an explicit field-name scan (Requirement 3). `CalibrationEventRecord` implements Requirement 5's per-event record as caller-supplied, structured facts. Depends on `REQ-EXPMODE-001` (not yet coupled by import). No calibration mechanism exists or is implied. A schema v8 `experiment_calibration` Diagnostics display slot for the comparison artefact now exists (optional `CalibratedVsUncalibratedComparisonArtefact` payload, this record's own `to_dict()` — a read-only evidence view, always `None`/`not_applicable` until a calibration mechanism produces one). Not yet implemented: the material-change criteria that trigger mandatory review, any comparison tolerance/threshold, computing any comparison metric itself, and Requirement 4's separate calibrated/uncalibrated visibility in curves/planning/reports. |
 | Downstream forecast-consequence evidence (`REQ-FORECAST-001`) | Requirement exists but capability incomplete | Approved 2026-08-17. Separate from, and narrower than, the "Future-assumption bundles" row above (`REQ-FUTURE-001`, Work Package 9) — covers only the consequence-assessment contract for an already-classified exogenous control. Zero implementation yet. |
+
+## Current analyst-decision overrides to historical gap rows
+
+The following current statuses supersede older prose in the gap table above:
+
+- `REQ-NBT-002` is approved for the bounded initial UK NBT historical test;
+  GSA and NBT remain distinct and legacy `fh_gsa_*` identifiers are aliases
+  only.
+- `REQ-PREFIT-001` is approved and makes the full pre-fit workflow mandatory
+  for official production submission. The current historical test has an
+  explicit non-production exception while the service/artefact/page capability
+  is implemented.
+- `REQ-SEARCH-003` permits the bounded historical observed-mediator Model B
+  test after Model A convergence, valid FH/DNA spend-click coverage, graph
+  approval, Search prior-predictive checks, equation-level identification and
+  synthetic mediation recovery. It does not approve the richer latent
+  production Search decomposition or Search planning.
+- The FX addendum is approved as the normative product/architecture contract;
+  Finance operational provider, rate-set and future-assumption choices remain
+  deferred.
+- The later brand-state capability is named `brand_state_mediation` / Brand-
+  State Mediation Model (BSM). Existing repository market-specific Model C
+  terminology and implementation are unchanged.
 
 ## Approved requirement records already implemented (with documented capability boundaries)
 

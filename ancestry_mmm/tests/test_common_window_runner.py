@@ -5,6 +5,8 @@ import pandas as pd
 
 from scripts.run_uk_production_fit import (
     DEFAULT_OUTPUT_DIR,
+    HISTORICAL_TEST_USE_MODE,
+    HISTORICAL_TEST_WINDOW_ROLE,
     _prepare_context_audit,
 )
 
@@ -129,3 +131,8 @@ def test_context_audit_does_not_consume_blocked_weekly_candidate():
 def test_common_window_runner_default_output_is_distinct_from_prior_window():
     assert DEFAULT_OUTPUT_DIR.name == "production-fit-common-window-20260822"
     assert "production-fit-20260820" not in str(DEFAULT_OUTPUT_DIR)
+
+
+def test_historical_test_scope_is_explicitly_non_production():
+    assert HISTORICAL_TEST_WINDOW_ROLE == "historical_test_common_window"
+    assert HISTORICAL_TEST_USE_MODE == "historical_test_non_production"

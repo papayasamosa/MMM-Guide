@@ -74,6 +74,8 @@ DEFAULT_OUTPUT_DIR = Path(
 )
 COMMON_WINDOW_START = "2023-01-01"
 COMMON_WINDOW_END = "2025-04-06"
+HISTORICAL_TEST_WINDOW_ROLE = "historical_test_common_window"
+HISTORICAL_TEST_USE_MODE = "historical_test_non_production"
 TARGET_FREQUENCY = "weekly"
 NBT_MATURITY_POLICY = (
     "Cohort is complete once 14 days have elapsed after signup; this is a "
@@ -822,6 +824,7 @@ def _fit_one(
     tune: int,
     chains: int,
     target_accept: float,
+    prior_config: Mapping[str, Any],
 ) -> dict[str, Any]:
     from ancestry_mmm.application.model_fit_service import build_model_for_spec
 
@@ -832,7 +835,7 @@ def _fit_one(
         model_type="shared",
         dna_lag_weeks=4,
         dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
-        prior_config={},
+        prior_config=dict(prior_config),
         direct_dna_outcome_ids=(
             [item.outcome_id for item in outcomes] if name == "dna_kit" else None
         ),
@@ -894,6 +897,7 @@ def _fit_one(
             "target_accept": target_accept,
             "seed": seed,
             "cores": 1,
+            "prior_config": dict(prior_config),
         },
     }
 
@@ -911,7 +915,9 @@ def run(
     only_model: str | None = None,
     governed_start: str = COMMON_WINDOW_START,
     governed_end: str = COMMON_WINDOW_END,
+    prior_config: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    prior_config = dict(prior_config or {})
     output_dir.mkdir(parents=True, exist_ok=True)
     pack = _load_pack(pack_dir)
     source_gate = _source_only_gate(
@@ -1160,6 +1166,7 @@ def run(
                     tune=tune,
                     chains=chains,
                     target_accept=target_accept,
+                    prior_config=prior_config,
                 )
             else:
                 from ancestry_mmm.application.model_fit_service import (
@@ -1172,7 +1179,7 @@ def run(
                     model_type="shared",
                     dna_lag_weeks=4,
                     dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
-                    prior_config={},
+                    prior_config=prior_config,
                     direct_dna_outcome_ids=(
                         [item.outcome_id for item in model_outcomes]
                         if model_name == "dna_kit"
@@ -1229,6 +1236,9 @@ def run(
             "weeks": int(len(pd.date_range(governed_start, governed_end, freq="7D"))),
             "maturity_cutoff": maturity_cutoff,
         },
+        "window_role": HISTORICAL_TEST_WINDOW_ROLE,
+        "use_mode": HISTORICAL_TEST_USE_MODE,
+        "prior_config": dict(prior_config),
         "source_readiness_gate": source_gate,
         "model_gate": model_gate,
         "approved_scope": {
@@ -1288,6 +1298,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tune", type=int, default=1000)
     parser.add_argument("--chains", type=int, default=4)
     parser.add_argument("--target-accept", type=float, default=0.9)
+    parser.add_argument(
+        "--prior-config",
+        type=Path,
+        help="Optional JSON object of approved diagnostic/fit prior overrides.",
+    )
     parser.add_argument("--seed", type=int, default=20260820)
     parser.add_argument("--governed-start", default=COMMON_WINDOW_START)
     parser.add_argument("--governed-end", default=COMMON_WINDOW_END)
@@ -1307,6 +1322,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        prior_config: Mapping[str, Any] = {}
+        if args.prior_config is not None:
+            payload = json.loads(args.prior_config.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("--prior-config must contain a JSON object.")
+            prior_config = payload
         report = run(
             pack_dir=args.pack_dir,
             output_dir=args.output_dir,
@@ -1319,6 +1340,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             only_model=args.only_model,
             governed_start=args.governed_start,
             governed_end=args.governed_end,
+            prior_config=prior_config,
         )
     except (FitGateError, OSError, ValueError) as exc:
         args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -1329,6 +1351,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "error_type": type(exc).__name__,
                 "error": str(exc),
                 "engine": "PyMC",
+                "window_role": HISTORICAL_TEST_WINDOW_ROLE,
+                "use_mode": HISTORICAL_TEST_USE_MODE,
                 "target_window": {
                     "start": args.governed_start,
                     "end": args.governed_end,
