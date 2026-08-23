@@ -28,6 +28,7 @@ import pymc as pm
 import pytensor.tensor as pt
 
 from .transformations import pt_geometric_adstock_matrix, pt_hill_function
+from .control_scaling import fit_control_scaling
 from .schema import ModelSpec
 from .outcomes import (
     OutcomeGroupDefinition,
@@ -149,6 +150,10 @@ class FHModelMeta:
     outcome_id_to_source_column: Dict[str, str] = field(default_factory=dict)
     outcome_catalogue_at_fit: List[Any] = field(default_factory=list)
     outcome_control_names: Dict[str, List[str]] = field(default_factory=dict)
+    control_scaling: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    outcome_control_scaling: Dict[str, Dict[str, Dict[str, Any]]] = field(
+        default_factory=dict
+    )
     direct_dna_outcome_ids: List[str] = field(default_factory=list)
     outcome_groups_at_fit: List[Any] = field(default_factory=list)
     outcome_group_treatments_at_fit: List[Any] = field(default_factory=list)
@@ -518,7 +523,7 @@ def build_fh_hierarchical_model(
     X_media: np.ndarray = frame["X_media"]
     Y: np.ndarray = frame["Y"]
     promo: np.ndarray = frame["promo"]
-    X_controls: np.ndarray = frame["X_controls"]
+    X_controls_raw: np.ndarray = frame["X_controls"]
     control_names: List[str] = frame["control_names"]
     fourier: np.ndarray = frame["fourier"]
     trend: np.ndarray = frame["trend"]
@@ -527,6 +532,9 @@ def build_fh_hierarchical_model(
     n_obs, n_channels = X_media.shape
     n_outcomes = len(outcome_ids)
     n_fourier = fourier.shape[1]
+    X_controls, control_scaling = fit_control_scaling(
+        X_controls_raw, control_names
+    )
     n_controls = X_controls.shape[1]
 
     dna_outcome_id = _default_dna_outcome_id(
@@ -1010,15 +1018,18 @@ def build_fh_hierarchical_model(
         # segment both get that segment's controls applied to their own
         # equation independently.
         # -----------------------------------------------------------------
-        outcome_controls = frame.get("outcome_controls") or {}
+        outcome_controls_raw = frame.get("outcome_controls") or {}
         outcome_control_names = frame.get("outcome_control_names") or {}
-        for oid, arr in outcome_controls.items():
+        outcome_control_scaling: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        for oid, raw_arr in outcome_controls_raw.items():
             if oid not in outcome_ids:
                 continue
-            o_idx = outcome_ids.index(oid)
             names = outcome_control_names.get(
-                oid, [f"ctrl_{i}" for i in range(arr.shape[1])]
+                oid, [f"ctrl_{i}" for i in range(raw_arr.shape[1])]
             )
+            arr, scaling = fit_control_scaling(raw_arr, names)
+            outcome_control_scaling[oid] = scaling
+            o_idx = outcome_ids.index(oid)
             coord_name = f"{oid}_control"
             model.add_coord(coord_name, names)
             coef = pm.Normal(
@@ -1076,6 +1087,8 @@ def build_fh_hierarchical_model(
         dna_lag_weeks=dna_lag_weeks,
         unpooled_markets=unpooled_markets,
         control_names=control_names,
+        control_scaling=control_scaling,
+        outcome_control_scaling=outcome_control_scaling,
         outcome_id_to_segment={o.outcome_id: o.segment for o in outcome_catalogue},
         outcome_id_to_product={o.outcome_id: o.product for o in outcome_catalogue},
         outcome_id_to_metric={o.outcome_id: o.metric for o in outcome_catalogue},

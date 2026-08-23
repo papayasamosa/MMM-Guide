@@ -73,7 +73,7 @@ DEFAULT_OUTPUT_DIR = Path(
     r"D:\Ancestry-MMM\test-artifacts\uk-readiness\production-fit-common-window-20260822"
 )
 COMMON_WINDOW_START = "2023-01-01"
-COMMON_WINDOW_END = "2025-04-06"
+COMMON_WINDOW_END = "2025-06-29"
 HISTORICAL_TEST_WINDOW_ROLE = "historical_test_common_window"
 HISTORICAL_TEST_USE_MODE = "historical_test_non_production"
 TARGET_FREQUENCY = "weekly"
@@ -705,6 +705,8 @@ def _model_meta_payload(meta: FHModelMeta) -> dict[str, Any]:
         "dna_lag_weeks": meta.dna_lag_weeks,
         "direct_dna_outcome_ids": meta.direct_dna_outcome_ids,
         "control_names": meta.control_names,
+        "control_scaling": meta.control_scaling,
+        "outcome_control_scaling": meta.outcome_control_scaling,
         "pathway_masks": masks,
         "causal_graph_engine": meta.causal_graph_engine,
     }

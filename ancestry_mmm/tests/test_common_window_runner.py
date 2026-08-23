@@ -4,11 +4,16 @@ import numpy as np
 import pandas as pd
 
 from scripts.run_uk_production_fit import (
+    COMMON_WINDOW_END,
     DEFAULT_OUTPUT_DIR,
     HISTORICAL_TEST_USE_MODE,
     HISTORICAL_TEST_WINDOW_ROLE,
     _prepare_context_audit,
 )
+
+
+def test_common_window_default_matches_approved_initial_target_window():
+    assert COMMON_WINDOW_END == "2025-06-29"
 
 
 def test_context_audit_consumes_complete_weekly_category_demand_only():

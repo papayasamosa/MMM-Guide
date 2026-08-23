@@ -30,6 +30,7 @@ import arviz as az
 
 from .transformations import geometric_adstock_matrix, hill_function
 from .hierarchical_model import FHModelMeta
+from .control_scaling import apply_control_mapping_scaling, apply_control_scaling
 from .outcomes import (
     dna_kit_sale_outcome_ids,
     fh_gsa_outcome_ids,
@@ -473,12 +474,22 @@ def predict_mu(
         o_idx = outcome_ids.index(oid)
         names = outcome_control_names.get(oid, [])
         coefs = np.array([params.outcome_control_coef[oid].get(n, 0.0) for n in names])
-        eta[:, o_idx] += arr @ coefs
+        scaled_arr = apply_control_scaling(
+            arr,
+            names,
+            (meta.outcome_control_scaling or {}).get(oid),
+        )
+        eta[:, o_idx] += scaled_arr @ coefs
 
     control_names = frame.get("control_names") or []
     if control_names and params.control_coef:
         coefs = np.array([params.control_coef.get(n, 0.0) for n in control_names])
-        eta += (frame["X_controls"] @ coefs)[:, None]
+        scaled_controls = apply_control_scaling(
+            frame["X_controls"],
+            control_names,
+            meta.control_scaling,
+        )
+        eta += (scaled_controls @ coefs)[:, None]
 
     mu = np.clip(np.exp(eta), 1e-6, 1e9)
     return mu
@@ -532,13 +543,21 @@ def steady_state_outcome_response(
                 * _pathway_weight(meta, params, s, c, planning_only=planning_only)
             )
 
+        scaled_controls = apply_control_mapping_scaling(
+            reference_context.get("controls", {}),
+            tuple(params.control_coef),
+            meta.control_scaling,
+        )
         for name, coef in params.control_coef.items():
-            val += coef * reference_context.get("controls", {}).get(name, 0.0)
+            val += coef * scaled_controls.get(name, 0.0)
         if s in params.outcome_control_coef:
+            scaled_outcome_controls = apply_control_mapping_scaling(
+                reference_context.get("outcome_controls", {}).get(s, {}),
+                tuple(params.outcome_control_coef[s]),
+                (meta.outcome_control_scaling or {}).get(s),
+            )
             for name, coef in params.outcome_control_coef[s].items():
-                val += coef * reference_context.get("outcome_controls", {}).get(
-                    s, {}
-                ).get(name, 0.0)
+                val += coef * scaled_outcome_controls.get(name, 0.0)
 
         eta[s] = val
 
