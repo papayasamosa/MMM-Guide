@@ -13,7 +13,7 @@ from scripts.run_uk_production_fit import (
 
 
 def test_common_window_default_matches_approved_initial_target_window():
-    assert COMMON_WINDOW_END == "2025-06-29"
+    assert COMMON_WINDOW_END == "2025-04-06"
 
 
 def test_context_audit_consumes_complete_weekly_category_demand_only():

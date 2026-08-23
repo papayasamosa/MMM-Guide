@@ -28,7 +28,12 @@ import numpy as np
 import pandas as pd
 import arviz as az
 
-from .transformations import geometric_adstock_matrix, hill_function
+from .transformations import (
+    apply_media_input_scale,
+    apply_media_input_scales,
+    geometric_adstock_matrix,
+    hill_function,
+)
 from .hierarchical_model import FHModelMeta
 from .control_scaling import apply_control_mapping_scaling, apply_control_scaling
 from .outcomes import (
@@ -241,6 +246,9 @@ def adstock_saturate_frame(
     params: FHPosteriorParams,
 ) -> np.ndarray:
     """NumPy adstock + Hill saturation per market block, matching the PyMC model exactly."""
+    X_media = apply_media_input_scales(
+        X_media, meta.channels, meta.media_input_scales
+    )
     decay = np.array([params.decay_rate[c] for c in meta.channels])
     K = np.array([params.hill_K[c] for c in meta.channels])
     S = np.array([params.hill_S[c] for c in meta.channels])
@@ -517,7 +525,11 @@ def steady_state_outcome_response(
     sat = {}
     for c in meta.channels:
         x = spend_by_channel.get(c, 0.0)
-        sat[c] = hill_function(np.array([x]), params.hill_K[c], params.hill_S[c])[0]
+        sat[c] = hill_function(
+            np.array([apply_media_input_scale(x, c, meta.media_input_scales)]),
+            params.hill_K[c],
+            params.hill_S[c],
+        )[0]
 
     eta = {}
     for s in outcome_ids:
@@ -627,7 +639,8 @@ def generate_channel_curve(
     K = params.hill_K[channel]
     S = params.hill_S[channel]
     if spend_range is None:
-        cap = max_spend if max_spend is not None else max(K * 3, 1.0)
+        scale = (meta.media_input_scales or {}).get(channel, 1.0)
+        cap = max_spend if max_spend is not None else max(K * 3 * scale, 1.0)
         spend_range = np.linspace(0.0, cap, n_points)
 
     gsa_ids = set(fh_gsa_outcome_ids(meta))
@@ -636,7 +649,19 @@ def generate_channel_curve(
     dna_ids = set(dna_kit_sale_outcome_ids(meta))
     rows = []
     for spend in spend_range:
-        sat = float(hill_function(np.array([float(spend)]), K, S)[0])
+        sat = float(
+            hill_function(
+                np.array(
+                    [
+                        apply_media_input_scale(
+                            float(spend), channel, meta.media_input_scales
+                        )
+                    ]
+                ),
+                K,
+                S,
+            )[0]
+        )
         row = {"channel": channel, "spend": float(spend), "saturation": sat}
         overall = 0.0
         dna_total = 0.0

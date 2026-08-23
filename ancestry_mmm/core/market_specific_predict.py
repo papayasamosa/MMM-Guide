@@ -32,7 +32,12 @@ from .predict import (
     extract_pathway_strength,
     lag_frame,
 )
-from .transformations import geometric_adstock_matrix, hill_function
+from .transformations import (
+    apply_media_input_scale,
+    apply_media_input_scales,
+    geometric_adstock_matrix,
+    hill_function,
+)
 
 
 @dataclass
@@ -174,6 +179,9 @@ def adstock_saturate_frame_market_specific(
     params: FHMarketSpecificPosteriorParams,
 ) -> np.ndarray:
     """Per-market-block adstock (shared decay) + Hill saturation (market-specific K, shared S)."""
+    X_media = apply_media_input_scales(
+        X_media, meta.channels, meta.media_input_scales
+    )
     decay = np.array([params.decay_rate[c] for c in meta.channels])
     S = np.array([params.hill_S[c] for c in meta.channels])
 
@@ -327,7 +335,9 @@ def steady_state_outcome_response_market_specific(
     for c in meta.channels:
         x = spend_by_channel.get(c, 0.0)
         sat[c] = hill_function(
-            np.array([x]), params.hill_K[market][c], params.hill_S[c]
+            np.array([apply_media_input_scale(x, c, meta.media_input_scales)]),
+            params.hill_K[market][c],
+            params.hill_S[c],
         )[0]
 
     eta = {}
@@ -414,7 +424,8 @@ def generate_market_channel_curve(
     K = params.hill_K[market][channel]
     S = params.hill_S[channel]
     if spend_range is None:
-        cap = max_spend if max_spend is not None else max(K * 3, 1.0)
+        scale = (meta.media_input_scales or {}).get(channel, 1.0)
+        cap = max_spend if max_spend is not None else max(K * 3 * scale, 1.0)
         spend_range = np.linspace(0.0, cap, n_points)
 
     gsa_ids = set(fh_gsa_outcome_ids(meta))
@@ -423,7 +434,19 @@ def generate_market_channel_curve(
     dna_ids = set(dna_kit_sale_outcome_ids(meta))
     rows = []
     for spend in spend_range:
-        sat = float(hill_function(np.array([float(spend)]), K, S)[0])
+        sat = float(
+            hill_function(
+                np.array(
+                    [
+                        apply_media_input_scale(
+                            float(spend), channel, meta.media_input_scales
+                        )
+                    ]
+                ),
+                K,
+                S,
+            )[0]
+        )
         row = {
             "market": market,
             "channel": channel,

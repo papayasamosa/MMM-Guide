@@ -22,6 +22,7 @@ import pytest
 
 from ancestry_mmm.core.hierarchical_model import (
     FHModelMeta,
+    _resolve_media_input_scales,
     _resolve_direct_dna_outcome_ids,
 )
 
@@ -152,6 +153,28 @@ class TestFHModelMetaCausalGraphIdentityDefaults:
         assert meta.causal_graph_version == 3
         assert meta.causal_graph_structural_fingerprint == "deadbeef"
         assert meta.causal_graph_engine == "pymc_hierarchical"
+
+
+class TestMediaInputScaleContract:
+    def test_meta_defaults_to_raw_input_domain_for_legacy_bundles(self):
+        meta = _meta()
+        assert meta.media_input_scale_method == ""
+        assert meta.media_input_scales == {}
+
+    def test_positive_median_is_deterministic_and_uses_target_support(self):
+        method, scales = _resolve_media_input_scales(
+            np.array([[0.0, 10.0], [200.0, 30.0], [100.0, 0.0]]),
+            ["TV", "Email"],
+            {"media_input_scale_method": "positive_median"},
+        )
+        assert method == "positive_median"
+        assert scales == {"TV": 150.0, "Email": 20.0}
+
+    def test_unknown_media_scale_method_is_blocked(self):
+        with pytest.raises(ValueError, match="Unsupported media_input_scale_method"):
+            _resolve_media_input_scales(
+                np.ones((2, 1)), ["TV"], {"media_input_scale_method": "zscore"}
+            )
 
 
 class TestModelAModelCMetaConstructionParity:

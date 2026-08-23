@@ -27,7 +27,11 @@ import numpy as np
 import pymc as pm
 import pytensor.tensor as pt
 
-from .transformations import pt_geometric_adstock_matrix, pt_hill_function
+from .transformations import (
+    apply_media_input_scales,
+    pt_geometric_adstock_matrix,
+    pt_hill_function,
+)
 from .control_scaling import fit_control_scaling
 from .schema import ModelSpec
 from .outcomes import (
@@ -185,6 +189,11 @@ class FHModelMeta:
     causal_graph_version: int = 0
     causal_graph_structural_fingerprint: str = ""
     causal_graph_engine: str = ""
+    # Optional fixed numerical reparameterisation of the media input domain.
+    # Empty means the historical raw-input contract; old bundles therefore
+    # remain loadable and replay identically.
+    media_input_scale_method: str = ""
+    media_input_scales: Dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.direct_dna_outcome_ids:
@@ -347,6 +356,35 @@ def _resolve_direct_dna_outcome_ids(
             f"direct_dna_outcome_ids contains unknown outcome_id(s): {unknown}"
         )
     return resolved
+
+
+def _resolve_media_input_scales(
+    X_media: np.ndarray,
+    channels: List[str],
+    prior_config: Dict[str, Any],
+) -> tuple[str, Dict[str, float]]:
+    """Resolve the optional fixed media-domain scale used by Model A.
+
+    ``positive_median`` is a deterministic support-based reparameterisation:
+    it changes neither the observed media series nor its business unit, and
+    the fitted Hill ``K`` is expressed in the corresponding transformed
+    domain. The target-window media only is used to derive the scale so the
+    rule cannot leak future or posterior information.
+    """
+    method = str(prior_config.get("media_input_scale_method", ""))
+    if method in {"", "none"}:
+        return "", {}
+    if method != "positive_median":
+        raise ValueError(
+            "Unsupported media_input_scale_method; expected 'positive_median' "
+            "or an empty value."
+        )
+    positive_media = np.where(np.asarray(X_media, dtype=float) > 0, X_media, np.nan)
+    medians = np.nanmedian(positive_media, axis=0)
+    medians = np.where(np.isfinite(medians) & (medians > 0), medians, 1.0)
+    return method, {
+        channel: float(scale) for channel, scale in zip(channels, medians)
+    }
 
 
 def _market_grouped_adstock_and_saturation(
@@ -520,7 +558,28 @@ def build_fh_hierarchical_model(
     channels: List[str] = frame["channels"]
     dna_channel_idx: List[int] = frame["dna_channel_idx"]
     outcome_ids: List[str] = frame["outcome_ids"]
-    X_media: np.ndarray = frame["X_media"]
+    X_media_raw: np.ndarray = np.asarray(frame["X_media"], dtype=float)
+    media_input_scale_method, media_input_scales = _resolve_media_input_scales(
+        X_media_raw, channels, prior_config
+    )
+    X_media = apply_media_input_scales(
+        X_media_raw, channels, media_input_scales
+    )
+    X_media_history_raw = frame.get("X_media_history")
+    history_market_bounds = frame.get("history_market_bounds")
+    if X_media_history_raw is not None or history_market_bounds is not None:
+        if X_media_history_raw is None or history_market_bounds is None:
+            raise ValueError(
+                "Historical adstock carry-in requires both "
+                "X_media_history and history_market_bounds."
+            )
+        X_media_history = apply_media_input_scales(
+            np.asarray(X_media_history_raw, dtype=float),
+            channels,
+            media_input_scales,
+        )
+    else:
+        X_media_history = None
     Y: np.ndarray = frame["Y"]
     promo: np.ndarray = frame["promo"]
     X_controls_raw: np.ndarray = frame["X_controls"]
@@ -678,14 +737,7 @@ def build_fh_hierarchical_model(
             dims="channel",
         )
 
-        X_media_history = frame.get("X_media_history")
-        history_market_bounds = frame.get("history_market_bounds")
-        if X_media_history is not None or history_market_bounds is not None:
-            if X_media_history is None or history_market_bounds is None:
-                raise ValueError(
-                    "Historical adstock carry-in requires both "
-                    "X_media_history and history_market_bounds."
-                )
+        if X_media_history is not None:
             history_bounds = cast(List[tuple], history_market_bounds)
             sat_media_value, full_sat_media_blocks = (
                 _market_grouped_adstock_and_saturation_with_history(
@@ -1123,5 +1175,7 @@ def build_fh_hierarchical_model(
             if search_candidate_a is not None
             else _no_search_candidate_a_graph_engine
         ),
+        media_input_scale_method=media_input_scale_method,
+        media_input_scales=media_input_scales,
     )
     return model, meta

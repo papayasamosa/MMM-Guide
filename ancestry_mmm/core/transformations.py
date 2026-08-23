@@ -6,6 +6,53 @@ import pytensor
 import pytensor.tensor as pt
 
 
+def apply_media_input_scales(
+    X: np.ndarray,
+    channels: list[str],
+    scales: dict[str, float] | None,
+) -> np.ndarray:
+    """Apply a persisted per-channel numerical input-domain scale.
+
+    The scale is a numerical reparameterisation only: callers must transform
+    the corresponding Hill ``K`` values by the same factor.  An empty mapping
+    is the backward-compatible raw-input path.
+    """
+    values = np.asarray(X, dtype=float)
+    if not scales:
+        return values
+    missing = [channel for channel in channels if channel not in scales]
+    if missing:
+        raise ValueError(
+            "media input scales are missing channel(s): " + ", ".join(missing)
+        )
+    scale_vector = np.asarray([scales[channel] for channel in channels], dtype=float)
+    if (
+        scale_vector.shape != (len(channels),)
+        or not np.all(np.isfinite(scale_vector))
+        or np.any(scale_vector <= 0)
+    ):
+        raise ValueError("media input scales must be finite and strictly positive.")
+    if values.ndim != 2 or values.shape[1] != len(channels):
+        raise ValueError("media input matrix shape does not match its channels.")
+    return values / scale_vector
+
+
+def apply_media_input_scale(
+    value: float,
+    channel: str,
+    scales: dict[str, float] | None,
+) -> float:
+    """Scale one raw model-input value into the persisted media domain."""
+    if not scales:
+        return float(value)
+    if channel not in scales:
+        raise ValueError(f"media input scale is missing channel '{channel}'.")
+    scale = float(scales[channel])
+    if not np.isfinite(scale) or scale <= 0:
+        raise ValueError("media input scales must be finite and strictly positive.")
+    return float(value) / scale
+
+
 def geometric_adstock(
     x: np.ndarray,
     decay_rate: float,
