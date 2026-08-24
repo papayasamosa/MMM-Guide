@@ -12,11 +12,18 @@
 
 ## Current consolidated PRD source authority (approved 2026-08-22)
 
-The supplied analyst decision response approves this per-part map for the
-current repository-coherence and implementation work. Older version tables
-below are historical overlays and must not override this map.
+The supplied analyst decision response approved this per-part map and the
+substantive decisions below for the current repository-coherence and
+implementation work at the time. Its per-part *version* column is superseded
+as a current-state PRD-traceability claim by "Current consolidated PRD
+version map (2026-08-24)" below — the local PRD suite has since been
+refreshed with a further optional Search granularity/SEO visibility overlay
+these part numbers predate. The substantive decisions recorded in this
+section (the bounded historical-test window, `REQ-NBT-002`'s NBT-not-GSA
+authority, and the Brand-State Mediation Model naming) are not PRD-version
+facts, remain approved, and are not superseded by that later map.
 
-| Part | Current authority |
+| Part | Authority as approved 2026-08-22 |
 |---|---|
 | Part 1 | Cross-Document Coherent v1.4 |
 | Part 2 | Cross-Document Coherent v1.4 |
@@ -47,6 +54,53 @@ The initial UK Family History test is governed by `REQ-NBT-002` as supplied
 NBT, not GSA. Future brand work is named **Brand-State Mediation Model** with
 machine identifier `brand_state_mediation` (BSM); the repository's existing
 market-specific Model C is not renamed.
+
+This table describes the v1.4-to-v1.5 baseline as it stood at its own
+28 July 2026 effective date. As a *current-state* description it is
+superseded by "Current consolidated PRD version map" immediately below;
+it remains valid as a historical record of that baseline and is not
+rewritten.
+
+## Current consolidated PRD version map (2026-08-24)
+
+This is the single authoritative statement of the latest per-part local
+PRD version, reconciled against the local PRD traceability set supplied
+as of 2026-08-24. It supersedes every earlier per-part version table in
+this document as a *current-state* claim. Earlier tables remain valid as
+a record of how each part reached its version through a specific focused
+overlay and are not rewritten — see "Version history" below for that
+lineage.
+
+| Part | Latest local version | Focused-update title |
+|---|---|---|
+| Part 1 | v1.4 | Cross-Document Coherence and Governed FX update — unchanged since 28 July 2026; no later overlay touches Part 1 |
+| Part 2 | v1.5 | Optional Search Granularity, Paid Search Intent and SEO Visibility update — also normalises `business_priority`/`delivery_status` to one approved enum value each |
+| Part 3 | v1.13 | Optional Search granularity, Paid Search intent and SEO visibility — cumulative in the same file with v1.12 (compute-efficient pre-fit model diagnostics), v1.11 (governed named-event temporal response), v1.10 (primary-engine resolution), v1.9 (source-input contract) and v1.8 (structural causal integration) |
+| Part 4 | v1.8 | Optional Search granularity, Paid Search intent and SEO visibility architecture — cumulative with v1.7 (compute-efficient pre-fit diagnostic execution), v1.6 (source-input architecture) and v1.5 (structural-causal architecture) |
+| Part 5 | v1.6 | Optional Search granularity, Paid Search intent and SEO visibility data contracts — retains v1.5 (governed named-event data contracts) |
+| Part 6 | v1.11 | Optional Search granularity, Paid Search intent and SEO visibility modelling — cumulative with v1.10 (compute-efficient pre-fit diagnostics), v1.9 (governed anticipatory named-event response) and v1.8 (structural causal modelling) |
+| Part 7 | v1.10 | Optional Search granularity, Paid Search intent and SEO visibility validation — cumulative with v1.9 (pre-fit validation), v1.8 (named-event response validation) and the earlier Bayesian validation/identification/calibration overlay content |
+| Part 8 | v1.6 | Optional Search granularity, Paid Search intent economics and SEO visibility planning boundaries — retains v1.5 (governed named-event scenario replay); distinct from the earlier, unrelated "Part 8 v1.5" structural-causal source recorded in the source-collision note below |
+| Part 9 | v1.7 | Optional Search granularity, Paid Search intent and SEO visibility reporting — retains v1.6 Final structural-causal/causal-robustness/experiment-calibration reporting content |
+| Part 10 | v1.8 | Optional Search granularity, Paid Search intent and SEO visibility UX — retains v1.7 (compute-efficient pre-fit diagnostics UX) and v1.6 (named-event configuration/scenario-replay UX) |
+| Part 11 | v1.8 | Optional Search granularity, Paid Search intent and SEO visibility service/API contracts — retains v1.7 (compute-efficient pre-fit diagnostic service/API contracts) and v1.6 (named-event service/API contracts) |
+
+A separate, non-numbered `Ancestry MMM Governed FX Translation
+Requirements Addendum` document also exists in the local PRD
+traceability set. It carries no Part number or Cross-Document Coherent
+version of its own; it supplies supporting detail for the existing
+`Governed FX (REQ-FX-001`–`REQ-FX-006)` gap row recorded below, which
+remains unreconciled by this pass.
+
+This map records versions and traceability only. Reconciling the newest
+content it identifies — the optional Search granularity, Paid Search
+intent and SEO visibility overlay — into approved
+`docs/approved_requirements/` records is explicitly out of scope for
+this reconciliation pass; see "Version history: focused optional Search
+granularity, Paid Search intent and SEO visibility overlay" below. This
+map does not itself approve, reject, or implement any requirement, and
+does not authorise implementing Search/SEO granularity behaviour from
+PRD prose.
 
 ## Version history: v1.4 to v1.5
 
@@ -316,6 +370,86 @@ invented:
   collision above.
 - Part 4 v1.6 references **Part 3 v1.9** (now v1.11) and **Part 5
   v1.6** (absent).
+
+## Version history: focused optional Search granularity, Paid Search intent and SEO visibility overlay
+
+A newer local PRD traceability set, supplied 2026-08-24, reconciles per-part
+version and traceability only for a bounded, self-consistent overlay
+covering optional finer-grain Paid Search and organic Search intent
+analysis and an optional SEO visibility/ranking effect, across Parts 2
+through 11. This is a **focused overlay**, not a full-suite version bump,
+and it approves no requirement, no statistical method, no causal estimand
+and no implementation. Part 1 is not touched by this overlay.
+
+The overlay's own governing principle, stated consistently across every
+touched part, is that finer Search detail is optional and
+market/capability-gated: aggregate Search remains a valid production,
+reporting and planning level in every part, and no part requires a market
+to supply raw paid keywords, paid search terms, organic queries, governed
+Search intent groups, ranking observations or SEO visibility metrics
+merely because another market supplies them.
+
+| Part | Version | Notes |
+|---|---|---|
+| Part 1 | Retained (v1.4) | Not touched by this overlay |
+| Part 2 | v1.5 focused overlay | Optional Search decision framework, new business questions for Generic/Non-Brand Paid Search and organic-capture/SEO-visibility economics, and unrelated `business_priority`/`delivery_status` enum normalisation |
+| Part 3 | v1.13 focused overlay | Functional contract for optional Search granularity, intent-level eligibility states, and SEO visibility as distinct from organic capture — retains v1.12 (compute-efficient pre-fit model diagnostics, see the pre-fit note below), v1.11, v1.10, v1.9 and v1.8 content in the same file |
+| Part 4 | v1.8 focused overlay | Topology/persistence/dependency changes for optional Search granularity — retains v1.7 (compute-efficient pre-fit diagnostic execution), v1.6 and v1.5 content in the same file |
+| Part 5 | v1.6 focused overlay | Canonical `search_intent_group` taxonomy, optional raw-term/query mapping, parent-child Search activity lineage, market-specific granularity records, and optional SEO visibility/ranking metric contracts — retains v1.5 (governed named-event data contracts) |
+| Part 6 | v1.11 focused overlay | Hierarchical/partially-pooled intent-group estimation, parent-child reconciliation, and a bounded SEO-visibility causal-effect formulation distinct from organic-capture contribution — retains v1.10, v1.9 and v1.8 content in the same file |
+| Part 7 | v1.10 focused overlay | Granularity/identification validation (variation, support, sibling correlation, hierarchy recovery, pooling sensitivity) and SEO-visibility identification/refutation requirements — retains v1.9, v1.8 and the earlier Bayesian validation/identification/calibration overlay content |
+| Part 8 | v1.6 focused overlay | Response-curve, economics and planning eligibility for Search intent groups; SEO visibility explicitly excluded from optimisation by default absent a separately approved controllable-intervention contract — retains v1.5 (governed named-event scenario replay) |
+| Part 9 | v1.7 focused overlay | Reporting contract for optional Search granularity and SEO visibility — supersedes the v1.6 Final structural-causal/causal-robustness/experiment-calibration overlay's version label for Part 9; that overlay's approved capabilities are unaffected, only the version label advances |
+| Part 10 | v1.8 focused overlay | UX for optional Search granularity and SEO visibility — retains v1.7 (compute-efficient pre-fit diagnostics UX) and v1.6 (named-event configuration/scenario-replay UX) content in the same file |
+| Part 11 | v1.8 focused overlay | Service/API contracts for optional Search granularity and SEO visibility — retains v1.7 (compute-efficient pre-fit diagnostic service/API contracts) and v1.6 (named-event service/API contracts) content in the same file |
+
+Do not treat this table as evidence that Part 1 moved, or that any
+capability described below is approved, implemented, or authorised for
+implementation. No `docs/approved_requirements/` record reconciles any
+part of this overlay's Search-granularity or SEO-visibility content as of
+this record. Reconciliation, where the underlying choice is already
+approved and unambiguous (for example, governed taxonomy/lineage data
+contracts), and decision-package creation, where it is not (for example,
+any SEO visibility causal estimand, intervention semantics or child-cost
+allocation policy), are explicitly deferred to a dedicated,
+separately-scoped future work package. This record does not select,
+approve, or rule out any candidate approach it describes.
+
+### Relationship to the compute-efficient pre-fit diagnostics sub-overlay
+
+Within the same local PRD files, Part 3's v1.12 section, Part 4's v1.7
+section, Part 6's v1.10 section, Part 7's v1.9 section, Part 10's v1.7
+section and Part 11's v1.7 section together form an earlier, distinct
+focused sub-overlay — compute-efficient pre-fit model diagnostics before a
+full production Bayesian fit — that predates and is retained underneath
+this Search-granularity overlay in every one of those files. That
+sub-overlay's reconciliation vehicle, `REQ-PREFIT-001`, was proposed on an
+open, still-draft pull request adding reusable Model A pre-fit,
+identifiability, prior-predictive and diagnostic infrastructure. As of the
+2026-08-24 Search-granularity reconciliation pass recorded above, that
+record did not yet exist on `main`; it now exists on this branch (Work
+Package 1 of the same coding brief, correcting and completing that pull
+request's own contract before merge) and is indexed in `docs/approved_
+requirements/index.json`. It is independent of, and does not depend on, the
+Search-granularity overlay recorded in this section.
+
+### Known version-reference gaps: Part 5 v1.6 gap closed as a documentation fact
+
+The structural-causal overlay above and the named-event overlay above both
+correctly recorded, as of their own reconciliation dates (2026-08-18 and
+2026-08-19 respectively), that Part 5 v1.6 was referenced by other parts
+but not supplied in the local PRD traceability set at that time. Neither
+of those records is rewritten — they accurately describe what was true
+when they were written.
+
+As of 2026-08-24, Part 5 v1.6 (`Focused v1.6 update: optional Search
+granularity, Paid Search intent and SEO visibility data contracts`, see
+the table above) has been supplied locally, closing that specific gap as
+a documentation/traceability fact. This does not retroactively approve or
+reconcile Part 5 v1.6's content — its data contracts are recorded, not
+approved, by this overlay section — and it does not change what the
+structural-causal or named-event overlays themselves reconciled at their
+own versions.
 
 ## Historical status of earlier documents
 
