@@ -22,6 +22,8 @@ _MODEL_DERIVED_DIAGNOSTIC_VALIDATION_KEYS = [
     "validation_results",
     "approval_readiness",
     "validation_service_result",
+    "prefit_identifiability",
+    "prefit_screening",
 ]
 
 _INIT_SCRIPT = """

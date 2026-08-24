@@ -27,7 +27,12 @@ import numpy as np
 import pymc as pm
 import pytensor.tensor as pt
 
-from .transformations import pt_geometric_adstock_matrix, pt_hill_function
+from .transformations import (
+    apply_media_input_scales,
+    pt_geometric_adstock_matrix,
+    pt_hill_function,
+)
+from .control_scaling import fit_control_scaling
 from .schema import ModelSpec
 from .outcomes import (
     OutcomeGroupDefinition,
@@ -149,6 +154,10 @@ class FHModelMeta:
     outcome_id_to_source_column: Dict[str, str] = field(default_factory=dict)
     outcome_catalogue_at_fit: List[Any] = field(default_factory=list)
     outcome_control_names: Dict[str, List[str]] = field(default_factory=dict)
+    control_scaling: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    outcome_control_scaling: Dict[str, Dict[str, Dict[str, Any]]] = field(
+        default_factory=dict
+    )
     direct_dna_outcome_ids: List[str] = field(default_factory=list)
     outcome_groups_at_fit: List[Any] = field(default_factory=list)
     outcome_group_treatments_at_fit: List[Any] = field(default_factory=list)
@@ -180,6 +189,11 @@ class FHModelMeta:
     causal_graph_version: int = 0
     causal_graph_structural_fingerprint: str = ""
     causal_graph_engine: str = ""
+    # Optional fixed numerical reparameterisation of the media input domain.
+    # Empty means the historical raw-input contract; old bundles therefore
+    # remain loadable and replay identically.
+    media_input_scale_method: str = ""
+    media_input_scales: Dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.direct_dna_outcome_ids:
@@ -342,6 +356,104 @@ def _resolve_direct_dna_outcome_ids(
             f"direct_dna_outcome_ids contains unknown outcome_id(s): {unknown}"
         )
     return resolved
+
+
+def _resolve_media_input_scales(
+    X_media: np.ndarray,
+    channels: List[str],
+    prior_config: Dict[str, Any],
+) -> tuple[str, Dict[str, float]]:
+    """Resolve the optional fixed media-domain scale used by Model A.
+
+    ``positive_median`` is a deterministic support-based reparameterisation:
+    it changes neither the observed media series nor its business unit, and
+    the fitted Hill ``K`` is expressed in the corresponding transformed
+    domain. The target-window media only is used to derive the scale so the
+    rule cannot leak future or posterior information.
+    """
+    method = str(prior_config.get("media_input_scale_method", ""))
+    if method in {"", "none"}:
+        return "", {}
+    if method != "positive_median":
+        raise ValueError(
+            "Unsupported media_input_scale_method; expected 'positive_median' "
+            "or an empty value."
+        )
+    positive_media = np.where(np.asarray(X_media, dtype=float) > 0, X_media, np.nan)
+    medians = np.nanmedian(positive_media, axis=0)
+    medians = np.where(np.isfinite(medians) & (medians > 0), medians, 1.0)
+    return method, {channel: float(scale) for channel, scale in zip(channels, medians)}
+
+
+def _resolve_control_scaling(
+    X_controls_raw: np.ndarray,
+    control_names: List[str],
+    prior_config: Dict[str, Any],
+) -> tuple[np.ndarray, Dict[str, Dict[str, Any]]]:
+    """Resolve the optional centred/unit-SD control reparameterisation.
+
+    Centring/scaling a control changes the coefficient prior's implied
+    meaning ("effect per unit-SD" vs. the production-approved "effect per
+    raw unit") unless the prior itself is recalibrated to compensate - no
+    such recalibration exists, and no `docs/approved_requirements/REQ-*`
+    record or `docs/decision_log.md` entry approves this as a production
+    change (see root `AGENTS.md`: "Standardising a predictor while leaving
+    the same coefficient prior is not automatically a prior-neutral
+    numerical reparameterisation"). It therefore follows exactly the same
+    gated, default-off contract as `_resolve_media_input_scales`/
+    `K_reference`/`fixed_decay_rate` below: diagnostic-only, explicit
+    opt-in via `prior_config["enable_control_scaling"]`, never the
+    production default. Off by default, `fit_control_scaling` is not
+    called at all and the raw controls pass through unchanged with an
+    empty scaling contract - byte-identical to this repository's
+    pre-existing (pre-`REQ-PREFIT-001`-branch) behaviour.
+    """
+    if not bool(prior_config.get("enable_control_scaling", False)):
+        return np.asarray(X_controls_raw, dtype=float), {}
+    return fit_control_scaling(X_controls_raw, control_names)
+
+
+def _resolve_fixed_channel_values(
+    prior_config: Dict[str, Any],
+    key: str,
+    channels: List[str],
+    default: Any,
+    *,
+    lower: float,
+    upper: Optional[float] = None,
+) -> Optional[np.ndarray]:
+    """Resolve an explicit diagnostic fixed transform vector.
+
+    These switches are intentionally opt-in and exist for bounded
+    identifiability experiments. They are not production defaults and never
+    derive values from a posterior. A scalar, channel mapping, or ordered
+    vector is accepted so the experiment runner can persist the exact
+    reference policy it used.
+    """
+    if key not in prior_config:
+        return None
+    raw = prior_config[key]
+    if isinstance(raw, dict):
+        missing = [channel for channel in channels if channel not in raw]
+        if missing:
+            raise ValueError(f"{key} is missing channel(s): " + ", ".join(missing))
+        values = np.asarray([raw[channel] for channel in channels], dtype=float)
+    else:
+        values = np.asarray(raw, dtype=float)
+        if values.ndim == 0:
+            values = np.full(len(channels), float(values))
+        elif values.shape != (len(channels),):
+            raise ValueError(
+                f"{key} must be a scalar, a channel mapping, or one value per channel."
+            )
+    if (
+        not np.all(np.isfinite(values))
+        or np.any(values <= lower)
+        or (upper is not None and np.any(values >= upper))
+    ):
+        upper_text = f" and < {upper}" if upper is not None else ""
+        raise ValueError(f"{key} values must be finite, > {lower}{upper_text}.")
+    return values
 
 
 def _market_grouped_adstock_and_saturation(
@@ -515,10 +627,29 @@ def build_fh_hierarchical_model(
     channels: List[str] = frame["channels"]
     dna_channel_idx: List[int] = frame["dna_channel_idx"]
     outcome_ids: List[str] = frame["outcome_ids"]
-    X_media: np.ndarray = frame["X_media"]
+    X_media_raw: np.ndarray = np.asarray(frame["X_media"], dtype=float)
+    media_input_scale_method, media_input_scales = _resolve_media_input_scales(
+        X_media_raw, channels, prior_config
+    )
+    X_media = apply_media_input_scales(X_media_raw, channels, media_input_scales)
+    X_media_history_raw = frame.get("X_media_history")
+    history_market_bounds = frame.get("history_market_bounds")
+    if X_media_history_raw is not None or history_market_bounds is not None:
+        if X_media_history_raw is None or history_market_bounds is None:
+            raise ValueError(
+                "Historical adstock carry-in requires both "
+                "X_media_history and history_market_bounds."
+            )
+        X_media_history = apply_media_input_scales(
+            np.asarray(X_media_history_raw, dtype=float),
+            channels,
+            media_input_scales,
+        )
+    else:
+        X_media_history = None
     Y: np.ndarray = frame["Y"]
     promo: np.ndarray = frame["promo"]
-    X_controls: np.ndarray = frame["X_controls"]
+    X_controls_raw: np.ndarray = frame["X_controls"]
     control_names: List[str] = frame["control_names"]
     fourier: np.ndarray = frame["fourier"]
     trend: np.ndarray = frame["trend"]
@@ -527,6 +658,9 @@ def build_fh_hierarchical_model(
     n_obs, n_channels = X_media.shape
     n_outcomes = len(outcome_ids)
     n_fourier = fourier.shape[1]
+    X_controls, control_scaling = _resolve_control_scaling(
+        X_controls_raw, control_names, prior_config
+    )
     n_controls = X_controls.shape[1]
 
     dna_outcome_id = _default_dna_outcome_id(
@@ -619,6 +753,19 @@ def build_fh_hierarchical_model(
 
     channel_mean_spend = X_media.mean(axis=0)
     channel_mean_spend = np.where(channel_mean_spend > 0, channel_mean_spend, 1.0)
+    if prior_config.get("K_reference") == "nonzero_median":
+        # Sparse flighted channels have a raw-window mean that can be far
+        # below their active-week support.  A K prior centred on that mean
+        # pushes the Hill curve toward immediate saturation when the channel
+        # is active.  This remains a data-derived weak prior, not a posterior
+        # empirical-Bayes update: it uses only the prepared media frame.
+        positive_media = np.where(X_media > 0, X_media, np.nan)
+        active_median = np.nanmedian(positive_media, axis=0)
+        channel_mean_spend = np.where(
+            np.isfinite(active_median) & (active_median > 0),
+            active_median,
+            channel_mean_spend,
+        )
 
     with pm.Model() as model:
         model.add_coord("obs", np.arange(n_obs))
@@ -631,11 +778,25 @@ def build_fh_hierarchical_model(
         # Shared channel-level adstock + saturation curves (pooled across
         # outcomes AND markets - "share what should genuinely be shared").
         # -----------------------------------------------------------------
-        decay_rate = pm.Beta(
-            "decay_rate",
-            mu=prior_config.get("decay_mu", 0.5),
-            sigma=prior_config.get("decay_sigma", 0.2),
-            dims="channel",
+        fixed_decay_rate = _resolve_fixed_channel_values(
+            prior_config,
+            "fixed_decay_rate",
+            channels,
+            prior_config.get("decay_mu", 0.5),
+            lower=0.0,
+            upper=1.0,
+        )
+        decay_rate = (
+            pm.Deterministic(
+                "decay_rate", pt.as_tensor_variable(fixed_decay_rate), dims="channel"
+            )
+            if fixed_decay_rate is not None
+            else pm.Beta(
+                "decay_rate",
+                mu=prior_config.get("decay_mu", 0.5),
+                sigma=prior_config.get("decay_sigma", 0.2),
+                dims="channel",
+            )
         )
         # Gamma (not HalfNormal): K is a half-saturation *spend level*, so its
         # prior should be centred near typical spend and bounded away from
@@ -644,27 +805,46 @@ def build_fh_hierarchical_model(
         # unstable (see pt_hill_function's docstring on the log(K) gradient).
         K_prior_mean = channel_mean_spend * prior_config.get("K_scale", 1.0)
         K_alpha = prior_config.get("K_alpha", 3.0)
-        hill_K = pm.Gamma(
-            "hill_K",
-            alpha=K_alpha,
-            beta=K_alpha / K_prior_mean,
-            dims="channel",
+        fixed_hill_K = _resolve_fixed_channel_values(
+            prior_config,
+            "fixed_hill_K",
+            channels,
+            K_prior_mean,
+            lower=0.0,
         )
-        hill_S = pm.Gamma(
-            "hill_S",
-            alpha=prior_config.get("S_alpha", 4.0),
-            beta=prior_config.get("S_beta", 4.0),
-            dims="channel",
+        fixed_hill_S = _resolve_fixed_channel_values(
+            prior_config,
+            "fixed_hill_S",
+            channels,
+            prior_config.get("S_alpha", 4.0) / prior_config.get("S_beta", 4.0),
+            lower=0.0,
+        )
+        hill_K = (
+            pm.Deterministic(
+                "hill_K", pt.as_tensor_variable(fixed_hill_K), dims="channel"
+            )
+            if fixed_hill_K is not None
+            else pm.Gamma(
+                "hill_K",
+                alpha=K_alpha,
+                beta=K_alpha / K_prior_mean,
+                dims="channel",
+            )
+        )
+        hill_S = (
+            pm.Deterministic(
+                "hill_S", pt.as_tensor_variable(fixed_hill_S), dims="channel"
+            )
+            if fixed_hill_S is not None
+            else pm.Gamma(
+                "hill_S",
+                alpha=prior_config.get("S_alpha", 4.0),
+                beta=prior_config.get("S_beta", 4.0),
+                dims="channel",
+            )
         )
 
-        X_media_history = frame.get("X_media_history")
-        history_market_bounds = frame.get("history_market_bounds")
-        if X_media_history is not None or history_market_bounds is not None:
-            if X_media_history is None or history_market_bounds is None:
-                raise ValueError(
-                    "Historical adstock carry-in requires both "
-                    "X_media_history and history_market_bounds."
-                )
+        if X_media_history is not None:
             history_bounds = cast(List[tuple], history_market_bounds)
             sat_media_value, full_sat_media_blocks = (
                 _market_grouped_adstock_and_saturation_with_history(
@@ -702,12 +882,36 @@ def build_fh_hierarchical_model(
             sigma=prior_config.get("channel_effect_sigma", 0.5),
             dims="channel",
         )
-        sigma_pool = pm.HalfNormal(
-            "sigma_pool",
-            sigma=prior_config.get("pooling_sigma_prior", 0.3),
-            dims="channel",
-        )
-        z_offset = pm.Normal("z_offset", mu=0, sigma=1, dims=("outcome", "channel"))
+        pooled_beta_reference = bool(prior_config.get("pooled_beta_reference", False))
+        pooling_scale = prior_config.get("pooling_sigma_prior", 0.3)
+        if pooled_beta_reference:
+            sigma_pool = pm.Deterministic(
+                "sigma_pool",
+                pt.zeros(n_channels),
+                dims="channel",
+            )
+            z_offset = pm.Deterministic(
+                "z_offset",
+                pt.zeros((n_outcomes, n_channels)),
+                dims=("outcome", "channel"),
+            )
+        elif prior_config.get("pooling_sigma_prior_distribution") == "lognormal":
+            pooling_log_sigma = prior_config.get("pooling_sigma_log_prior_sigma", 0.35)
+            pooling_log_mu = np.log(pooling_scale) - 0.5 * pooling_log_sigma**2
+            sigma_pool = pm.LogNormal(
+                "sigma_pool",
+                mu=pooling_log_mu,
+                sigma=pooling_log_sigma,
+                dims="channel",
+            )
+        else:
+            sigma_pool = pm.HalfNormal(
+                "sigma_pool",
+                sigma=pooling_scale,
+                dims="channel",
+            )
+        if not pooled_beta_reference:
+            z_offset = pm.Normal("z_offset", mu=0, sigma=1, dims=("outcome", "channel"))
         log_beta = pm.Deterministic(
             "log_beta",
             mu_channel[None, :] + sigma_pool[None, :] * z_offset,
@@ -872,9 +1076,20 @@ def build_fh_hierarchical_model(
         # -----------------------------------------------------------------
         # Outcome-specific promotional sensitivity (non-negative: promos lift).
         # -----------------------------------------------------------------
-        promo_coef = pm.HalfNormal(
-            "promo_coef", sigma=prior_config.get("promo_sigma", 0.5), dims="outcome"
-        )
+        if np.any(np.abs(promo) > 0):
+            promo_coef = pm.HalfNormal(
+                "promo_coef",
+                sigma=prior_config.get("promo_sigma", 0.5),
+                dims="outcome",
+            )
+        else:
+            # Do not sample a coefficient for an all-zero promotion input:
+            # that creates a completely prior-only dimension in every chain
+            # and adds no likelihood information.  Keep the deterministic
+            # name for posterior/replay schema compatibility.
+            promo_coef = pm.Deterministic(
+                "promo_coef", pt.zeros(n_outcomes), dims="outcome"
+            )
         eta_promo = promo * promo_coef[None, :]
 
         # -----------------------------------------------------------------
@@ -975,15 +1190,23 @@ def build_fh_hierarchical_model(
         # segment both get that segment's controls applied to their own
         # equation independently.
         # -----------------------------------------------------------------
-        outcome_controls = frame.get("outcome_controls") or {}
+        outcome_controls_raw = frame.get("outcome_controls") or {}
         outcome_control_names = frame.get("outcome_control_names") or {}
-        for oid, arr in outcome_controls.items():
+        outcome_control_scaling: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        for oid, raw_arr in outcome_controls_raw.items():
             if oid not in outcome_ids:
                 continue
-            o_idx = outcome_ids.index(oid)
             names = outcome_control_names.get(
-                oid, [f"ctrl_{i}" for i in range(arr.shape[1])]
+                oid, [f"ctrl_{i}" for i in range(raw_arr.shape[1])]
             )
+            # Same gated, default-off contract as the shared-control scaling
+            # above (`_resolve_control_scaling`) - kept in sync deliberately
+            # rather than gated separately, so a fit can never mix a scaled
+            # outcome-control prior with an unscaled shared-control prior
+            # (or vice versa) within one run.
+            arr, scaling = _resolve_control_scaling(raw_arr, names, prior_config)
+            outcome_control_scaling[oid] = scaling
+            o_idx = outcome_ids.index(oid)
             coord_name = f"{oid}_control"
             model.add_coord(coord_name, names)
             coef = pm.Normal(
@@ -1041,6 +1264,8 @@ def build_fh_hierarchical_model(
         dna_lag_weeks=dna_lag_weeks,
         unpooled_markets=unpooled_markets,
         control_names=control_names,
+        control_scaling=control_scaling,
+        outcome_control_scaling=outcome_control_scaling,
         outcome_id_to_segment={o.outcome_id: o.segment for o in outcome_catalogue},
         outcome_id_to_product={o.outcome_id: o.product for o in outcome_catalogue},
         outcome_id_to_metric={o.outcome_id: o.metric for o in outcome_catalogue},
@@ -1075,5 +1300,7 @@ def build_fh_hierarchical_model(
             if search_candidate_a is not None
             else _no_search_candidate_a_graph_engine
         ),
+        media_input_scale_method=media_input_scale_method,
+        media_input_scales=media_input_scales,
     )
     return model, meta

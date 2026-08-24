@@ -156,21 +156,21 @@ class TestSearchGranularityOverlayReconciled:
         ].split("## Version history: v1.4 to v1.5", 1)[0]
         assert "source-collision note below" in " ".join(map_section.split())
 
-    def test_prefit_sub_overlay_noted_without_claiming_req_prefit_001_on_main(self):
+    def test_prefit_sub_overlay_notes_req_prefit_001_now_exists_and_indexed(self):
         """The pre-fit diagnostics sub-overlay (Part 3 v1.12 etc.) is noted
-        as a distinct, earlier sub-overlay whose reconciliation vehicle
-        (REQ-PREFIT-001) is proposed on an open pull request only - not yet
-        present on `main`. This test also pins that fact in the index/
-        filesystem so a future merge of that PR is forced to update this
-        record rather than silently going stale."""
+        as a distinct, earlier sub-overlay. Its reconciliation vehicle,
+        REQ-PREFIT-001, did not exist on `main` at the 2026-08-24
+        Search-granularity reconciliation pass, but now exists on this
+        branch (Work Package 1 correcting/completing that pull request) and
+        is indexed - the authority doc must say so, not the earlier
+        not-yet-on-main fact."""
         section = self._overlay_section()
         assert "REQ-PREFIT-001" in section
-        assert "does not exist on `main`" in section
-        assert not REQ_PREFIT_001_PATH.exists(), (
-            "REQ-PREFIT-001.md now exists on this branch/main - the pre-fit "
-            "sub-overlay note in docs/specification_authority.md must be "
-            "updated (it currently asserts the record is not yet on main) "
-            "as part of whatever work package merged it."
+        assert "did not yet exist on `main`" in section
+        assert "now exists on this branch" in section
+        assert REQ_PREFIT_001_PATH.exists(), (
+            "REQ-PREFIT-001.md is expected to exist once Work Package 1 "
+            "completes PR #304's own contract."
         )
         data = _load_index()
         prefit_ids = [
@@ -178,9 +178,9 @@ class TestSearchGranularityOverlayReconciled:
             for req in data["requirements"]
             if req["requirement_id"] == "REQ-PREFIT-001"
         ]
-        assert not prefit_ids, (
-            "REQ-PREFIT-001 is now indexed - update the pre-fit sub-overlay "
-            "note in docs/specification_authority.md to match."
+        assert prefit_ids, (
+            "REQ-PREFIT-001 is expected to be indexed once Work Package 1 "
+            "completes PR #304's own contract."
         )
 
     def test_part5_v16_closure_note_present_in_overlay_section(self):

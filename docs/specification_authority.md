@@ -10,6 +10,51 @@
 | Operating model | Direct internal build by Ancestry Marketing Data Science |
 | Repository | `papayasamosa/Media-Mix-Lab` |
 
+## Current consolidated PRD source authority (approved 2026-08-22)
+
+The supplied analyst decision response approved this per-part map and the
+substantive decisions below for the current repository-coherence and
+implementation work at the time. Its per-part *version* column is superseded
+as a current-state PRD-traceability claim by "Current consolidated PRD
+version map (2026-08-24)" below — the local PRD suite has since been
+refreshed with a further optional Search granularity/SEO visibility overlay
+these part numbers predate. The substantive decisions recorded in this
+section (the bounded historical-test window, `REQ-NBT-002`'s NBT-not-GSA
+authority, and the Brand-State Mediation Model naming) are not PRD-version
+facts, remain approved, and are not superseded by that later map.
+
+| Part | Authority as approved 2026-08-22 |
+|---|---|
+| Part 1 | Cross-Document Coherent v1.4 |
+| Part 2 | Cross-Document Coherent v1.4 |
+| Part 3 | Cross-Document Coherent v1.12, Pre-Fit Model Diagnostics |
+| Part 4 | Cross-Document Coherent v1.7, Pre-Fit Diagnostic Architecture |
+| Part 5 | Cross-Document Coherent v1.5, Governed Named-Event Data Contracts |
+| Part 6 | Cross-Document Coherent v1.10, Pre-Fit Model Diagnostics |
+| Part 7 | Cross-Document Coherent v1.9, Pre-Fit Model Diagnostics |
+| Part 8 | Cross-Document Coherent v1.5, Governed Named-Event Scenario Replay |
+| Part 9 | Cross-Document Coherent v1.6 |
+| Part 10 | Cross-Document Coherent v1.7, Pre-Fit Model Diagnostics UX |
+| Part 11 | Cross-Document Coherent v1.7, Pre-Fit Model Diagnostics Service/API |
+
+The standalone Data Input Contract amendment is historical proposal material
+whose substantive source-input contract is incorporated into the current
+approved Parts 3-7/10/11 wording. The FX addendum is the approved normative
+product/architecture contract for FX semantics; Finance-owned provider,
+rate-set, operational and future-assumption choices remain separately
+deferred.
+
+The current bounded UK historical test is identified as
+`window_role=historical_test_common_window` and
+`use_mode=historical_test_non_production`, with 2023-01-01 through 2025-04-06
+as its 119-week estimation window. This does not change the separate PRD
+production-programme period of 2023-07-03 through 2026-06-28.
+
+The initial UK Family History test is governed by `REQ-NBT-002` as supplied
+NBT, not GSA. Future brand work is named **Brand-State Mediation Model** with
+machine identifier `brand_state_mediation` (BSM); the repository's existing
+market-specific Model C is not renamed.
+
 This table describes the v1.4-to-v1.5 baseline as it stood at its own
 28 July 2026 effective date. As a *current-state* description it is
 superseded by "Current consolidated PRD version map" immediately below;
@@ -377,16 +422,16 @@ section, Part 6's v1.10 section, Part 7's v1.9 section, Part 10's v1.7
 section and Part 11's v1.7 section together form an earlier, distinct
 focused sub-overlay — compute-efficient pre-fit model diagnostics before a
 full production Bayesian fit — that predates and is retained underneath
-this Search-granularity overlay in every one of those files. As of this
-record, that sub-overlay is not yet reconciled into any approved
-`docs/approved_requirements/` record on `main`: an open, still-draft pull
-request adding reusable Model A pre-fit, identifiability, prior-predictive
-and diagnostic infrastructure proposes `REQ-PREFIT-001` as its vehicle for
-that reconciliation, but that record does not exist on `main` as of this
-pass, and this reconciliation makes no claim about its approval status.
-Correcting and completing that pull request's own contract is responsible
-for finishing that specific reconciliation; it is independent of, and does
-not depend on, the Search-granularity overlay recorded in this section.
+this Search-granularity overlay in every one of those files. That
+sub-overlay's reconciliation vehicle, `REQ-PREFIT-001`, was proposed on an
+open, still-draft pull request adding reusable Model A pre-fit,
+identifiability, prior-predictive and diagnostic infrastructure. As of the
+2026-08-24 Search-granularity reconciliation pass recorded above, that
+record did not yet exist on `main`; it now exists on this branch (Work
+Package 1 of the same coding brief, correcting and completing that pull
+request's own contract before merge) and is indexed in `docs/approved_
+requirements/index.json`. It is independent of, and does not depend on, the
+Search-granularity overlay recorded in this section.
 
 ### Known version-reference gaps: Part 5 v1.6 gap closed as a documentation fact
 
@@ -482,6 +527,29 @@ Each row below is one of two distinct states, not to be conflated:
 | Calibrated-versus-uncalibrated model comparison (`REQ-CALIB-001`) | Requirement exists but capability incomplete | Approved 2026-08-17 (Work Package 0), core comparison contract implemented Work Package 4 (2026-08-18): `core.calibration_comparison` reuses `core.model_identity.ModelIdentity` directly (resolving this record's own identity-architecture open question), rejecting construction unless the calibrated and uncalibrated identities are genuinely distinct (Requirement 1). Generic per-metric and per-experiment-agreement comparison, with no threshold/verdict/"preferred" field anywhere — verified by an explicit field-name scan (Requirement 3). `CalibrationEventRecord` implements Requirement 5's per-event record as caller-supplied, structured facts. Depends on `REQ-EXPMODE-001` (not yet coupled by import). No calibration mechanism exists or is implied. A schema v8 `experiment_calibration` Diagnostics display slot for the comparison artefact now exists (optional `CalibratedVsUncalibratedComparisonArtefact` payload, this record's own `to_dict()` — a read-only evidence view, always `None`/`not_applicable` until a calibration mechanism produces one). Not yet implemented: the material-change criteria that trigger mandatory review, any comparison tolerance/threshold, computing any comparison metric itself, and Requirement 4's separate calibrated/uncalibrated visibility in curves/planning/reports. |
 | Downstream forecast-consequence evidence (`REQ-FORECAST-001`) | Requirement exists but capability incomplete | Approved 2026-08-17. Separate from, and narrower than, the "Future-assumption bundles" row above (`REQ-FUTURE-001`, Work Package 9) — covers only the consequence-assessment contract for an already-classified exogenous control. Zero implementation yet. |
 
+## Current analyst-decision overrides to historical gap rows
+
+The following current statuses supersede older prose in the gap table above:
+
+- `REQ-NBT-002` is approved for the bounded initial UK NBT historical test;
+  GSA and NBT remain distinct and legacy `fh_gsa_*` identifiers are aliases
+  only.
+- `REQ-PREFIT-001` is approved and makes the full pre-fit workflow mandatory
+  for official production submission. The current historical test has an
+  explicit non-production exception while the service/artefact/page capability
+  is implemented.
+- `REQ-SEARCH-003` permits the bounded historical observed-mediator Model B
+  test after Model A convergence, valid FH/DNA spend-click coverage, graph
+  approval, Search prior-predictive checks, equation-level identification and
+  synthetic mediation recovery. It does not approve the richer latent
+  production Search decomposition or Search planning.
+- The FX addendum is approved as the normative product/architecture contract;
+  Finance operational provider, rate-set and future-assumption choices remain
+  deferred.
+- The later brand-state capability is named `brand_state_mediation` / Brand-
+  State Mediation Model (BSM). Existing repository market-specific Model C
+  terminology and implementation are unchanged.
+
 ## Approved requirement records already implemented (with documented capability boundaries)
 
 `REQ-GRAPH-001` (graph-authoritative causal configuration),
@@ -492,8 +560,10 @@ state contract), `REQ-SCEN-001` (sequential scenario evaluation contract),
 (response horizon and terminal reporting contract), `REQ-ENGINE-001`
 (approved primary production MMM engine), `REQ-LEAK-001` (leakage-safe
 historical validation folds), `REQ-STAB-001` (structural stability across
-folds), and `REQ-PPD-001` (posterior predictive metric distributions) are
-approved, indexed requirement records with substantive implementation.
+folds), `REQ-PPD-001` (posterior predictive metric distributions), and
+`REQ-PREFIT-001` (mandatory pre-fit gate for official production
+submission) are approved, indexed requirement records with substantive
+implementation.
 None is a gap requiring a new decision record — each has an explicit,
 narrower capability boundary documented in its own record:
 
@@ -688,3 +758,39 @@ narrower capability boundary documented in its own record:
   `DiagnosticsService.evaluate()` (no extra fit) and rendered as its own
   table; pre-v8 artefacts upgrade the section to `not_computed`, never a
   fabricated payload.
+- `REQ-PREFIT-001` (`docs/approved_requirements/REQ-PREFIT-001.md`):
+  the mandatory pre-fit gate is implemented with one governed readiness
+  vocabulary throughout (`ready`/`review_recommended`/`blocked`) — the
+  original draft exposed a second, competing vocabulary
+  (`status: "computed"`, a separate `submission_gate` field) on
+  `core.prefit_screening`'s own report; that is fixed at the source, and
+  `core.prefit_run.consolidate_prefit_readiness`/`PrefitRun` now
+  additionally binds both evidence reports, every required fingerprint,
+  the fold-reconstruction tier, and the analyst-rationale precondition
+  into one durable run identity, persisted through the existing project
+  export/import mechanism (`config/prefit_runs.json`,
+  `core.persistence.resolve_imported_prefit_runs`) rather than loose
+  Streamlit session state — `pages/05_Model_Training.py`'s official-fit
+  button now consults that one object
+  (`core.prefit_run.official_submission_allowed`) instead of re-deriving
+  its own blocking decision from scattered sub-fields. The fold-
+  reconstruction tier is honestly reported as `prepared_frame_only` (the
+  screen splits an already-prepared frame by date; it does not yet reuse
+  `application.fold_refit_service`'s deeper point-in-time source
+  reconstruction — that reuse integration remains unimplemented). The
+  same review found an unconditional, undocumented control/outcome-
+  control centring-and-scaling step live in `core.hierarchical_model`'s
+  default production path with no compensating prior recalibration and
+  no approval; it is now gated behind the same default-off,
+  diagnostic-only contract as this record's other convergence-experiment
+  switches (`core.hierarchical_model._resolve_control_scaling`,
+  `prior_config["enable_control_scaling"]`), restoring the pre-existing
+  production default. Not yet implemented: a dedicated pre-fit workspace
+  distinct from Model Setup (Requirement 5 — this record does not itself
+  approve a specific UX placement, so none is implemented from PRD prose
+  alone); and a formally approved numeric support-threshold/prior-
+  predictive-plausibility policy (`core.prefit_identifiability.
+  SupportThresholdPolicy`'s defaults remain unapproved diagnostic
+  values — they can only ever relax a run to `review_recommended`, never
+  fabricate a `blocked` or a false `ready`, but the exact numbers are not
+  themselves approved authority).

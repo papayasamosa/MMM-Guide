@@ -51,6 +51,7 @@ from ancestry_mmm.core.market_specific_diagnostics import (
     compute_scorecard_market_specific,
 )
 from ancestry_mmm.core.diagnostics import compute_scorecard, prior_predictive_summary
+from ancestry_mmm.core.prefit_run import official_submission_allowed
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec
 from ancestry_mmm.core.outcomes import (
     outcome_catalogue_fingerprint_payload,
@@ -395,6 +396,25 @@ if st.button("Preview prior predictive (no fitting)"):
                     ),
                 },
             )
+            _prefit_report = get_state("prefit_identifiability")
+            if isinstance(_prefit_report, dict):
+                _prefit_report = dict(_prefit_report)
+                _prefit_report["prior_predictive"] = preview_result.get(
+                    "plausibility",
+                    {
+                        "status": "not_run",
+                        "review_status": "not_run",
+                        "diagnostic_only": True,
+                    },
+                )
+                _prefit_states = dict(_prefit_report.get("state_semantics") or {})
+                _prefit_states["prior_predictive"] = str(
+                    _prefit_report["prior_predictive"].get(
+                        "review_status", "review_recommended"
+                    )
+                )
+                _prefit_report["state_semantics"] = _prefit_states
+                set_state("prefit_identifiability", _prefit_report)
 
 _preview = get_state("prior_predictive_preview")
 # Prior-predictive preview status badge - reuses the exact same staleness
@@ -441,6 +461,57 @@ elif _preview and _preview.get("status") == "computed":
         for w in _preview_payload.get("warnings", []):
             st.caption(f"Sampling warning: {w}")
 
+        _plausibility = _preview_payload.get("plausibility") or {}
+        if _plausibility:
+            st.markdown("### Prior-predictive observed-scale review")
+            st.caption(
+                "This is diagnostic evidence from the proposed priors. "
+                "No approved threshold policy is applied by default, so finite "
+                "results remain review-recommended until an analyst-approved "
+                "policy exists."
+            )
+            _plausibility_rows = [
+                {
+                    "Outcome": row.get("outcome_id"),
+                    "Finite": row.get("finite"),
+                    "Status": row.get("status"),
+                    "Review": row.get("review_status"),
+                    "Observed min": (row.get("observed_quantiles") or {}).get("min"),
+                    "Observed median": (row.get("observed_quantiles") or {}).get("q50"),
+                    "Observed mean": (row.get("observed_quantiles") or {}).get("mean"),
+                    "Observed max": (row.get("observed_quantiles") or {}).get("max"),
+                    "Prior q01": (row.get("predictive_quantiles") or {}).get("q01"),
+                    "Prior q05": (row.get("predictive_quantiles") or {}).get("q05"),
+                    "Prior median": (row.get("predictive_quantiles") or {}).get("q50"),
+                    "Prior q95": (row.get("predictive_quantiles") or {}).get("q95"),
+                    "Prior q99": (row.get("predictive_quantiles") or {}).get("q99"),
+                    "Prior max": (row.get("predictive_quantiles") or {}).get("max"),
+                    "q95 / observed median": (
+                        row.get("observed_scale_ratios") or {}
+                    ).get("q95_to_observed_median"),
+                    "q99 / observed max": (row.get("observed_scale_ratios") or {}).get(
+                        "q99_to_observed_max"
+                    ),
+                    "Median / observed median": (
+                        row.get("observed_scale_ratios") or {}
+                    ).get("median_to_observed_median"),
+                }
+                for row in _plausibility.get("rows", [])
+            ]
+            if _plausibility_rows:
+                st.dataframe(
+                    pd.DataFrame(_plausibility_rows),
+                    width="stretch",
+                    hide_index=True,
+                )
+            if _plausibility.get("component_decomposition", {}).get("status") == (
+                "unavailable"
+            ):
+                st.caption(
+                    "Component decomposition is unavailable because the current "
+                    "prior preview retains outcome draws only."
+                )
+
 st.markdown("### Fit action")
 st.caption(
     "Build the proposed model and start sampling. A new fit creates a new run identity and clears any previous approval."
@@ -452,12 +523,46 @@ _official_fit_gate_blocked = (
     and bool(_official_result)
     and _frame_mode != "official"
 )
+_prefit_gate_reasons = []
+if _frame_mode == "official":
+    # REQ-PREFIT-001 (Work Package 1 correction): consult the one governed
+    # PrefitRun (core.prefit_run) rather than re-deriving a blocking
+    # decision from scattered sub-fields of two independently-shaped
+    # evidence dicts - see pages/04_Model_Config.py, which (re)builds this
+    # object any time either evidence report changes.
+    _prefit_run_for_gate = get_state("prefit_run")
+    if not isinstance(_prefit_run_for_gate, dict):
+        _prefit_gate_reasons.append(
+            "run the pre-fit support review and deterministic screen on Model Setup"
+        )
+    else:
+        _allowed, _reason = official_submission_allowed(_prefit_run_for_gate)
+        if not _allowed:
+            _prefit_gate_reasons.append(_reason)
+    if not (
+        isinstance(_preview, dict)
+        and _preview.get("status") == "computed"
+        and _preview.get("proposed_model_fingerprint")
+        == _proposed_model_fingerprint(model_type)
+    ):
+        _prefit_gate_reasons.append(
+            "run a current prior-predictive preview before fitting"
+        )
+if _prefit_gate_reasons:
+    _official_fit_gate_blocked = True
 if _official_fit_gate_blocked:
-    st.error(
-        "Fitting is blocked for this frame because it is exploratory while "
-        "official preparation is unresolved. Return to Model Setup and "
-        "prepare the official canonical frame before fitting an official run."
-    )
+    if _prefit_gate_reasons:
+        st.error(
+            "Official fitting is blocked by the mandatory pre-fit gate: "
+            + "; ".join(_prefit_gate_reasons)
+            + "."
+        )
+    else:
+        st.error(
+            "Fitting is blocked for this frame because it is exploratory while "
+            "official preparation is unresolved. Return to Model Setup and "
+            "prepare the official canonical frame before fitting an official run."
+        )
 if (not _official_fit_gate_blocked) and st.button("Build & fit model", type="primary"):
     try:
         with st.spinner("Building model..."):

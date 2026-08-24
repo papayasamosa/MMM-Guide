@@ -1,5 +1,8 @@
 # Approved implementation requirements
 
+The `REQ-PREFIT-*` category covers mandatory pre-fit diagnostics and the
+production-submission gate.
+
 This directory stores concise, repository-controlled implementation decisions derived from approved human product requirements. Each record captures a *business* requirement approved upstream of implementation, before any code is written against it.
 
 This directory is separate from `docs/decision_log.md`, which records engineering decisions made *during* implementation (design trade-offs, phasing, rejected alternatives).

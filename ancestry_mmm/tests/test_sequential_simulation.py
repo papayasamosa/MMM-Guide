@@ -14,6 +14,7 @@ the model's own already-shipped math rather than a hand re-derivation.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Dict
 
 import numpy as np
@@ -51,6 +52,7 @@ from ancestry_mmm.core.sequential_simulation import (
     simulate_terminal_carryover,
     zero_media_extension_plan,
 )
+from ancestry_mmm.core.transformations import geometric_adstock_matrix, hill_function
 from ancestry_mmm.tests.conftest import pathway_strength_from_flat
 
 CHANNELS = ["TV", "DNA_Media"]
@@ -360,6 +362,54 @@ class TestReconstructStartingState:
         historical_frame = _full_frame(np.zeros((6, 2)), "UK", meta)
         carry_in = reconstruct_starting_state(historical_frame, meta, params, "UK")
         assert carry_in.starting_adstock == {"TV": 0.0, "DNA_Media": 0.0}
+
+    def test_scaled_media_contract_is_used_for_carry_in_and_future_replay(self):
+        meta = _meta()
+        historical_frame = _full_frame(
+            np.array([[100.0, 0.0], [0.0, 50.0], [20.0, 10.0]]), "UK", meta
+        )
+        scaled_meta = replace(
+            meta,
+            media_input_scale_method="positive_median",
+            media_input_scales={"TV": 10.0, "DNA_Media": 5.0},
+        )
+        params = _params()
+        carry_in = reconstruct_starting_state(
+            historical_frame, scaled_meta, params, "UK"
+        )
+
+        expected_scaled_history = historical_frame["X_media"] / np.array([10.0, 5.0])
+        expected = geometric_adstock_matrix(
+            expected_scaled_history, np.array([0.6, 0.4]), normalize=False
+        )
+        assert carry_in.starting_adstock["TV"] == pytest.approx(expected[-1, 0])
+        assert carry_in.media_input_scales == scaled_meta.media_input_scales
+
+        restored = SequentialCarryInState.from_dict(carry_in.to_dict())
+        assert restored.media_input_scales == carry_in.media_input_scales
+
+        plan = _plan_from_media("UK", ["future"], np.array([[20.0, 10.0]]))
+        result = simulate_sequential_outcomes(plan, restored, scaled_meta, params)
+        expected_future = geometric_adstock_matrix(
+            plan.to_media_matrix(CHANNELS) / np.array([10.0, 5.0]),
+            np.array([0.6, 0.4]),
+            normalize=False,
+            initial_state=expected[-1],
+        )
+        expected_sat = hill_function(
+            expected_future * (1.0 - np.array([0.6, 0.4]))[None, :],
+            np.array([500.0, 300.0]),
+            np.array([1.0, 1.0]),
+        )
+        np.testing.assert_allclose(result.sat_media, expected_sat)
+
+        mismatched = replace(
+            restored,
+            media_input_scale_method="",
+            media_input_scales={},
+        )
+        with pytest.raises(ValueError, match="scaling contract"):
+            simulate_sequential_outcomes(plan, mismatched, scaled_meta, params)
 
     def test_nonzero_history_reconstructs_matching_raw_adstock(self):
         meta = _meta()

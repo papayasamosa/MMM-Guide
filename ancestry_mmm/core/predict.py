@@ -28,8 +28,14 @@ import numpy as np
 import pandas as pd
 import arviz as az
 
-from .transformations import geometric_adstock_matrix, hill_function
+from .transformations import (
+    apply_media_input_scale,
+    apply_media_input_scales,
+    geometric_adstock_matrix,
+    hill_function,
+)
 from .hierarchical_model import FHModelMeta
+from .control_scaling import apply_control_mapping_scaling, apply_control_scaling
 from .outcomes import (
     dna_kit_sale_outcome_ids,
     fh_gsa_outcome_ids,
@@ -240,6 +246,7 @@ def adstock_saturate_frame(
     params: FHPosteriorParams,
 ) -> np.ndarray:
     """NumPy adstock + Hill saturation per market block, matching the PyMC model exactly."""
+    X_media = apply_media_input_scales(X_media, meta.channels, meta.media_input_scales)
     decay = np.array([params.decay_rate[c] for c in meta.channels])
     K = np.array([params.hill_K[c] for c in meta.channels])
     S = np.array([params.hill_S[c] for c in meta.channels])
@@ -473,12 +480,22 @@ def predict_mu(
         o_idx = outcome_ids.index(oid)
         names = outcome_control_names.get(oid, [])
         coefs = np.array([params.outcome_control_coef[oid].get(n, 0.0) for n in names])
-        eta[:, o_idx] += arr @ coefs
+        scaled_arr = apply_control_scaling(
+            arr,
+            names,
+            (meta.outcome_control_scaling or {}).get(oid),
+        )
+        eta[:, o_idx] += scaled_arr @ coefs
 
     control_names = frame.get("control_names") or []
     if control_names and params.control_coef:
         coefs = np.array([params.control_coef.get(n, 0.0) for n in control_names])
-        eta += (frame["X_controls"] @ coefs)[:, None]
+        scaled_controls = apply_control_scaling(
+            frame["X_controls"],
+            control_names,
+            meta.control_scaling,
+        )
+        eta += (scaled_controls @ coefs)[:, None]
 
     mu = np.clip(np.exp(eta), 1e-6, 1e9)
     return mu
@@ -502,11 +519,19 @@ def steady_state_outcome_response(
     """
     reference_context = reference_context or {}
     outcome_ids = meta.outcome_ids
+    # Keep replay compatible with lightweight legacy metadata objects that
+    # predate the optional media-input scaling contract. FHModelMeta itself
+    # supplies the same empty mapping by default.
+    media_input_scales = getattr(meta, "media_input_scales", {})
 
     sat = {}
     for c in meta.channels:
         x = spend_by_channel.get(c, 0.0)
-        sat[c] = hill_function(np.array([x]), params.hill_K[c], params.hill_S[c])[0]
+        sat[c] = hill_function(
+            np.array([apply_media_input_scale(x, c, media_input_scales)]),
+            params.hill_K[c],
+            params.hill_S[c],
+        )[0]
 
     eta = {}
     for s in outcome_ids:
@@ -532,13 +557,21 @@ def steady_state_outcome_response(
                 * _pathway_weight(meta, params, s, c, planning_only=planning_only)
             )
 
+        scaled_controls = apply_control_mapping_scaling(
+            reference_context.get("controls", {}),
+            tuple(params.control_coef),
+            meta.control_scaling,
+        )
         for name, coef in params.control_coef.items():
-            val += coef * reference_context.get("controls", {}).get(name, 0.0)
+            val += coef * scaled_controls.get(name, 0.0)
         if s in params.outcome_control_coef:
+            scaled_outcome_controls = apply_control_mapping_scaling(
+                reference_context.get("outcome_controls", {}).get(s, {}),
+                tuple(params.outcome_control_coef[s]),
+                (meta.outcome_control_scaling or {}).get(s),
+            )
             for name, coef in params.outcome_control_coef[s].items():
-                val += coef * reference_context.get("outcome_controls", {}).get(
-                    s, {}
-                ).get(name, 0.0)
+                val += coef * scaled_outcome_controls.get(name, 0.0)
 
         eta[s] = val
 
@@ -608,7 +641,8 @@ def generate_channel_curve(
     K = params.hill_K[channel]
     S = params.hill_S[channel]
     if spend_range is None:
-        cap = max_spend if max_spend is not None else max(K * 3, 1.0)
+        scale = (meta.media_input_scales or {}).get(channel, 1.0)
+        cap = max_spend if max_spend is not None else max(K * 3 * scale, 1.0)
         spend_range = np.linspace(0.0, cap, n_points)
 
     gsa_ids = set(fh_gsa_outcome_ids(meta))
@@ -617,7 +651,19 @@ def generate_channel_curve(
     dna_ids = set(dna_kit_sale_outcome_ids(meta))
     rows = []
     for spend in spend_range:
-        sat = float(hill_function(np.array([float(spend)]), K, S)[0])
+        sat = float(
+            hill_function(
+                np.array(
+                    [
+                        apply_media_input_scale(
+                            float(spend), channel, meta.media_input_scales
+                        )
+                    ]
+                ),
+                K,
+                S,
+            )[0]
+        )
         row = {"channel": channel, "spend": float(spend), "saturation": sat}
         overall = 0.0
         dna_total = 0.0

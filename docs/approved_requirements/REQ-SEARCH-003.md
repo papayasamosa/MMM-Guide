@@ -10,7 +10,9 @@ sequence on 2026-08-21.
 It does not supersede `REQ-SEARCH-001`'s object-separation invariants or
 `REQ-SEARCH-002`'s separately approved latent-demand/capacity formulation.
 It adds the product-specific observed Search preparation boundary required for
-the staged historical Model B comparison.
+the staged historical Model B comparison. The analyst decision dated
+2026-08-22 additionally approves the bounded observed-mediator historical test
+after Model A passes its convergence gate.
 
 ## Approved scope
 
@@ -39,13 +41,28 @@ adstock. VIF, Pearson/Spearman correlation, condition number, rank,
 near-zero variance, temporal/flight overlap, and coverage remain diagnostics;
 they do not automatically delete variables.
 
+For the bounded historical test, the approved observed mediation structure is:
+
+```text
+FH paid brand-search spend -> FH paid brand-search clicks -> FH NBT outcomes
+DNA paid brand-search spend -> DNA paid brand-search clicks -> DNA kit outcomes
+```
+
+Eligible upstream media may also explain the product-specific Search click
+mediator and retain their direct outcome paths. Paid Brand Search spend does
+not receive a second ordinary direct outcome coefficient, and clicks are not
+also fitted as a duplicate ordinary direct media channel. Search-path
+transformations may use a separate adstock namespace from final-outcome paths.
+
 ## Out of scope and gates
 
-This record does not approve a real-data fit, headline contribution,
-planning, optimisation, or a latent branded-demand/capacity model. The
-approved graph, Search prior predictive checks, and Model A/Model B fit gates
-remain required before production sampling. Unresolved real source coverage
-must stop the affected fit and retain the exact unresolved periods.
+This record does not approve official production contribution, planning,
+optimisation, or a latent branded-demand/capacity model. The bounded
+historical observed-mediator test may run after Model A convergence, valid
+common-window FH/DNA spend/click coverage, graph approval, Search prior
+predictive checks, equation-level identification diagnostics and synthetic
+mediation recovery. Unresolved real source coverage must stop the affected
+fit and retain the exact unresolved periods.
 
 ## Affected modules and tests
 

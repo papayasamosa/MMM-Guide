@@ -25,6 +25,8 @@ docs/decision_log.md) - not segment; the outcome_ids below (`"New"`,
 continuity with this file's history, but they are `FHModelMeta.outcome_ids`
 entries, not segment names."""
 
+from dataclasses import replace
+
 import arviz as az
 import numpy as np
 import pytest
@@ -32,6 +34,7 @@ import pytest
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.predict import (
     FHPosteriorParams,
+    adstock_saturate_frame,
     extract_posterior_params,
     generate_channel_curve,
     predict_mu,
@@ -139,6 +142,45 @@ class TestGenerateChannelCurve:
             "TV_Brand", meta, params, n_points=5, max_spend=50.0
         )
         assert df["spend"].max() == pytest.approx(50.0)
+
+
+class TestMediaInputScaleReplay:
+    """A persisted input-domain scale must be invisible on raw-unit curves."""
+
+    def test_scaled_media_domain_replays_the_same_adstock_and_hill_response(
+        self, meta, params
+    ):
+        scales = {"TV_Brand": 100.0, "DNA_Media": 50.0}
+        scaled_meta = replace(meta, media_input_scales=scales)
+        scaled_params = replace(
+            params,
+            hill_K={
+                channel: value / scales[channel]
+                for channel, value in params.hill_K.items()
+            },
+        )
+        X_media = np.array([[0.0, 0.0], [100.0, 50.0], [200.0, 0.0], [0.0, 25.0]])
+        raw_sat = adstock_saturate_frame(X_media, [(0, len(X_media))], meta, params)
+        scaled_sat = adstock_saturate_frame(
+            X_media, [(0, len(X_media))], scaled_meta, scaled_params
+        )
+        np.testing.assert_allclose(raw_sat, scaled_sat, rtol=1e-12, atol=1e-12)
+
+        spend_range = np.array([0.0, 100.0, 500.0])
+        raw_curve = generate_channel_curve(
+            "TV_Brand", meta, params, spend_range=spend_range
+        )
+        scaled_curve = generate_channel_curve(
+            "TV_Brand", scaled_meta, scaled_params, spend_range=spend_range
+        )
+        np.testing.assert_allclose(
+            raw_curve["saturation"], scaled_curve["saturation"], rtol=1e-12
+        )
+        np.testing.assert_allclose(
+            raw_curve["overall_response"],
+            scaled_curve["overall_response"],
+            rtol=1e-12,
+        )
 
 
 class TestGenerateChannelCurveDirectDnaOutcomes:

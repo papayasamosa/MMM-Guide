@@ -91,7 +91,11 @@ from .search_capacity import (
     CandidateASequentialDrawParams,
     candidate_a_forward,
 )
-from .transformations import geometric_adstock_matrix, hill_function
+from .transformations import (
+    apply_media_input_scales,
+    geometric_adstock_matrix,
+    hill_function,
+)
 from .uncertainty import DEFAULT_N_DRAWS, sample_draw_indices
 
 
@@ -106,8 +110,9 @@ class SequentialCarryInState:
     sequential weekly simulation.
 
     `starting_adstock` is the "fitted adstock state" the brief's State
-    section requires: the RAW (pre-`normalize`) geometric-adstock
-    accumulator value per channel - the same internal quantity
+    section requires: the model-input-domain (RAW when no media scaling is
+    configured) pre-`normalize` geometric-adstock accumulator value per
+    channel. It is the same internal quantity
     `core.transformations.geometric_adstock` already carries between
     periods, just made an explicit, inspectable, carry-in-able value
     instead of always starting at zero.
@@ -129,6 +134,8 @@ class SequentialCarryInState:
     lag_context_length: int
     as_of_period_label: str = ""
     schema_version: int = 1
+    media_input_scale_method: str = ""
+    media_input_scales: Dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -139,6 +146,8 @@ class SequentialCarryInState:
             "lag_context_length": self.lag_context_length,
             "as_of_period_label": self.as_of_period_label,
             "schema_version": self.schema_version,
+            "media_input_scale_method": self.media_input_scale_method,
+            "media_input_scales": dict(self.media_input_scales),
         }
 
     @classmethod
@@ -154,6 +163,11 @@ class SequentialCarryInState:
             lag_context_length=int(d.get("lag_context_length", 0)),
             as_of_period_label=d.get("as_of_period_label", ""),
             schema_version=int(d.get("schema_version", 1)),
+            media_input_scale_method=str(d.get("media_input_scale_method", "")),
+            media_input_scales={
+                str(channel): float(scale)
+                for channel, scale in (d.get("media_input_scales") or {}).items()
+            },
         )
 
     def to_adstock_state(
@@ -263,7 +277,11 @@ def _reconstruct_starting_state(
     S: np.ndarray,
 ) -> SequentialCarryInState:
     start, end = _resolve_and_validate_market_history(historical_frame, meta, market)
-    X_hist = historical_frame["X_media"][start:end]
+    X_hist = apply_media_input_scales(
+        np.asarray(historical_frame["X_media"][start:end], dtype=float),
+        list(meta.channels),
+        meta.media_input_scales,
+    )
 
     # Reconstruct starting adstock from the actual historical media
     # immediately before the plan horizon - never assumed zero, never
@@ -294,6 +312,8 @@ def _reconstruct_starting_state(
         lag_context_sat_media=lag_context_sat_media,
         lag_context_length=lag_context_length,
         as_of_period_label=as_of_period_label,
+        media_input_scale_method=meta.media_input_scale_method,
+        media_input_scales=dict(meta.media_input_scales),
     )
 
 
@@ -461,6 +481,12 @@ def _validate_plan_matches_carry_in(
         )
     if carry_in.channels != tuple(meta.channels):
         raise ValueError("Carry-in state's channels do not match this fit's channels.")
+    if carry_in.media_input_scale_method != meta.media_input_scale_method or (
+        dict(carry_in.media_input_scales) != dict(meta.media_input_scales)
+    ):
+        raise ValueError(
+            "Carry-in state's media input scaling contract does not match the fit."
+        )
     if plan.market not in meta.markets:
         raise ValueError(f"'{plan.market}' is not one of this model's markets.")
 
@@ -475,6 +501,7 @@ def _simulate_sat_media_sequence(
     carry_in: SequentialCarryInState,
     channels: Sequence[str],
     *,
+    media_input_scales: Dict[str, float],
     decay: np.ndarray,
     K: np.ndarray,
     S: np.ndarray,
@@ -485,7 +512,9 @@ def _simulate_sat_media_sequence(
     `geometric_adstock_matrix`/`hill_function` transformations
     `core.predict.adstock_saturate_frame` already uses, extended with the
     `initial_state` carry-in parameter. Returns `(sat_media, ending_adstock)`."""
-    X_future = plan.to_media_matrix(channels)
+    X_future = apply_media_input_scales(
+        plan.to_media_matrix(channels), list(channels), media_input_scales
+    )
     initial_state = np.array([carry_in.starting_adstock[c] for c in channels])
 
     raw_adstock = geometric_adstock_matrix(
@@ -623,7 +652,13 @@ def simulate_sequential_outcomes(
     K = np.array([params.hill_K[c] for c in meta.channels])
     S = np.array([params.hill_S[c] for c in meta.channels])
     sat_media_future, ending_adstock = _simulate_sat_media_sequence(
-        plan, carry_in, meta.channels, decay=decay, K=K, S=S
+        plan,
+        carry_in,
+        meta.channels,
+        media_input_scales=meta.media_input_scales,
+        decay=decay,
+        K=K,
+        S=S,
     )
 
     replay_frame, sat_media_replay, tail_len = _assemble_replay_frame(
@@ -649,6 +684,8 @@ def simulate_sequential_outcomes(
         ),
         lag_context_length=tail_len,
         as_of_period_label=plan.period_labels[-1],
+        media_input_scale_method=meta.media_input_scale_method,
+        media_input_scales=dict(meta.media_input_scales),
     )
 
     return SequentialSimulationResult(
@@ -675,7 +712,13 @@ def simulate_sequential_outcomes_market_specific(
     K = np.array([params.hill_K[plan.market][c] for c in meta.channels])
     S = np.array([params.hill_S[c] for c in meta.channels])
     sat_media_future, ending_adstock = _simulate_sat_media_sequence(
-        plan, carry_in, meta.channels, decay=decay, K=K, S=S
+        plan,
+        carry_in,
+        meta.channels,
+        media_input_scales=meta.media_input_scales,
+        decay=decay,
+        K=K,
+        S=S,
     )
 
     replay_frame, sat_media_replay, tail_len = _assemble_replay_frame(
@@ -698,6 +741,8 @@ def simulate_sequential_outcomes_market_specific(
         ),
         lag_context_length=tail_len,
         as_of_period_label=plan.period_labels[-1],
+        media_input_scale_method=meta.media_input_scale_method,
+        media_input_scales=dict(meta.media_input_scales),
     )
 
     return SequentialSimulationResult(
@@ -981,7 +1026,13 @@ def simulate_candidate_a_mediator_state_sequentially(
     K = np.array([params.hill_K[c] for c in meta.channels])
     S = np.array([params.hill_S[c] for c in meta.channels])
     sat_media_future, _ending_adstock = _simulate_sat_media_sequence(
-        plan, carry_in, meta.channels, decay=decay, K=K, S=S
+        plan,
+        carry_in,
+        meta.channels,
+        media_input_scales=meta.media_input_scales,
+        decay=decay,
+        K=K,
+        S=S,
     )
 
     demand_idx = [

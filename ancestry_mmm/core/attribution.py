@@ -22,6 +22,7 @@ import numpy as np
 import pandas as pd
 
 from .hierarchical_model import FHModelMeta
+from .control_scaling import apply_control_scaling
 from .predict import (
     FHPosteriorParams,
     _cross_product_strength_matrix,
@@ -94,12 +95,22 @@ def _baseline_eta(
         o_idx = outcome_ids.index(oid)
         names = outcome_control_names.get(oid, [])
         coefs = np.array([params.outcome_control_coef[oid].get(n, 0.0) for n in names])
-        eta[:, o_idx] += arr @ coefs
+        scaled_arr = apply_control_scaling(
+            arr,
+            names,
+            (meta.outcome_control_scaling or {}).get(oid),
+        )
+        eta[:, o_idx] += scaled_arr @ coefs
 
     control_names = frame.get("control_names") or []
     if control_names and params.control_coef:
         coefs = np.array([params.control_coef.get(n, 0.0) for n in control_names])
-        eta += (frame["X_controls"] @ coefs)[:, None]
+        scaled_controls = apply_control_scaling(
+            frame["X_controls"],
+            control_names,
+            meta.control_scaling,
+        )
+        eta += (scaled_controls @ coefs)[:, None]
 
     return eta
 

@@ -218,3 +218,17 @@ def test_proposed_fingerprint_is_deterministic_and_reused_verbatim():
 
     assert first_fingerprint == second_fingerprint
     assert not any("no longer reflects" in (w.value or "") for w in at.warning)
+
+
+def test_official_fit_action_is_hidden_until_prefit_gate_is_complete():
+    frame = _frame()
+    frame["preparation_mode"] = "official"
+    at = _run_at(
+        frame=frame,
+        official_preparation_result={"status": "ready"},
+        prefit_identifiability=None,
+        prefit_screening=None,
+    )
+    assert not at.exception, f"page raised: {at.exception}"
+    assert not any(button.label == "Build & fit model" for button in at.button)
+    assert any("mandatory pre-fit gate" in (error.value or "") for error in at.error)

@@ -3,6 +3,8 @@ OutcomeDefinition the source of truth" - see docs/decision_log.md)."""
 
 from types import SimpleNamespace
 
+import pytest
+
 from ancestry_mmm.core.outcomes import (
     DNA,
     DNA_SEGMENT_COMBINED,
@@ -132,6 +134,19 @@ class TestOutcomeDefinitionRoundTrip:
             LEGACY_NBT_OUTCOME_ID_ALIASES.values()
         )
         assert group.member_outcome_ids == tuple(LEGACY_NBT_OUTCOME_ID_ALIASES)
+
+    def test_explicit_nbt_migration_rejects_legacy_id_with_gsa_semantics(self):
+        outcome = OutcomeDefinition(
+            outcome_id="fh_gsa_new",
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric=METRIC_GSA,
+            source_column="fh_gsa_new",
+            metric_key=METRIC_KEY_FH_GSA,
+        )
+
+        with pytest.raises(ValueError, match="not an approved Family History"):
+            apply_explicit_nbt_identity_migration([outcome])
 
     def test_legacy_positional_constructor_still_treats_sixth_value_as_unit(self):
         outcome = OutcomeDefinition("id", FAMILY_HISTORY, "New", "GSA", "col", "GSA")

@@ -159,15 +159,31 @@ def apply_explicit_nbt_identity_migration(
     become one model dimension.
     """
 
-    migrated = [
-        replace(
-            outcome,
-            outcome_id=LEGACY_NBT_OUTCOME_ID_ALIASES.get(
-                outcome.outcome_id, outcome.outcome_id
-            ),
-        )
-        for outcome in outcomes
-    ]
+    migrated = []
+    for outcome in outcomes:
+        if outcome.outcome_id in LEGACY_NBT_OUTCOME_ID_ALIASES:
+            # The legacy identifier is only a source-registry alias.  It is
+            # not evidence that a definition is NBT: a genuine GSA record
+            # may carry the same historical ID.  Require the already-governed
+            # semantic metric/product identity before changing the model ID;
+            # preserve all event/date/cohort/reconciliation metadata exactly.
+            if (
+                outcome.product != FAMILY_HISTORY
+                or outcome.metric_key != METRIC_KEY_FH_NET_BILLTHROUGH_COUNT
+            ):
+                raise ValueError(
+                    "Cannot apply the explicit NBT identity migration to "
+                    f"{outcome.outcome_id!r}: the definition is not an "
+                    "approved Family History Net Bill Through count."
+                )
+            migrated.append(
+                replace(
+                    outcome,
+                    outcome_id=LEGACY_NBT_OUTCOME_ID_ALIASES[outcome.outcome_id],
+                )
+            )
+        else:
+            migrated.append(outcome)
     ids = [outcome.outcome_id for outcome in migrated]
     if len(ids) != len(set(ids)):
         raise ValueError(

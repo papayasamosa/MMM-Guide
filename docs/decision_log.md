@@ -5,6 +5,38 @@ Format: Date, Decision, Reason, Alternatives considered, Impact, Owner, Status.
 ---
 
 **Date:** 2026-08-22
+**Decision:** Record the analyst-approved governance boundary for the UK
+historical-test sequence. The bounded common window is 2023-01-01 through
+2025-04-06 (119 Sunday-Saturday weeks) with
+`window_role=historical_test_common_window` and non-production use mode; the
+PRD production-programme period remains 2023-07-03 through 2026-06-28. The
+current FH model is supplied NBT, not GSA, under `REQ-NBT-002`. The full pre-fit
+workflow is mandatory for official production submission under
+`REQ-PREFIT-001`, while this historical test may continue using existing
+static/prior-predictive/identification/short-MCMC evidence. After Model A
+convergence, the bounded observed product-specific Search mediator test is
+approved under `REQ-SEARCH-003`: spend -> clicks -> product outcomes, with no
+duplicate direct Search-spend coefficient. The later brand capability is named
+Brand-State Mediation Model (`brand_state_mediation`, BSM); PathMC, brand
+moderation, latent production Search capacity, named-event response statistics,
+Finance operational FX choices and optimisation mappings remain deferred.
+**Reason:** The analyst decision response dated 2026-08-22 closes the coherence
+audit decisions without changing the approved estimand or inventing missing
+data. It separates historical-test evidence from official production approval.
+**Alternatives considered:** Treating the bounded test as the production
+default; continuing to expose GSA semantics; blocking the historical test on a
+not-yet-built pre-fit UI; starting Model B before Model A; fabricating Search
+cap/organic/direct or event/FX data; calling future brand-state work Model C;
+selecting PathMC; and switching from PyMC. All rejected.
+**Impact:** Added `REQ-NBT-002` and `REQ-PREFIT-001`, updated repository
+authority and Search scope records, and retained the historical stop gate.
+The short regularized Model A diagnostic is evidence only and remains
+non-converged by R-hat/ESS/treedepth criteria.
+**Owner:** Modelling / Platform engineering, with Product/Finance governance.
+**Status:** Approved; implementation and convergence evidence in progress.
+---
+
+**Date:** 2026-08-22
 **Decision:** Implement the approved common-window historical UK test as two
 separate PyMC joint/shared hierarchical models: three canonical Family History
 NBT outcomes and two DNA kit outcomes, using the Sunday-Saturday window

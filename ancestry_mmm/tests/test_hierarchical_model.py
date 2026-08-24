@@ -22,6 +22,9 @@ import pytest
 
 from ancestry_mmm.core.hierarchical_model import (
     FHModelMeta,
+    _resolve_control_scaling,
+    _resolve_fixed_channel_values,
+    _resolve_media_input_scales,
     _resolve_direct_dna_outcome_ids,
 )
 
@@ -154,6 +157,106 @@ class TestFHModelMetaCausalGraphIdentityDefaults:
         assert meta.causal_graph_engine == "pymc_hierarchical"
 
 
+class TestMediaInputScaleContract:
+    def test_meta_defaults_to_raw_input_domain_for_legacy_bundles(self):
+        meta = _meta()
+        assert meta.media_input_scale_method == ""
+        assert meta.media_input_scales == {}
+
+    def test_positive_median_is_deterministic_and_uses_target_support(self):
+        method, scales = _resolve_media_input_scales(
+            np.array([[0.0, 10.0], [200.0, 30.0], [100.0, 0.0]]),
+            ["TV", "Email"],
+            {"media_input_scale_method": "positive_median"},
+        )
+        assert method == "positive_median"
+        assert scales == {"TV": 150.0, "Email": 20.0}
+
+    def test_unknown_media_scale_method_is_blocked(self):
+        with pytest.raises(ValueError, match="Unsupported media_input_scale_method"):
+            _resolve_media_input_scales(
+                np.ones((2, 1)), ["TV"], {"media_input_scale_method": "zscore"}
+            )
+
+
+class TestControlScalingContract:
+    """`_resolve_control_scaling` must default to leaving controls raw and
+    the coefficient prior's implied meaning unchanged - production-default
+    behaviour before and after PR #304's pre-fit remediation branch must be
+    byte-identical here. Centring/scaling changes the prior's implied
+    meaning without a compensating recalibration (no `docs/
+    approved_requirements/REQ-*` record or `docs/decision_log.md` entry
+    approves it as a production change), so it must remain a gated,
+    default-off diagnostic experiment - the same pattern already used by
+    `_resolve_media_input_scales`/`K_reference`/`fixed_decay_rate`."""
+
+    def test_default_leaves_controls_raw_with_empty_contract(self):
+        raw = np.array([[40.0, 2.0], [50.0, 4.0], [60.0, 6.0]])
+        controls, contract = _resolve_control_scaling(raw, ["trend", "price"], {})
+        np.testing.assert_array_equal(controls, raw)
+        assert contract == {}
+
+    def test_disabled_explicitly_also_leaves_controls_raw(self):
+        raw = np.array([[40.0, 2.0], [50.0, 4.0], [60.0, 6.0]])
+        controls, contract = _resolve_control_scaling(
+            raw, ["trend", "price"], {"enable_control_scaling": False}
+        )
+        np.testing.assert_array_equal(controls, raw)
+        assert contract == {}
+
+    def test_explicit_opt_in_centres_and_scales(self):
+        raw = np.array([[40.0, 2.0], [50.0, 4.0], [60.0, 6.0]])
+        controls, contract = _resolve_control_scaling(
+            raw, ["trend", "price"], {"enable_control_scaling": True}
+        )
+        np.testing.assert_allclose(controls.mean(axis=0), [0.0, 0.0], atol=1e-12)
+        assert contract["trend"]["method"] == "mean_sd"
+
+    def test_no_controls_is_a_no_op_either_way(self):
+        empty = np.zeros((3, 0))
+        for prior_config in ({}, {"enable_control_scaling": True}):
+            controls, contract = _resolve_control_scaling(empty, [], prior_config)
+            assert controls.shape == (3, 0)
+            assert contract == {}
+
+
+class TestDiagnosticFixedChannelValues:
+    def test_accepts_scalar_mapping_and_ordered_vector(self):
+        channels = ["TV", "Email"]
+        assert _resolve_fixed_channel_values(
+            {"fixed": 0.5}, "fixed", channels, 0.2, lower=0.0, upper=1.0
+        ).tolist() == [0.5, 0.5]
+        assert _resolve_fixed_channel_values(
+            {"fixed": {"TV": 0.25, "Email": 0.75}},
+            "fixed",
+            channels,
+            0.2,
+            lower=0.0,
+            upper=1.0,
+        ).tolist() == [0.25, 0.75]
+        assert _resolve_fixed_channel_values(
+            {"fixed": [0.3, 0.4]}, "fixed", channels, 0.2, lower=0.0
+        ).tolist() == [0.3, 0.4]
+
+    def test_rejects_missing_channels_wrong_length_and_bounds(self):
+        with pytest.raises(ValueError, match="missing channel"):
+            _resolve_fixed_channel_values(
+                {"fixed": {"TV": 0.5}},
+                "fixed",
+                ["TV", "Email"],
+                0.2,
+                lower=0.0,
+            )
+        with pytest.raises(ValueError, match="one value per channel"):
+            _resolve_fixed_channel_values(
+                {"fixed": [0.5]}, "fixed", ["TV", "Email"], 0.2, lower=0.0
+            )
+        with pytest.raises(ValueError, match="< 1.0"):
+            _resolve_fixed_channel_values(
+                {"fixed": 1.0}, "fixed", ["TV"], 0.2, lower=0.0, upper=1.0
+            )
+
+
 class TestModelAModelCMetaConstructionParity:
     """PR E.2 required test case: "Model A and Model C parity" for the new
     metric_key/eligibility catalogue metadata. Both build_fh_hierarchical_model
@@ -259,6 +362,61 @@ class TestSingleChannelSingleMarketSurvivesPmDraw:
         assert "market_offset_raw" not in model.named_vars
         assert "market_offset" in model.named_vars
         assert meta.markets == ["UK"]
+
+    def test_all_zero_promotion_does_not_create_prior_only_coefficient(self):
+        """An absent promotion input must not add an unidentifiable RV."""
+        from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+        from ancestry_mmm.core.schema import ModelSpec
+
+        spec = ModelSpec(
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["TV"],
+        )
+        model, _meta = build_fh_hierarchical_model(
+            self._single_channel_single_market_frame(), spec
+        )
+
+        assert "promo_coef" in model.named_vars
+        assert "promo_coef" not in {rv.name for rv in model.free_RVs}
+
+    def test_candidate_geometry_priors_build_finite_rvs(self):
+        """The diagnostic prior knobs must build real, finite PyMC RVs."""
+        import pymc as pm
+
+        from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+        from ancestry_mmm.core.schema import ModelSpec
+
+        spec = ModelSpec(
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["TV"],
+        )
+        model, _meta = build_fh_hierarchical_model(
+            self._single_channel_single_market_frame(),
+            spec,
+            prior_config={
+                "K_reference": "nonzero_median",
+                "K_alpha": 10.0,
+                "pooling_sigma_prior": 0.12,
+                "pooling_sigma_prior_distribution": "lognormal",
+                "pooling_sigma_log_prior_sigma": 0.35,
+            },
+        )
+
+        assert type(model.named_vars["sigma_pool"].owner.op).__name__ == "LogNormalRV"
+        with model:
+            hill_k, sigma_pool = pm.draw(
+                [model.named_vars["hill_K"], model.named_vars["sigma_pool"]],
+                draws=3,
+                random_seed=0,
+            )
+        assert np.isfinite(hill_k).all()
+        assert np.isfinite(sigma_pool).all()
 
     def test_multiple_markets_retain_between_market_variance(self):
         """The one-market bypass must not remove the multi-market contract."""
