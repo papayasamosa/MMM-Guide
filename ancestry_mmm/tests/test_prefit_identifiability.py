@@ -510,6 +510,34 @@ def test_deterministic_screen_records_folds_surrogates_stability_and_safeguards(
     assert result["reconstruction_tier"] == "prepared_frame_only"
 
 
+def test_timing_refutation_reports_incremental_future_media_signal_over_baseline():
+    """WP2.5 (real UK evidence review, 2026-08-24): a raw future-media R2
+    alone cannot distinguish genuine future-to-past leakage from shared
+    baseline/seasonality signal a baseline-only model on the identical fold
+    already explains. `incremental_future_media_r2` must equal
+    `future_media_r2` minus that same fold's own `baseline_context_only_r2`
+    (the identical ridge fit already computed for the ordinary baseline-vs-
+    media comparison, reused rather than re-fit differently)."""
+    result = build_prefit_screening_report(
+        _screen_frame(),
+        n_folds=2,
+        min_train_periods=8,
+        transform_config={
+            "prefit_decay_grid": (0.0, 0.5),
+            "prefit_hill_s_grid": (1.0,),
+        },
+    )
+    timing_rows = result["timing_refutation"]["rows"]
+    assert timing_rows
+    for row in timing_rows:
+        assert "baseline_context_only_r2" in row
+        assert "incremental_future_media_r2" in row
+        if row["incremental_future_media_r2"] is not None:
+            assert row["incremental_future_media_r2"] == pytest.approx(
+                row["future_media_r2"] - row["baseline_context_only_r2"]
+            )
+
+
 def test_analyst_rationale_is_retained_without_granting_official_eligibility():
     report = build_prefit_screening_report(
         _screen_frame(), n_folds=2, min_train_periods=8

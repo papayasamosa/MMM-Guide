@@ -392,6 +392,24 @@ def build_prefit_screening_report(
                 timing_metrics = _metrics(
                     target[test_mask], timing_model.predict(future_features[test_mask])
                 )
+                # WP2.5 (real UK evidence review, 2026-08-24): a raw future-
+                # media R2 alone cannot distinguish genuine future-to-past
+                # leakage from shared seasonality/trend that a baseline-only
+                # model on this exact fold already explains just as well.
+                # Reusing the identical fold-local baseline/context-only
+                # ridge fit already computed above (same train/test split,
+                # same base features, independent of shift direction) makes
+                # the comparison apples-to-apples rather than a second,
+                # differently-fitted baseline.
+                baseline_only_metrics = baseline_cache[
+                    (fold["fold_id"], outcome_id, "ridge")
+                ]
+                incremental_future_media_r2 = (
+                    timing_metrics["r2"] - baseline_only_metrics["r2"]
+                    if timing_metrics["r2"] is not None
+                    and baseline_only_metrics["r2"] is not None
+                    else None
+                )
                 timing_rows.append(
                     {
                         "fold_id": fold["fold_id"],
@@ -399,7 +417,20 @@ def build_prefit_screening_report(
                         "transform_variant": f"T{variant_index + 1}",
                         "future_media_r2": timing_metrics["r2"],
                         "future_media_rmse": timing_metrics["rmse"],
-                        "interpretation": "refutation diagnostic only; future media is not a production predictor",
+                        "baseline_context_only_r2": baseline_only_metrics["r2"],
+                        "incremental_future_media_r2": incremental_future_media_r2,
+                        "interpretation": (
+                            "refutation diagnostic only; future media is not a "
+                            "production predictor. incremental_future_media_r2 "
+                            "is future_media_r2 minus the identical fold's "
+                            "baseline/context-only R2 (same train/test split) "
+                            "- a small or negative value means the raw future-"
+                            "media R2 is explained by shared baseline/"
+                            "seasonality signal already, not by future media "
+                            "itself; a large positive value warrants further "
+                            "investigation of date alignment, aggregation, "
+                            "campaign/source timing, or a construction defect."
+                        ),
                     }
                 )
 

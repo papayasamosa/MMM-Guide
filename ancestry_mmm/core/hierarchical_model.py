@@ -1090,7 +1090,9 @@ def build_fh_hierarchical_model(
             promo_coef = pm.Deterministic(
                 "promo_coef", pt.zeros(n_outcomes), dims="outcome"
             )
-        eta_promo = promo * promo_coef[None, :]
+        eta_promo = pm.Deterministic(
+            "eta_promo", promo * promo_coef[None, :], dims=("obs", "outcome")
+        )
 
         # -----------------------------------------------------------------
         # Geo hierarchy: market-level baseline offsets, partially pooled by
@@ -1107,7 +1109,9 @@ def build_fh_hierarchical_model(
                 pt.zeros((1, n_outcomes)),
                 dims=("market", "outcome"),
             )
-            eta_market = market_offset[market_idx]
+            eta_market = pm.Deterministic(
+                "eta_market", market_offset[market_idx], dims=("obs", "outcome")
+            )
         else:
             market_pool_sigma = pm.HalfNormal(
                 "market_pool_sigma",
@@ -1133,7 +1137,9 @@ def build_fh_hierarchical_model(
                 market_offset_raw * market_sigma_stack,
                 dims=("market", "outcome"),
             )
-            eta_market = market_offset[market_idx]
+            eta_market = pm.Deterministic(
+                "eta_market", market_offset[market_idx], dims=("obs", "outcome")
+            )
 
         # -----------------------------------------------------------------
         # Baseline, trend, seasonality (calendar-anchored Fourier).
@@ -1152,7 +1158,11 @@ def build_fh_hierarchical_model(
             sigma=prior_config.get("trend_sigma", 0.5),
             dims="outcome",
         )
-        eta_trend = trend[:, None] * trend_coef[None, :]
+        eta_trend = pm.Deterministic(
+            "eta_trend",
+            trend[:, None] * trend_coef[None, :],
+            dims=("obs", "outcome"),
+        )
 
         gamma_fourier = pm.Normal(
             "gamma_fourier",
@@ -1160,7 +1170,9 @@ def build_fh_hierarchical_model(
             sigma=prior_config.get("fourier_sigma", 0.4),
             dims=("fourier", "outcome"),
         )
-        eta_season = pm.math.dot(fourier, gamma_fourier)
+        eta_season = pm.Deterministic(
+            "eta_season", pm.math.dot(fourier, gamma_fourier), dims=("obs", "outcome")
+        )
 
         eta = (
             intercept[None, :]
@@ -1190,6 +1202,12 @@ def build_fh_hierarchical_model(
         # segment both get that segment's controls applied to their own
         # equation independently.
         # -----------------------------------------------------------------
+        # Accumulated in parallel with `eta` itself so the combined controls
+        # contribution (outcome-level + shared) can be exposed as one named
+        # Deterministic below - purely additive/diagnostic (WP2.5 prior-
+        # predictive component decomposition); it changes no prior, no
+        # coefficient, and no value `eta`/`mu` itself takes.
+        eta_controls = pt.zeros((n_obs, n_outcomes))
         outcome_controls_raw = frame.get("outcome_controls") or {}
         outcome_control_names = frame.get("outcome_control_names") or {}
         outcome_control_scaling: Dict[str, Dict[str, Dict[str, Any]]] = {}
@@ -1217,6 +1235,9 @@ def build_fh_hierarchical_model(
             )
             contrib = pm.math.dot(pt.as_tensor_variable(arr), coef)
             eta = pt.set_subtensor(eta[:, o_idx], eta[:, o_idx] + contrib)
+            eta_controls = pt.set_subtensor(
+                eta_controls[:, o_idx], eta_controls[:, o_idx] + contrib
+            )
 
         if n_controls > 0:
             model.add_coord("control", control_names)
@@ -1226,10 +1247,15 @@ def build_fh_hierarchical_model(
                 sigma=prior_config.get("control_sigma", 0.5),
                 dims="control",
             )
-            eta = (
-                eta
-                + pm.math.dot(pt.as_tensor_variable(X_controls), control_coef)[:, None]
-            )
+            shared_control_contrib = pm.math.dot(
+                pt.as_tensor_variable(X_controls), control_coef
+            )[:, None]
+            eta = eta + shared_control_contrib
+            eta_controls = eta_controls + shared_control_contrib
+
+        eta_controls = pm.Deterministic(
+            "eta_controls", eta_controls, dims=("obs", "outcome")
+        )
 
         # Clip is a numerical safety net (not a modelling assumption): eta is
         # a sum of several additive terms before this exp(), so pathological
