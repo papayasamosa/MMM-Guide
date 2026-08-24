@@ -109,7 +109,8 @@ class TestSearchGranularityOverlayReconciled:
 
     def test_overlay_table_states_every_part_and_part1_untouched(self):
         rows = {
-            cells[0]: cells[1] for cells in _markdown_table_rows(self._overlay_section())
+            cells[0]: cells[1]
+            for cells in _markdown_table_rows(self._overlay_section())
         }
         assert set(rows) == {f"Part {n}" for n in range(1, 12)}, sorted(rows)
         assert "Retained" in rows["Part 1"]
@@ -140,10 +141,7 @@ class TestSearchGranularityOverlayReconciled:
         # source prose wraps mid-sentence for readability.
         section = " ".join(self._overlay_section().split())
         assert "approves no requirement, no statistical method, no causal" in section
-        assert (
-            "does not select, approve, or rule out any candidate approach"
-            in section
-        )
+        assert "does not select, approve, or rule out any candidate approach" in section
         assert "No `docs/approved_requirements/` record reconciles" in section
 
     def test_part8_v16_distinguished_from_earlier_part8_v15_collision(self):
@@ -153,9 +151,9 @@ class TestSearchGranularityOverlayReconciled:
         source-collision note rather than silently reusing an ambiguous
         label."""
         content = AUTHORITY_PATH.read_text()
-        map_section = content.split(
-            "## Current consolidated PRD version map", 1
-        )[1].split("## Version history: v1.4 to v1.5", 1)[0]
+        map_section = content.split("## Current consolidated PRD version map", 1)[
+            1
+        ].split("## Version history: v1.4 to v1.5", 1)[0]
         assert "source-collision note below" in " ".join(map_section.split())
 
     def test_prefit_sub_overlay_noted_without_claiming_req_prefit_001_on_main(self):

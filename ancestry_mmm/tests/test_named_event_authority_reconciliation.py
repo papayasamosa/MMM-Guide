@@ -169,9 +169,13 @@ class TestNamedEventOverlayReconciled:
         )[1]
         assert "supplied locally" in closure_section
         assert "closing that specific gap as" in closure_section
-        assert "does not retroactively approve or\nreconcile Part 5 v1.6" in closure_section or (
-            "does not retroactively approve" in closure_section
-            and "Part 5 v1.6" in closure_section
+        assert (
+            "does not retroactively approve or\nreconcile Part 5 v1.6"
+            in closure_section
+            or (
+                "does not retroactively approve" in closure_section
+                and "Part 5 v1.6" in closure_section
+            )
         )
         # The original 2026-08-19 "remains absent" record must still be
         # present verbatim elsewhere in the document - history is not
