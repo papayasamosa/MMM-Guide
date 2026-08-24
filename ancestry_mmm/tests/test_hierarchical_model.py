@@ -22,6 +22,7 @@ import pytest
 
 from ancestry_mmm.core.hierarchical_model import (
     FHModelMeta,
+    _resolve_fixed_channel_values,
     _resolve_media_input_scales,
     _resolve_direct_dna_outcome_ids,
 )
@@ -174,6 +175,43 @@ class TestMediaInputScaleContract:
         with pytest.raises(ValueError, match="Unsupported media_input_scale_method"):
             _resolve_media_input_scales(
                 np.ones((2, 1)), ["TV"], {"media_input_scale_method": "zscore"}
+            )
+
+
+class TestDiagnosticFixedChannelValues:
+    def test_accepts_scalar_mapping_and_ordered_vector(self):
+        channels = ["TV", "Email"]
+        assert _resolve_fixed_channel_values(
+            {"fixed": 0.5}, "fixed", channels, 0.2, lower=0.0, upper=1.0
+        ).tolist() == [0.5, 0.5]
+        assert _resolve_fixed_channel_values(
+            {"fixed": {"TV": 0.25, "Email": 0.75}},
+            "fixed",
+            channels,
+            0.2,
+            lower=0.0,
+            upper=1.0,
+        ).tolist() == [0.25, 0.75]
+        assert _resolve_fixed_channel_values(
+            {"fixed": [0.3, 0.4]}, "fixed", channels, 0.2, lower=0.0
+        ).tolist() == [0.3, 0.4]
+
+    def test_rejects_missing_channels_wrong_length_and_bounds(self):
+        with pytest.raises(ValueError, match="missing channel"):
+            _resolve_fixed_channel_values(
+                {"fixed": {"TV": 0.5}},
+                "fixed",
+                ["TV", "Email"],
+                0.2,
+                lower=0.0,
+            )
+        with pytest.raises(ValueError, match="one value per channel"):
+            _resolve_fixed_channel_values(
+                {"fixed": [0.5]}, "fixed", ["TV", "Email"], 0.2, lower=0.0
+            )
+        with pytest.raises(ValueError, match="< 1.0"):
+            _resolve_fixed_channel_values(
+                {"fixed": 1.0}, "fixed", ["TV"], 0.2, lower=0.0, upper=1.0
             )
 
 

@@ -387,6 +387,51 @@ def _resolve_media_input_scales(
     }
 
 
+def _resolve_fixed_channel_values(
+    prior_config: Dict[str, Any],
+    key: str,
+    channels: List[str],
+    default: Any,
+    *,
+    lower: float,
+    upper: Optional[float] = None,
+) -> Optional[np.ndarray]:
+    """Resolve an explicit diagnostic fixed transform vector.
+
+    These switches are intentionally opt-in and exist for bounded
+    identifiability experiments. They are not production defaults and never
+    derive values from a posterior. A scalar, channel mapping, or ordered
+    vector is accepted so the experiment runner can persist the exact
+    reference policy it used.
+    """
+    if key not in prior_config:
+        return None
+    raw = prior_config[key]
+    if isinstance(raw, dict):
+        missing = [channel for channel in channels if channel not in raw]
+        if missing:
+            raise ValueError(
+                f"{key} is missing channel(s): " + ", ".join(missing)
+            )
+        values = np.asarray([raw[channel] for channel in channels], dtype=float)
+    else:
+        values = np.asarray(raw, dtype=float)
+        if values.ndim == 0:
+            values = np.full(len(channels), float(values))
+        elif values.shape != (len(channels),):
+            raise ValueError(
+                f"{key} must be a scalar, a channel mapping, or one value per channel."
+            )
+    if (
+        not np.all(np.isfinite(values))
+        or np.any(values <= lower)
+        or (upper is not None and np.any(values >= upper))
+    ):
+        upper_text = f" and < {upper}" if upper is not None else ""
+        raise ValueError(f"{key} values must be finite, > {lower}{upper_text}.")
+    return values
+
+
 def _market_grouped_adstock_and_saturation(
     X_media: np.ndarray,
     market_bounds: List[tuple],
@@ -711,11 +756,25 @@ def build_fh_hierarchical_model(
         # Shared channel-level adstock + saturation curves (pooled across
         # outcomes AND markets - "share what should genuinely be shared").
         # -----------------------------------------------------------------
-        decay_rate = pm.Beta(
-            "decay_rate",
-            mu=prior_config.get("decay_mu", 0.5),
-            sigma=prior_config.get("decay_sigma", 0.2),
-            dims="channel",
+        fixed_decay_rate = _resolve_fixed_channel_values(
+            prior_config,
+            "fixed_decay_rate",
+            channels,
+            prior_config.get("decay_mu", 0.5),
+            lower=0.0,
+            upper=1.0,
+        )
+        decay_rate = (
+            pm.Deterministic(
+                "decay_rate", pt.as_tensor_variable(fixed_decay_rate), dims="channel"
+            )
+            if fixed_decay_rate is not None
+            else pm.Beta(
+                "decay_rate",
+                mu=prior_config.get("decay_mu", 0.5),
+                sigma=prior_config.get("decay_sigma", 0.2),
+                dims="channel",
+            )
         )
         # Gamma (not HalfNormal): K is a half-saturation *spend level*, so its
         # prior should be centred near typical spend and bounded away from
@@ -724,17 +783,44 @@ def build_fh_hierarchical_model(
         # unstable (see pt_hill_function's docstring on the log(K) gradient).
         K_prior_mean = channel_mean_spend * prior_config.get("K_scale", 1.0)
         K_alpha = prior_config.get("K_alpha", 3.0)
-        hill_K = pm.Gamma(
-            "hill_K",
-            alpha=K_alpha,
-            beta=K_alpha / K_prior_mean,
-            dims="channel",
+        fixed_hill_K = _resolve_fixed_channel_values(
+            prior_config,
+            "fixed_hill_K",
+            channels,
+            K_prior_mean,
+            lower=0.0,
         )
-        hill_S = pm.Gamma(
-            "hill_S",
-            alpha=prior_config.get("S_alpha", 4.0),
-            beta=prior_config.get("S_beta", 4.0),
-            dims="channel",
+        fixed_hill_S = _resolve_fixed_channel_values(
+            prior_config,
+            "fixed_hill_S",
+            channels,
+            prior_config.get("S_alpha", 4.0)
+            / prior_config.get("S_beta", 4.0),
+            lower=0.0,
+        )
+        hill_K = (
+            pm.Deterministic(
+                "hill_K", pt.as_tensor_variable(fixed_hill_K), dims="channel"
+            )
+            if fixed_hill_K is not None
+            else pm.Gamma(
+                "hill_K",
+                alpha=K_alpha,
+                beta=K_alpha / K_prior_mean,
+                dims="channel",
+            )
+        )
+        hill_S = (
+            pm.Deterministic(
+                "hill_S", pt.as_tensor_variable(fixed_hill_S), dims="channel"
+            )
+            if fixed_hill_S is not None
+            else pm.Gamma(
+                "hill_S",
+                alpha=prior_config.get("S_alpha", 4.0),
+                beta=prior_config.get("S_beta", 4.0),
+                dims="channel",
+            )
         )
 
         if X_media_history is not None:
@@ -775,8 +861,22 @@ def build_fh_hierarchical_model(
             sigma=prior_config.get("channel_effect_sigma", 0.5),
             dims="channel",
         )
+        pooled_beta_reference = bool(
+            prior_config.get("pooled_beta_reference", False)
+        )
         pooling_scale = prior_config.get("pooling_sigma_prior", 0.3)
-        if prior_config.get("pooling_sigma_prior_distribution") == "lognormal":
+        if pooled_beta_reference:
+            sigma_pool = pm.Deterministic(
+                "sigma_pool",
+                pt.zeros(n_channels),
+                dims="channel",
+            )
+            z_offset = pm.Deterministic(
+                "z_offset",
+                pt.zeros((n_outcomes, n_channels)),
+                dims=("outcome", "channel"),
+            )
+        elif prior_config.get("pooling_sigma_prior_distribution") == "lognormal":
             pooling_log_sigma = prior_config.get("pooling_sigma_log_prior_sigma", 0.35)
             pooling_log_mu = np.log(pooling_scale) - 0.5 * pooling_log_sigma**2
             sigma_pool = pm.LogNormal(
@@ -791,7 +891,10 @@ def build_fh_hierarchical_model(
                 sigma=pooling_scale,
                 dims="channel",
             )
-        z_offset = pm.Normal("z_offset", mu=0, sigma=1, dims=("outcome", "channel"))
+        if not pooled_beta_reference:
+            z_offset = pm.Normal(
+                "z_offset", mu=0, sigma=1, dims=("outcome", "channel")
+            )
         log_beta = pm.Deterministic(
             "log_beta",
             mu_channel[None, :] + sigma_pool[None, :] * z_offset,
