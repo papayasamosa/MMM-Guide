@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 import warnings
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -308,6 +308,7 @@ def prior_predictive_summary(
     *,
     n_samples: int = 500,
     random_seed: Optional[int] = None,
+    component_var_names: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     """Sample from `model`'s declared priors - never its posterior, never
     fitted (no MCMC, no trace involved) - via `pm.sample_prior_predictive`,
@@ -346,9 +347,32 @@ def prior_predictive_summary(
     run_prior_predictive_check`) is responsible for turning that into an
     explicit `failed` `DiagnosticSection` rather than fabricating zero
     evidence.
+
+    ``component_var_names`` (WP2.5 prior-predictive component decomposition,
+    diagnostic-only, opt-in): additional free-variable/Deterministic names
+    to sample and summarise alongside `y_obs` - e.g. `core.hierarchical_
+    model.build_fh_hierarchical_model`'s named additive log-linear-predictor
+    terms `eta_trend`/`eta_season`/`eta_market`/`eta_promo`/`eta_controls`/
+    `eta_channels`, or free variables such as `intercept`/`alpha`. Each
+    name's full prior-predictive draw array (whatever shape that variable
+    has) is summarised via `core.prefit_identifiability.
+    prior_predictive_plausibility`'s existing `component_draws` contract -
+    this does not compute anything new about what the terms mean, it only
+    exposes and summarises quantities the model already declares, so
+    isolating which additive term dominates an implausible outcome-scale
+    tail never requires changing a prior. Empty/omitted by default -
+    every existing caller's behaviour and evidence shape is unchanged.
     """
     markets: List[str] = frame["markets"]
     market_bounds: List[tuple] = frame["market_bounds"]
+    # pm.sample_prior_predictive raises KeyError for any var_names entry the
+    # model does not declare - filter to names this specific model actually
+    # has so a shared component_var_names list can be requested against
+    # either builder (or a future/absent term) without the caller needing
+    # to know in advance which names each one declares.
+    component_names = [
+        name for name in (component_var_names or ()) if name in model.named_vars
+    ]
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -359,8 +383,11 @@ def prior_predictive_summary(
             # size as `y_obs` itself) would otherwise be sampled and
             # retained for no reason, needlessly scaling peak memory with a
             # large multi-market/multi-year model's parameter count.
+            # `component_var_names` opts specific named terms back in.
             idata = pm.sample_prior_predictive(
-                draws=n_samples, random_seed=random_seed, var_names=["y_obs"]
+                draws=n_samples,
+                random_seed=random_seed,
+                var_names=["y_obs", *component_names],
             )
         captured_warnings = [str(w.message) for w in caught]
 
@@ -437,6 +464,23 @@ def prior_predictive_summary(
             prior_draws[label] = flat[:, start:end, o_i]
             observed_values[label] = np.asarray(frame["Y"])[start:end, o_i]
 
+    component_draws: Optional[Dict[str, np.ndarray]] = None
+    if component_names:
+        # `pm.sample_prior_predictive` places the requested observed-like
+        # variable(s) (`y_obs`) in `idata.prior_predictive`, but every other
+        # named free variable/Deterministic - including every WP2.5
+        # decomposition term added here - lands in `idata.prior` instead;
+        # check both groups rather than assuming one.
+        component_draws = {}
+        for name in component_names:
+            if name in idata.prior_predictive.data_vars:
+                source = idata.prior_predictive
+            elif name in idata.prior.data_vars:
+                source = idata.prior
+            else:
+                continue
+            component_draws[name] = source[name].values.reshape(-1)
+
     return {
         "n_samples": n_samples,
         "random_seed": random_seed,
@@ -448,6 +492,7 @@ def prior_predictive_summary(
                 "invalid_likelihood_values": invalid_likelihood_values,
                 "warnings": captured_warnings,
             },
+            component_draws=component_draws,
         ),
         "warnings": captured_warnings,
     }

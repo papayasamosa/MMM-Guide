@@ -4,6 +4,61 @@ Format: Date, Decision, Reason, Alternatives considered, Impact, Owner, Status.
 
 ---
 
+**Date:** 2026-08-24
+**Decision:** Do not proceed to WP3 full Model A NUTS sampling. The human
+analyst reviewed WP2's real UK governed pre-fit evidence and did not
+approve the candidate for expensive production sampling. Instead, run a
+bounded WP2.5 diagnostic investigation: prior-predictive component
+decomposition (isolating which additive log-linear-predictor term
+dominates the implausible q95~1.2B outcome-scale tail), a DNA future-to-
+past timing investigation comparing baseline-only against baseline-plus-
+future-media on identical folds, transformation sensitivity on the
+mature fold, an explicit sparse-channel review (all seven analyst-flagged
+channels retained, none mutated), and a fold-policy review flagging
+fold 1 (8 training weeks) as a stress test rather than production-
+representative evidence.
+**Reason:** Weak/very-weak channel-support classifications and an
+implausibly wide prior-predictive tail are not by themselves grounds to
+mutate a production specification (remove/aggregate/pool a channel,
+simplify a transform, tighten a prior) without analyst-directed
+diagnosis of the underlying cause. `core.diagnostics.
+prior_predictive_summary` and `core.prefit_screening.
+build_prefit_screening_report` needed new, purely additive/opt-in
+diagnostic capability (named component exposure; incremental-future-
+media-R2 relative to an identical-fold baseline) to answer the specific
+questions the analyst raised; production math and priors were left
+unchanged throughout.
+**Alternatives considered:** proceeding directly to WP3 despite the
+un-approved candidate (rejected - explicit analyst instruction);
+automatically remediating the weak channels or the wide prior by pooling/
+removing/re-transforming them without a decision record (rejected -
+explicit instruction and `AGENTS.md`'s statistical-change authority
+rules); treating the raw (non-incremental) DNA future-media R2 figures
+as conclusive evidence of a timing defect without a same-fold baseline
+comparison (rejected - would have been methodologically unsound and is
+exactly what the incremental-R2 addition was built to avoid).
+**Impact:** Added `core.diagnostics.prior_predictive_summary`'s
+`component_var_names` parameter and the corresponding named
+`eta_trend`/`eta_season`/`eta_market`/`eta_promo`/`eta_controls`
+Deterministics in `core.hierarchical_model.build_fh_hierarchical_model`
+(additive/read-only, default off); added `incremental_future_media_r2`
+to `core.prefit_screening`'s timing-refutation rows; added
+`scripts/run_uk_wp2_5_diagnostics.py`. Found `eta_controls` (raw,
+unscaled control values under a fixed `Normal(0, 0.5)` prior) dominates
+the prior-predictive blowup, not `eta_trend` - recorded in
+`docs/wp2_5_prior_predictive_decision_package.md` with candidate remedies,
+none selected. Found the DNA future-to-past signal is largely explained
+by shared baseline/seasonality on the most mature fold - recorded in
+`docs/wp2_5_diagnostic_investigation_findings_20260824.md` alongside the
+transformation-sensitivity, sparse-channel, and fold-policy findings.
+Historical Model A remains statistically blocked; WP3 remains not
+started.
+**Owner:** Modelling / Platform engineering, with the human analyst who
+directed this investigation.
+**Status:** Diagnostic evidence delivered for analyst review; both
+decision packages await selection of a remedy (or explicit rejection).
+---
+
 **Date:** 2026-08-22
 **Decision:** Record the analyst-approved governance boundary for the UK
 historical-test sequence. The bounded common window is 2023-01-01 through

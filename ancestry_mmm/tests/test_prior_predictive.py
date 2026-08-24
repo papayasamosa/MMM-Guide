@@ -170,6 +170,137 @@ class TestPriorPredictiveSummaryRealBuilders:
         assert first["rows"] != second["rows"]
 
 
+class TestPriorPredictiveComponentDecomposition:
+    """WP2.5 (real UK evidence review, 2026-08-24): the observed q95
+    prior-predictive tail is around 1.2-1.25 billion against observed
+    weekly outcomes in the thousands. `component_var_names` exposes each
+    named additive log-linear-predictor term
+    (`core.hierarchical_model.build_fh_hierarchical_model`'s
+    `eta_trend`/`eta_season`/`eta_market`/`eta_promo`/`eta_controls`/
+    `eta_channels`, plus `intercept`/`alpha`) so the dominant term can be
+    identified without changing any prior - diagnostic-only, opt-in
+    (omitting the parameter reproduces every pre-existing test above
+    unchanged)."""
+
+    COMPONENT_NAMES = [
+        "intercept",
+        "eta_trend",
+        "eta_season",
+        "eta_market",
+        "eta_promo",
+        "eta_controls",
+        "eta_channels",
+        "mu",
+        "alpha",
+    ]
+
+    def test_omitted_by_default_matches_pre_existing_behaviour(self):
+        frame = _small_frame()
+        spec = _spec()
+        model, meta = build_fh_hierarchical_model(frame, spec)
+
+        result = prior_predictive_summary(
+            model, frame, meta, n_samples=10, random_seed=7
+        )
+
+        assert (
+            result["plausibility"]["component_decomposition"]["status"] == "unavailable"
+        )
+
+    def test_requested_components_are_summarised_without_error(self):
+        frame = _small_frame()
+        spec = _spec()
+        model, meta = build_fh_hierarchical_model(frame, spec)
+
+        result = prior_predictive_summary(
+            model,
+            frame,
+            meta,
+            n_samples=20,
+            random_seed=7,
+            component_var_names=self.COMPONENT_NAMES,
+        )
+
+        decomposition = result["plausibility"]["component_decomposition"]
+        assert decomposition["status"] == "available"
+        assert set(decomposition["components"]) == set(self.COMPONENT_NAMES)
+        for name in self.COMPONENT_NAMES:
+            component = decomposition["components"][name]
+            assert component["finite"] is True
+            assert component["n_values"] > 0
+
+    def test_a_component_name_the_model_does_not_declare_is_silently_skipped(self):
+        """Never raises for a name that doesn't exist on this particular
+        model (e.g. requesting a Model-A-only term against Model C, or a
+        typo) - it is simply absent from the returned components, so a
+        caller requesting a broad, shared name list against either builder
+        never has to know which names each one declares."""
+        frame = _small_frame()
+        spec = _spec()
+        model, meta = build_fh_hierarchical_model(frame, spec)
+
+        result = prior_predictive_summary(
+            model,
+            frame,
+            meta,
+            n_samples=10,
+            random_seed=7,
+            component_var_names=["intercept", "not_a_real_variable_name"],
+        )
+
+        components = result["plausibility"]["component_decomposition"]["components"]
+        assert "intercept" in components
+        assert "not_a_real_variable_name" not in components
+
+    def test_deterministic_wrapping_does_not_change_y_obs_evidence(self):
+        """Wrapping eta_trend/eta_season/eta_market/eta_promo/eta_controls
+        in pm.Deterministic is a pure read-only exposure - it must not
+        change the model's actual computed eta/mu/y_obs values at all.
+        Same seed, same model construction, with vs. without requesting the
+        extra component names: the y_obs rows must be identical."""
+        frame = _small_frame()
+        spec = _spec()
+
+        model_a, meta_a = build_fh_hierarchical_model(frame, spec)
+        without_components = prior_predictive_summary(
+            model_a, frame, meta_a, n_samples=15, random_seed=5
+        )
+
+        model_b, meta_b = build_fh_hierarchical_model(frame, spec)
+        with_components = prior_predictive_summary(
+            model_b,
+            frame,
+            meta_b,
+            n_samples=15,
+            random_seed=5,
+            component_var_names=self.COMPONENT_NAMES,
+        )
+
+        assert without_components["rows"] == with_components["rows"]
+
+    def test_market_c_builder_silently_skips_model_a_only_component_names(self):
+        frame = _small_frame()
+        spec = _spec()
+        model, meta = build_fh_market_specific_model(frame, spec)
+
+        result = prior_predictive_summary(
+            model,
+            frame,
+            meta,
+            n_samples=10,
+            random_seed=7,
+            component_var_names=self.COMPONENT_NAMES,
+        )
+
+        # Whatever subset Model C actually declares (if any) is summarised
+        # without error; none of this asserts Model C exposes the same
+        # decomposition as Model A.
+        assert result["plausibility"]["component_decomposition"]["status"] in {
+            "available",
+            "unavailable",
+        }
+
+
 class TestRunPriorPredictiveCheck:
     def test_computed_path_replaces_only_the_prior_predictive_section(self):
         frame = _small_frame()

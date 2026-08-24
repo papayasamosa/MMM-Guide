@@ -98,6 +98,7 @@ def _build_prefit_evidence(
     governed_end: str,
     n_prior_samples: int,
     seed: int,
+    component_var_names: list[str] | None = None,
 ) -> dict[str, Any]:
     product = "Family History" if model_name == "family_history" else "DNA"
 
@@ -144,6 +145,7 @@ def _build_prefit_evidence(
             proposed.meta,
             n_samples=n_prior_samples,
             random_seed=seed,
+            component_var_names=component_var_names,
         )
     except Exception as exc:  # noqa: BLE001 - recorded as review evidence, not raised
         prior_predictive_error = f"{type(exc).__name__}: {exc}"
