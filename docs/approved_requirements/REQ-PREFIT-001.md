@@ -1,7 +1,7 @@
 # REQ-PREFIT-001: Mandatory pre-fit gate for official production submission
 
-**Status:** approved for implementation  
-**Decision date:** 2026-08-22  
+**Status:** approved for implementation
+**Decision date:** 2026-08-22
 **Scope:** official production-fit submission; the current bounded historical test may remain explicitly non-production while this capability is reconciled
 
 ## Decision

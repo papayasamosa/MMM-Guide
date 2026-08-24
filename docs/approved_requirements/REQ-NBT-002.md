@@ -1,7 +1,7 @@
 # REQ-NBT-002: Initial UK supplied NBT historical-test authority
 
-**Status:** approved for implementation  
-**Decision date:** 2026-08-22  
+**Status:** approved for implementation
+**Decision date:** 2026-08-22
 **Scope:** bounded UK historical test only; not a production-programme window approval
 
 ## Decision
