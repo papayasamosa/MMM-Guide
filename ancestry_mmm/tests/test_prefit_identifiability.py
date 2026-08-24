@@ -166,15 +166,27 @@ def test_support_diagnostic_does_not_mutate_arbitrary_input_data():
     ("row", "expected"),
     [
         (
-            {"positive_weeks": 60, "distinct_positive_values": 20, "effective_adstock_cv": 0.25},
+            {
+                "positive_weeks": 60,
+                "distinct_positive_values": 20,
+                "effective_adstock_cv": 0.25,
+            },
             "strong",
         ),
         (
-            {"positive_weeks": 30, "distinct_positive_values": 10, "effective_adstock_cv": 0.10},
+            {
+                "positive_weeks": 30,
+                "distinct_positive_values": 10,
+                "effective_adstock_cv": 0.10,
+            },
             "moderate",
         ),
         (
-            {"positive_weeks": 10, "distinct_positive_values": 4, "effective_adstock_cv": 0.0},
+            {
+                "positive_weeks": 10,
+                "distinct_positive_values": 4,
+                "effective_adstock_cv": 0.0,
+            },
             "weak",
         ),
     ],
@@ -424,7 +436,10 @@ def test_deterministic_screen_records_folds_surrogates_stability_and_safeguards(
         _screen_frame(),
         n_folds=2,
         min_train_periods=8,
-        transform_config={"prefit_decay_grid": (0.0, 0.5), "prefit_hill_s_grid": (1.0,)},
+        transform_config={
+            "prefit_decay_grid": (0.0, 0.5),
+            "prefit_hill_s_grid": (1.0,),
+        },
         fingerprints={"candidate_spec_fingerprint": "candidate"},
     )
     assert result["status"] == "computed"
@@ -434,8 +449,7 @@ def test_deterministic_screen_records_folds_surrogates_stability_and_safeguards(
         "elastic_net",
     }
     assert all(
-        "baseline_context_only" in row
-        and "baseline_context_plus_media" in row
+        "baseline_context_only" in row and "baseline_context_plus_media" in row
         for row in result["surrogate_results"]
     )
     assert result["channel_stability"]
@@ -464,9 +478,7 @@ def test_analyst_rationale_is_retained_without_granting_official_eligibility():
 
 
 def test_deterministic_screen_blocks_without_enough_ordered_history():
-    result = build_prefit_screening_report(
-        _screen_frame(6), min_train_periods=8
-    )
+    result = build_prefit_screening_report(_screen_frame(6), min_train_periods=8)
     assert result["status"] == "blocked"
     assert result["diagnostic_only"] is True
 
@@ -508,5 +520,7 @@ def test_prefit_diagnostics_round_trip_in_generic_project_diagnostics(tmp_path):
     )
     imported = import_project(bundle)
     assert imported["diagnostics"]["prefit_identifiability"] == report
-    assert imported["diagnostics"]["prefit_identifiability"]["prior_predictive"] == prior
+    assert (
+        imported["diagnostics"]["prefit_identifiability"]["prior_predictive"] == prior
+    )
     assert imported["diagnostics"]["prefit_screening"]["official_eligibility"] is False

@@ -246,9 +246,7 @@ def adstock_saturate_frame(
     params: FHPosteriorParams,
 ) -> np.ndarray:
     """NumPy adstock + Hill saturation per market block, matching the PyMC model exactly."""
-    X_media = apply_media_input_scales(
-        X_media, meta.channels, meta.media_input_scales
-    )
+    X_media = apply_media_input_scales(X_media, meta.channels, meta.media_input_scales)
     decay = np.array([params.decay_rate[c] for c in meta.channels])
     K = np.array([params.hill_K[c] for c in meta.channels])
     S = np.array([params.hill_S[c] for c in meta.channels])
@@ -521,12 +519,16 @@ def steady_state_outcome_response(
     """
     reference_context = reference_context or {}
     outcome_ids = meta.outcome_ids
+    # Keep replay compatible with lightweight legacy metadata objects that
+    # predate the optional media-input scaling contract. FHModelMeta itself
+    # supplies the same empty mapping by default.
+    media_input_scales = getattr(meta, "media_input_scales", {})
 
     sat = {}
     for c in meta.channels:
         x = spend_by_channel.get(c, 0.0)
         sat[c] = hill_function(
-            np.array([apply_media_input_scale(x, c, meta.media_input_scales)]),
+            np.array([apply_media_input_scale(x, c, media_input_scales)]),
             params.hill_K[c],
             params.hill_S[c],
         )[0]

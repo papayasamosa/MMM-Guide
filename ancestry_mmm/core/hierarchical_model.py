@@ -382,9 +382,7 @@ def _resolve_media_input_scales(
     positive_media = np.where(np.asarray(X_media, dtype=float) > 0, X_media, np.nan)
     medians = np.nanmedian(positive_media, axis=0)
     medians = np.where(np.isfinite(medians) & (medians > 0), medians, 1.0)
-    return method, {
-        channel: float(scale) for channel, scale in zip(channels, medians)
-    }
+    return method, {channel: float(scale) for channel, scale in zip(channels, medians)}
 
 
 def _resolve_fixed_channel_values(
@@ -410,9 +408,7 @@ def _resolve_fixed_channel_values(
     if isinstance(raw, dict):
         missing = [channel for channel in channels if channel not in raw]
         if missing:
-            raise ValueError(
-                f"{key} is missing channel(s): " + ", ".join(missing)
-            )
+            raise ValueError(f"{key} is missing channel(s): " + ", ".join(missing))
         values = np.asarray([raw[channel] for channel in channels], dtype=float)
     else:
         values = np.asarray(raw, dtype=float)
@@ -607,9 +603,7 @@ def build_fh_hierarchical_model(
     media_input_scale_method, media_input_scales = _resolve_media_input_scales(
         X_media_raw, channels, prior_config
     )
-    X_media = apply_media_input_scales(
-        X_media_raw, channels, media_input_scales
-    )
+    X_media = apply_media_input_scales(X_media_raw, channels, media_input_scales)
     X_media_history_raw = frame.get("X_media_history")
     history_market_bounds = frame.get("history_market_bounds")
     if X_media_history_raw is not None or history_market_bounds is not None:
@@ -636,9 +630,7 @@ def build_fh_hierarchical_model(
     n_obs, n_channels = X_media.shape
     n_outcomes = len(outcome_ids)
     n_fourier = fourier.shape[1]
-    X_controls, control_scaling = fit_control_scaling(
-        X_controls_raw, control_names
-    )
+    X_controls, control_scaling = fit_control_scaling(X_controls_raw, control_names)
     n_controls = X_controls.shape[1]
 
     dna_outcome_id = _default_dna_outcome_id(
@@ -794,8 +786,7 @@ def build_fh_hierarchical_model(
             prior_config,
             "fixed_hill_S",
             channels,
-            prior_config.get("S_alpha", 4.0)
-            / prior_config.get("S_beta", 4.0),
+            prior_config.get("S_alpha", 4.0) / prior_config.get("S_beta", 4.0),
             lower=0.0,
         )
         hill_K = (
@@ -861,9 +852,7 @@ def build_fh_hierarchical_model(
             sigma=prior_config.get("channel_effect_sigma", 0.5),
             dims="channel",
         )
-        pooled_beta_reference = bool(
-            prior_config.get("pooled_beta_reference", False)
-        )
+        pooled_beta_reference = bool(prior_config.get("pooled_beta_reference", False))
         pooling_scale = prior_config.get("pooling_sigma_prior", 0.3)
         if pooled_beta_reference:
             sigma_pool = pm.Deterministic(
@@ -892,9 +881,7 @@ def build_fh_hierarchical_model(
                 dims="channel",
             )
         if not pooled_beta_reference:
-            z_offset = pm.Normal(
-                "z_offset", mu=0, sigma=1, dims=("outcome", "channel")
-            )
+            z_offset = pm.Normal("z_offset", mu=0, sigma=1, dims=("outcome", "channel"))
         log_beta = pm.Deterministic(
             "log_beta",
             mu_channel[None, :] + sigma_pool[None, :] * z_offset,

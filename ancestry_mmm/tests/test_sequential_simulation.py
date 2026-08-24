@@ -409,9 +409,7 @@ class TestReconstructStartingState:
             media_input_scales={},
         )
         with pytest.raises(ValueError, match="scaling contract"):
-            simulate_sequential_outcomes(
-                plan, mismatched, scaled_meta, params
-            )
+            simulate_sequential_outcomes(plan, mismatched, scaled_meta, params)
 
     def test_nonzero_history_reconstructs_matching_raw_adstock(self):
         meta = _meta()

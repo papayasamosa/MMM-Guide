@@ -1,5 +1,7 @@
 """Focused contracts for the common-window UK readiness runner."""
 
+from pathlib import PureWindowsPath
+
 import numpy as np
 import pandas as pd
 
@@ -134,7 +136,9 @@ def test_context_audit_does_not_consume_blocked_weekly_candidate():
 
 
 def test_common_window_runner_default_output_is_distinct_from_prior_window():
-    assert DEFAULT_OUTPUT_DIR.name == "production-fit-common-window-20260822"
+    assert PureWindowsPath(str(DEFAULT_OUTPUT_DIR)).name == (
+        "production-fit-common-window-20260822"
+    )
     assert "production-fit-20260820" not in str(DEFAULT_OUTPUT_DIR)
 
 

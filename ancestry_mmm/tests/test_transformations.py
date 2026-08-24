@@ -15,9 +15,7 @@ from ancestry_mmm.core.transformations import (
 
 def test_media_input_scaling_is_channel_specific_and_preserves_zeros():
     X = np.array([[0.0, 10.0], [200.0, 0.0]])
-    scaled = apply_media_input_scales(
-        X, ["TV", "Email"], {"TV": 100.0, "Email": 10.0}
-    )
+    scaled = apply_media_input_scales(X, ["TV", "Email"], {"TV": 100.0, "Email": 10.0})
     np.testing.assert_allclose(scaled, [[0.0, 1.0], [2.0, 0.0]])
     assert apply_media_input_scale(200.0, "TV", {"TV": 100.0}) == pytest.approx(2.0)
 

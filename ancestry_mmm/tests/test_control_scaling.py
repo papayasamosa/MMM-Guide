@@ -32,7 +32,5 @@ def test_named_planning_context_uses_the_same_fitted_scaling_contract():
     raw = np.array([[40.0], [50.0], [60.0]])
     _scaled, contract = fit_control_scaling(raw, ["trends"])
 
-    result = apply_control_mapping_scaling(
-        {"trends": 60.0}, ["trends"], contract
-    )
+    result = apply_control_mapping_scaling({"trends": 60.0}, ["trends"], contract)
     np.testing.assert_allclose(result["trends"], (60.0 - 50.0) / np.std(raw))

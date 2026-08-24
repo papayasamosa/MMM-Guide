@@ -30,9 +30,7 @@ def review_prefit_identifiability(
     posterior_evidence: Mapping[str, Any] | None = None,
     recovery_evidence: Mapping[str, Any] | None = None,
     prior_predictive: Mapping[str, Any] | None = None,
-    support_threshold_policy: SupportThresholdPolicy
-    | Mapping[str, Any]
-    | None = None,
+    support_threshold_policy: SupportThresholdPolicy | Mapping[str, Any] | None = None,
     prior_predictive_threshold_policy: PriorPredictiveThresholdPolicy
     | Mapping[str, Any]
     | None = None,

@@ -8,7 +8,7 @@ does not create a badly scaled coefficient geometry under a log link.
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, cast
 
 import numpy as np
 
@@ -55,7 +55,7 @@ def apply_control_scaling(
     scales = np.asarray([float(contract[str(name)]["scale"]) for name in names])
     if np.any(~np.isfinite(scales)) or np.any(scales <= 0):
         raise ValueError("Control scaling contract contains an invalid scale.")
-    return (array - centres[None, :]) / scales[None, :]
+    return cast(np.ndarray, (array - centres[None, :]) / scales[None, :])
 
 
 def apply_control_mapping_scaling(

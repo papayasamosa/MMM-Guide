@@ -159,12 +159,8 @@ class TestMediaInputScaleReplay:
                 for channel, value in params.hill_K.items()
             },
         )
-        X_media = np.array(
-            [[0.0, 0.0], [100.0, 50.0], [200.0, 0.0], [0.0, 25.0]]
-        )
-        raw_sat = adstock_saturate_frame(
-            X_media, [(0, len(X_media))], meta, params
-        )
+        X_media = np.array([[0.0, 0.0], [100.0, 50.0], [200.0, 0.0], [0.0, 25.0]])
+        raw_sat = adstock_saturate_frame(X_media, [(0, len(X_media))], meta, params)
         scaled_sat = adstock_saturate_frame(
             X_media, [(0, len(X_media))], scaled_meta, scaled_params
         )

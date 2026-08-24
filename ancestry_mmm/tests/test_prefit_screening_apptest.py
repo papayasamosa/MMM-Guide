@@ -95,11 +95,15 @@ def test_deterministic_screen_is_available_and_remains_non_production():
 
 def test_analyst_rationale_can_be_retained_without_approving_the_fit():
     at = _run_at()
-    at = next(
-        b
-        for b in at.button
-        if b.label == "Run deterministic pre-fit screen (no Bayesian fitting)"
-    ).click().run()
+    at = (
+        next(
+            b
+            for b in at.button
+            if b.label == "Run deterministic pre-fit screen (no Bayesian fitting)"
+        )
+        .click()
+        .run()
+    )
     assert not at.exception, f"screen click raised: {at.exception}"
     rationale = next(
         item

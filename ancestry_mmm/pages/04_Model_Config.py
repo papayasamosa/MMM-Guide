@@ -995,11 +995,7 @@ else:
     if _prefit_report.get("status") == "blocked":
         st.warning(
             "Pre-fit support review is blocked for the current inputs: "
-            + str(
-                _prefit_report.get(
-                    "reason", "review could not be calculated"
-                )
-            )
+            + str(_prefit_report.get("reason", "review could not be calculated"))
         )
     else:
         st.caption(
@@ -1028,7 +1024,9 @@ else:
                     "interpretation"
                 ]
             for _status, _interpretation in _interpretations.items():
-                st.markdown(f"- **{_status.replace('_', ' ').title()}**: {_interpretation}")
+                st.markdown(
+                    f"- **{_status.replace('_', ' ').title()}**: {_interpretation}"
+                )
         _prefit_review_rows = [
             row
             for row in _prefit_report["support_identifiability"]["rows"]
@@ -1044,9 +1042,7 @@ else:
                         + " "
                         + "; ".join(_recommendation["reasons"])
                         + ". Possible review actions: "
-                        + "; ".join(
-                            _recommendation["possible_review_actions"]
-                        )
+                        + "; ".join(_recommendation["possible_review_actions"])
                     )
         render_technical_details(
             details={
@@ -1102,7 +1098,12 @@ else:
         except (TypeError, ValueError) as _screen_error:
             st.error(f"Deterministic pre-fit screen could not run: {_screen_error}")
     if isinstance(_screen_report, dict):
-        st.metric("Screen status", _screen_report.get("review_status", _screen_report.get("status", "unknown")))
+        st.metric(
+            "Screen status",
+            _screen_report.get(
+                "review_status", _screen_report.get("status", "unknown")
+            ),
+        )
         st.caption(str(_screen_report.get("reason", "")))
         _fold_rows = _screen_report.get("folds") or []
         if _fold_rows:
@@ -1164,7 +1165,9 @@ else:
                 _updated_prefit_report = get_state("prefit_identifiability")
                 if isinstance(_updated_prefit_report, dict):
                     _updated_prefit_report = dict(_updated_prefit_report)
-                    _updated_prefit_report["deterministic_prefit_screen"] = _screen_report
+                    _updated_prefit_report["deterministic_prefit_screen"] = (
+                        _screen_report
+                    )
                     set_state("prefit_identifiability", _updated_prefit_report)
                 st.success(
                     "Analyst rationale retained as review evidence; production approval remains separate."

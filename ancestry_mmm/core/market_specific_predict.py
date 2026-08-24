@@ -179,9 +179,7 @@ def adstock_saturate_frame_market_specific(
     params: FHMarketSpecificPosteriorParams,
 ) -> np.ndarray:
     """Per-market-block adstock (shared decay) + Hill saturation (market-specific K, shared S)."""
-    X_media = apply_media_input_scales(
-        X_media, meta.channels, meta.media_input_scales
-    )
+    X_media = apply_media_input_scales(X_media, meta.channels, meta.media_input_scales)
     decay = np.array([params.decay_rate[c] for c in meta.channels])
     S = np.array([params.hill_S[c] for c in meta.channels])
 

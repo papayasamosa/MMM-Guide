@@ -258,7 +258,9 @@ def _grouped_adstock(
     return result
 
 
-def _channel_support_status(row: Mapping[str, Any], policy: SupportThresholdPolicy) -> str:
+def _channel_support_status(
+    row: Mapping[str, Any], policy: SupportThresholdPolicy
+) -> str:
     cv = row.get("effective_adstock_cv")
     positive_weeks = int(row["positive_weeks"])
     distinct = int(row["distinct_positive_values"])
@@ -336,8 +338,12 @@ def _review_recommendation(
     }[support_status]
     return {
         "support_status": support_status,
-        "review_status": "blocked" if blocked else (
-            "ready" if row["support_status"] in {"strong", "moderate"} else "review_recommended"
+        "review_status": "blocked"
+        if blocked
+        else (
+            "ready"
+            if row["support_status"] in {"strong", "moderate"}
+            else "review_recommended"
         ),
         "interpretation": interpretation,
         "reasons": reasons,
@@ -415,6 +421,7 @@ def compute_channel_support_diagnostics(
     else:
         raise ValueError(f"unsupported media_input_scale_method '{scale_method}'")
 
+    assert scales is not None
     scaled = raw / scales
     target_scaled = target / scales
     decay_reference = _resolve_channel_vector(
@@ -460,6 +467,7 @@ def compute_channel_support_diagnostics(
         default=float(config.get("S_alpha", 4.0)) / float(config.get("S_beta", 4.0)),
         lower=0.0,
     )
+    assert s_reference is not None
     transform_complexity = str(
         config.get(
             "transform_complexity",
@@ -477,11 +485,19 @@ def compute_channel_support_diagnostics(
             if positives.size
             else None
         )
-        effective_mean = float(np.mean(effective_values)) if effective_values.size else None
-        effective_std = float(np.std(effective_values)) if effective_values.size else None
+        effective_mean = (
+            float(np.mean(effective_values)) if effective_values.size else None
+        )
+        effective_std = (
+            float(np.std(effective_values)) if effective_values.size else None
+        )
         effective_cv = (
             float(effective_std / effective_mean)
-            if effective_mean is not None and effective_mean > 0
+            if (
+                effective_mean is not None
+                and effective_std is not None
+                and effective_mean > 0
+            )
             else None
         )
         domain_ratio = (
@@ -558,8 +574,12 @@ def compute_channel_support_diagnostics(
         "schema_version": PREFIT_IDENTIFIABILITY_SCHEMA_VERSION,
         "diagnostic_version": PREFIT_IDENTIFIABILITY_VERSION,
         "target_window": {
-            "start": str(pd.Timestamp(target_start).date()) if target_start is not None else None,
-            "end": str(pd.Timestamp(target_end).date()) if target_end is not None else None,
+            "start": str(pd.Timestamp(target_start).date())
+            if target_start is not None
+            else None,
+            "end": str(pd.Timestamp(target_end).date())
+            if target_end is not None
+            else None,
             "basis": window_basis,
             "target_weeks": int(target.shape[0]),
             "history_rows_retained_for_adstock": int(raw.shape[0] - target.shape[0]),
@@ -608,10 +628,17 @@ def _normalise_outcome_draws(
     if array.ndim == 2:
         array = array[:, :, None]
     if array.ndim != 3:
-        raise ValueError("prior predictive draws must be draws x observations x outcomes")
-    labels = [str(value) for value in (outcome_ids or [f"outcome_{i}" for i in range(array.shape[2])])]
+        raise ValueError(
+            "prior predictive draws must be draws x observations x outcomes"
+        )
+    labels = [
+        str(value)
+        for value in (outcome_ids or [f"outcome_{i}" for i in range(array.shape[2])])
+    ]
     if len(labels) != array.shape[2]:
-        raise ValueError("outcome_ids must match the prior-predictive outcome dimension")
+        raise ValueError(
+            "outcome_ids must match the prior-predictive outcome dimension"
+        )
     observed_array = None if observed is None else np.asarray(observed, dtype=float)
     if observed_array is not None:
         if observed_array.ndim == 1:
@@ -629,7 +656,12 @@ def _normalise_outcome_draws(
 
 
 def _ratio(numerator: float | None, denominator: float | None) -> float | None:
-    if numerator is None or denominator is None or not np.isfinite(denominator) or denominator == 0:
+    if (
+        numerator is None
+        or denominator is None
+        or not np.isfinite(denominator)
+        or denominator == 0
+    ):
         return None
     return float(numerator / denominator)
 
@@ -676,6 +708,7 @@ def prior_predictive_plausibility(
     treated as policy-plausible.
     """
 
+    policy: PriorPredictiveThresholdPolicy | None
     if isinstance(threshold_policy, Mapping):
         policy = PriorPredictiveThresholdPolicy(**dict(threshold_policy))
     else:
@@ -702,13 +735,21 @@ def prior_predictive_plausibility(
             if observed_finite.size:
                 observed_summary = _scale_summary(observed_finite)
                 ratios = {
-                    "q01_to_observed_q05": _ratio(predictive["q01"], observed_summary["q05"]),
-                    "q05_to_observed_q05": _ratio(predictive["q05"], observed_summary["q05"]),
+                    "q01_to_observed_q05": _ratio(
+                        predictive["q01"], observed_summary["q05"]
+                    ),
+                    "q05_to_observed_q05": _ratio(
+                        predictive["q05"], observed_summary["q05"]
+                    ),
                     "median_to_observed_median": _ratio(
                         predictive["q50"], observed_summary["q50"]
                     ),
-                    "q95_to_observed_q95": _ratio(predictive["q95"], observed_summary["q95"]),
-                    "q99_to_observed_q95": _ratio(predictive["q99"], observed_summary["q95"]),
+                    "q95_to_observed_q95": _ratio(
+                        predictive["q95"], observed_summary["q95"]
+                    ),
+                    "q99_to_observed_q95": _ratio(
+                        predictive["q99"], observed_summary["q95"]
+                    ),
                     "q95_to_observed_median": _ratio(
                         predictive["q95"], observed_summary["q50"]
                     ),
@@ -742,7 +783,9 @@ def prior_predictive_plausibility(
                 status = "wide_but_reviewable"
                 review_status = "review_recommended"
                 reason = "observed comparison denominator is zero or unavailable"
-            elif lower < policy.lower_ratio_extreme or upper > policy.upper_ratio_extreme:
+            elif (
+                lower < policy.lower_ratio_extreme or upper > policy.upper_ratio_extreme
+            ):
                 status = "implausibly_extreme"
                 review_status = "review_recommended"
                 reason = "prior-predictive tails are extreme relative to the observed outcome scale"
@@ -818,7 +861,9 @@ def build_prefit_fingerprints(
     window = {
         "date_col": date_col,
         "market_col": market_col,
-        "target_start": str(pd.Timestamp(target_start)) if target_start is not None else None,
+        "target_start": str(pd.Timestamp(target_start))
+        if target_start is not None
+        else None,
         "target_end": str(pd.Timestamp(target_end)) if target_end is not None else None,
     }
     result = {
@@ -954,8 +999,7 @@ def build_prefit_identifiability_report(
         causal_graph=causal_graph,
     )
     support_statuses = [
-        row["review_recommendation"]["review_status"]
-        for row in support["rows"]
+        row["review_recommendation"]["review_status"] for row in support["rows"]
     ]
     support_state = (
         "blocked"
@@ -999,7 +1043,9 @@ def build_prefit_identifiability_report(
             "diagnostic_only": True,
         },
         "prior_predictive_threshold_policy": (
-            PriorPredictiveThresholdPolicy(**dict(prior_predictive_threshold_policy)).to_dict()
+            PriorPredictiveThresholdPolicy(
+                **dict(prior_predictive_threshold_policy)
+            ).to_dict()
             if isinstance(prior_predictive_threshold_policy, Mapping)
             else (
                 prior_predictive_threshold_policy.to_dict()

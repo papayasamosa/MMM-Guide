@@ -25,7 +25,9 @@ PREFIT_SCREENING_VERSION = "prefit-screening-v1"
 PREFIT_SCREEN_GRID_VERSION = "bounded-adstock-hill-grid-v1"
 
 
-def _matrix(frame: Mapping[str, Any], key: str, rows: int, columns: int = 0) -> np.ndarray:
+def _matrix(
+    frame: Mapping[str, Any], key: str, rows: int, columns: int = 0
+) -> np.ndarray:
     value = frame.get(key)
     if value is None:
         return np.zeros((rows, columns), dtype=float)
@@ -33,7 +35,9 @@ def _matrix(frame: Mapping[str, Any], key: str, rows: int, columns: int = 0) -> 
     if result.ndim == 1:
         result = result[:, None]
     if result.ndim != 2 or result.shape[0] != rows:
-        raise ValueError(f"frame['{key}'] must be a two-dimensional matrix with {rows} rows")
+        raise ValueError(
+            f"frame['{key}'] must be a two-dimensional matrix with {rows} rows"
+        )
     if not np.isfinite(result).all():
         raise ValueError(f"frame['{key}'] must contain finite values")
     return result
@@ -158,11 +162,7 @@ def _metrics(actual: np.ndarray, predicted: np.ndarray) -> dict[str, float | Non
     rmse = float(np.sqrt(np.mean(residuals**2))) if len(actual) else None
     mae = float(np.mean(np.abs(residuals))) if len(actual) else None
     total = float(np.sum((actual - np.mean(actual)) ** 2)) if len(actual) > 1 else 0.0
-    r2 = (
-        float(1.0 - np.sum(residuals**2) / total)
-        if total > 0
-        else None
-    )
+    r2 = float(1.0 - np.sum(residuals**2) / total) if total > 0 else None
     if len(residuals) < 2 or np.std(residuals[:-1]) == 0 or np.std(residuals[1:]) == 0:
         lag1 = None
     else:
@@ -249,7 +249,9 @@ def build_prefit_screening_report(
     if np.any(outcomes < 0):
         raise ValueError("surrogate screen requires non-negative count outcomes")
     rows, channels = media.shape
-    outcome_ids = [str(value) for value in frame.get("outcome_ids", range(outcomes.shape[1]))]
+    outcome_ids = [
+        str(value) for value in frame.get("outcome_ids", range(outcomes.shape[1]))
+    ]
     channel_ids = [str(value) for value in frame.get("channels", range(channels))]
     if len(channel_ids) != channels or len(outcome_ids) != outcomes.shape[1]:
         raise ValueError("frame channel/outcome labels must match matrix dimensions")
@@ -324,7 +326,9 @@ def build_prefit_screening_report(
                     full_metrics = _metrics(
                         target[test_mask], full_model.predict(full_features[test_mask])
                     )
-                    baseline_metrics = baseline_cache[(fold["fold_id"], outcome_id, kind)]
+                    baseline_metrics = baseline_cache[
+                        (fold["fold_id"], outcome_id, kind)
+                    ]
                     result_rows.append(
                         {
                             "fold_id": fold["fold_id"],
@@ -344,7 +348,9 @@ def build_prefit_screening_report(
                             ),
                         }
                     )
-                    coefficients = np.asarray(full_model[-1].coef_, dtype=float).reshape(-1)
+                    coefficients = np.asarray(
+                        full_model[-1].coef_, dtype=float
+                    ).reshape(-1)
                     for channel_index, channel in enumerate(channel_ids):
                         coefficient_rows.append(
                             {
@@ -364,7 +370,9 @@ def build_prefit_screening_report(
                 future_features = np.column_stack(
                     [base, _shift_by_market(transformed, markets)]
                 )
-                timing_model = _fit_surrogate("ridge", ridge_alpha, elastic_net_l1_ratio)
+                timing_model = _fit_surrogate(
+                    "ridge", ridge_alpha, elastic_net_l1_ratio
+                )
                 timing_model.fit(future_features[train_mask], target[train_mask])
                 timing_metrics = _metrics(
                     target[test_mask], timing_model.predict(future_features[test_mask])
@@ -390,9 +398,7 @@ def build_prefit_screening_report(
             "nonzero_share": float(np.mean(np.asarray(values) > 1e-8)),
             "mean_absolute_coefficient": float(np.mean(values)),
             "coefficient_cv": (
-                float(np.std(values) / np.mean(values))
-                if np.mean(values) > 0
-                else None
+                float(np.std(values) / np.mean(values)) if np.mean(values) > 0 else None
             ),
             "diagnostic_only": True,
         }
@@ -423,7 +429,11 @@ def build_prefit_screening_report(
         "review_status": "review_recommended",
         "reason": "deterministic surrogate evidence requires analyst review; it is not a posterior or production approval",
         "folds": [
-            {key: value for key, value in fold.items() if key not in {"train_mask", "test_mask"}}
+            {
+                key: value
+                for key, value in fold.items()
+                if key not in {"train_mask", "test_mask"}
+            }
             for fold in folds
         ],
         "surrogate_results": result_rows,

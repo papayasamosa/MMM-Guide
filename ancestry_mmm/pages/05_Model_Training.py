@@ -406,9 +406,7 @@ if st.button("Preview prior predictive (no fitting)"):
                         "diagnostic_only": True,
                     },
                 )
-                _prefit_states = dict(
-                    _prefit_report.get("state_semantics") or {}
-                )
+                _prefit_states = dict(_prefit_report.get("state_semantics") or {})
                 _prefit_states["prior_predictive"] = str(
                     _prefit_report["prior_predictive"].get(
                         "review_status", "review_recommended"
@@ -490,9 +488,9 @@ elif _preview and _preview.get("status") == "computed":
                     "q95 / observed median": (
                         row.get("observed_scale_ratios") or {}
                     ).get("q95_to_observed_median"),
-                    "q99 / observed max": (
-                        row.get("observed_scale_ratios") or {}
-                    ).get("q99_to_observed_max"),
+                    "q99 / observed max": (row.get("observed_scale_ratios") or {}).get(
+                        "q99_to_observed_max"
+                    ),
                     "Median / observed median": (
                         row.get("observed_scale_ratios") or {}
                     ).get("median_to_observed_median"),
@@ -530,12 +528,9 @@ if _frame_mode == "official":
     _screen_report_for_gate = get_state("prefit_screening")
     if not isinstance(_prefit_report_for_gate, dict):
         _prefit_gate_reasons.append("run the pre-fit support review on Model Setup")
-    elif (
-        (_prefit_report_for_gate.get("state_semantics") or {}).get(
-            "support_identifiability"
-        )
-        == "blocked"
-    ):
+    elif (_prefit_report_for_gate.get("state_semantics") or {}).get(
+        "support_identifiability"
+    ) == "blocked":
         _prefit_gate_reasons.append("resolve the blocked channel-support review")
     if not isinstance(_screen_report_for_gate, dict):
         _prefit_gate_reasons.append(
@@ -543,7 +538,9 @@ if _frame_mode == "official":
         )
     else:
         if _screen_report_for_gate.get("status") == "blocked":
-            _prefit_gate_reasons.append("resolve the blocked deterministic pre-fit screen")
+            _prefit_gate_reasons.append(
+                "resolve the blocked deterministic pre-fit screen"
+            )
         if _screen_report_for_gate.get("fingerprints") != (
             _prefit_report_for_gate or {}
         ).get("fingerprints"):
