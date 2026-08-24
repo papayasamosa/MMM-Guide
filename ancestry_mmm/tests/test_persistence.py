@@ -73,6 +73,7 @@ from ancestry_mmm.core.persistence import (
     resolve_imported_media_outcome_pathways,
     resolve_imported_named_events,
     resolve_imported_outcome_approvals,
+    resolve_imported_prefit_runs,
     resolve_imported_search_objects,
     resolve_imported_source_definitions,
     resolve_imported_source_versions,
@@ -4701,6 +4702,136 @@ class TestOfficialCurvesCheckpointRevalidation:
 # ---------------------------------------------------------------------------
 # REQ-EXPMODE-001 (Work Package 2): experiment registry persistence
 # ---------------------------------------------------------------------------
+
+
+class TestResolveImportedPrefitRuns:
+    """REQ-PREFIT-001 (Work Package 1 correction): the durable pre-fit run
+    registry must round-trip through `export_project`/`import_project`
+    exactly like every other governed registry (experiments, named events)
+    - never through the untyped generic `diagnostics` blob a previous PR
+    used as a workaround."""
+
+    def _run_dict(self, **overrides) -> dict:
+        from ancestry_mmm.core.prefit_run import build_prefit_run
+
+        identifiability_report = {
+            "status": "ready",
+            "review_status": "ready",
+            "fingerprints": {
+                "candidate_spec_fingerprint": "cs",
+                "prepared_frame_fingerprint": "pf",
+                "causal_graph_fingerprint": "cg",
+                "transform_config_fingerprint": "tc",
+            },
+            "prior_predictive": {"review_status": "ready"},
+        }
+        screening_report = {
+            "status": "computed",
+            "review_status": "ready",
+            "reconstruction_tier": "prepared_frame_only",
+            "diagnostic_version": "prefit-screening-v1",
+            "screen_grid_version": "bounded-adstock-hill-grid-v1",
+            "folds": [{"fold_id": "prefit-fold-1"}],
+            "analyst_review": {
+                "status": "retained",
+                "rationale": "reviewed",
+                "rationale_retained": True,
+            },
+        }
+        run = build_prefit_run(
+            product="Family History",
+            model_name="Model A",
+            identifiability_report=identifiability_report,
+            screening_report=screening_report,
+            fold_policy_version="v1",
+            support_threshold_policy_version="support-diagnostic-v1",
+        )
+        payload = run.to_dict()
+        payload.update(overrides)
+        return payload
+
+    def test_no_registry_file_is_no_registry_not_an_error(self):
+        runs, warnings = resolve_imported_prefit_runs({})
+        assert runs == [] and warnings == []
+
+    def test_round_trip_preserves_the_run_exactly(self):
+        run_dict = self._run_dict()
+        runs, warnings = resolve_imported_prefit_runs(
+            {"prefit_runs": {"schema_version": 1, "runs": [run_dict]}}
+        )
+        assert warnings == []
+        assert runs == [run_dict]
+
+    def test_export_import_round_trip_through_the_real_project_bundle(self, tmp_path):
+        run_dict = self._run_dict()
+        bundle = export_project(
+            tmp_path / "prefit_run.zip",
+            raw_sources={},
+            transformed_data=None,
+            pipeline_steps=[],
+            model_spec=None,
+            prior_config={},
+            dna_lag_weeks=4,
+            trace=None,
+            scenarios=[],
+            prefit_runs=[run_dict],
+        )
+        imported = import_project(bundle)
+        runs, warnings = resolve_imported_prefit_runs(imported)
+        assert warnings == []
+        assert runs == [run_dict]
+
+    def test_a_bundle_with_no_prefit_runs_at_all_does_not_write_the_file(
+        self, tmp_path
+    ):
+        bundle = export_project(
+            tmp_path / "no_prefit.zip",
+            raw_sources={},
+            transformed_data=None,
+            pipeline_steps=[],
+            model_spec=None,
+            prior_config={},
+            dna_lag_weeks=4,
+            trace=None,
+            scenarios=[],
+        )
+        imported = import_project(bundle)
+        runs, warnings = resolve_imported_prefit_runs(imported)
+        assert runs == [] and warnings == []
+
+    def test_future_schema_version_is_quarantined(self):
+        runs, warnings = resolve_imported_prefit_runs(
+            {"prefit_runs": {"schema_version": 99, "runs": [self._run_dict()]}}
+        )
+        assert runs == []
+        assert any("unrecognised future version" in warning for warning in warnings)
+
+    def test_invalid_schema_version_type_is_quarantined(self):
+        runs, warnings = resolve_imported_prefit_runs(
+            {"prefit_runs": {"schema_version": "1", "runs": [self._run_dict()]}}
+        )
+        assert runs == []
+        assert any("not a valid integer" in warning for warning in warnings)
+
+    def test_malformed_run_is_quarantined_not_silently_kept(self):
+        malformed = {"run_id": "broken", "readiness": "not_a_real_state"}
+        runs, warnings = resolve_imported_prefit_runs(
+            {"prefit_runs": {"schema_version": 1, "runs": [malformed]}}
+        )
+        assert runs == []
+        assert any("malformed" in warning for warning in warnings)
+
+    def test_non_mapping_run_entry_is_quarantined(self):
+        runs, warnings = resolve_imported_prefit_runs(
+            {"prefit_runs": {"schema_version": 1, "runs": ["not-a-mapping"]}}
+        )
+        assert runs == []
+        assert any("not a mapping" in warning for warning in warnings)
+
+    def test_non_mapping_registry_file_is_quarantined(self):
+        runs, warnings = resolve_imported_prefit_runs({"prefit_runs": ["a", "list"]})
+        assert runs == []
+        assert any("not a mapping" in warning for warning in warnings)
 
 
 class TestResolveImportedExperiments:

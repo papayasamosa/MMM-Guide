@@ -22,6 +22,7 @@ import pytest
 
 from ancestry_mmm.core.hierarchical_model import (
     FHModelMeta,
+    _resolve_control_scaling,
     _resolve_fixed_channel_values,
     _resolve_media_input_scales,
     _resolve_direct_dna_outcome_ids,
@@ -176,6 +177,47 @@ class TestMediaInputScaleContract:
             _resolve_media_input_scales(
                 np.ones((2, 1)), ["TV"], {"media_input_scale_method": "zscore"}
             )
+
+
+class TestControlScalingContract:
+    """`_resolve_control_scaling` must default to leaving controls raw and
+    the coefficient prior's implied meaning unchanged - production-default
+    behaviour before and after PR #304's pre-fit remediation branch must be
+    byte-identical here. Centring/scaling changes the prior's implied
+    meaning without a compensating recalibration (no `docs/
+    approved_requirements/REQ-*` record or `docs/decision_log.md` entry
+    approves it as a production change), so it must remain a gated,
+    default-off diagnostic experiment - the same pattern already used by
+    `_resolve_media_input_scales`/`K_reference`/`fixed_decay_rate`."""
+
+    def test_default_leaves_controls_raw_with_empty_contract(self):
+        raw = np.array([[40.0, 2.0], [50.0, 4.0], [60.0, 6.0]])
+        controls, contract = _resolve_control_scaling(raw, ["trend", "price"], {})
+        np.testing.assert_array_equal(controls, raw)
+        assert contract == {}
+
+    def test_disabled_explicitly_also_leaves_controls_raw(self):
+        raw = np.array([[40.0, 2.0], [50.0, 4.0], [60.0, 6.0]])
+        controls, contract = _resolve_control_scaling(
+            raw, ["trend", "price"], {"enable_control_scaling": False}
+        )
+        np.testing.assert_array_equal(controls, raw)
+        assert contract == {}
+
+    def test_explicit_opt_in_centres_and_scales(self):
+        raw = np.array([[40.0, 2.0], [50.0, 4.0], [60.0, 6.0]])
+        controls, contract = _resolve_control_scaling(
+            raw, ["trend", "price"], {"enable_control_scaling": True}
+        )
+        np.testing.assert_allclose(controls.mean(axis=0), [0.0, 0.0], atol=1e-12)
+        assert contract["trend"]["method"] == "mean_sd"
+
+    def test_no_controls_is_a_no_op_either_way(self):
+        empty = np.zeros((3, 0))
+        for prior_config in ({}, {"enable_control_scaling": True}):
+            controls, contract = _resolve_control_scaling(empty, [], prior_config)
+            assert controls.shape == (3, 0)
+            assert contract == {}
 
 
 class TestDiagnosticFixedChannelValues:

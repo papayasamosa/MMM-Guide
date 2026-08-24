@@ -385,6 +385,34 @@ def _resolve_media_input_scales(
     return method, {channel: float(scale) for channel, scale in zip(channels, medians)}
 
 
+def _resolve_control_scaling(
+    X_controls_raw: np.ndarray,
+    control_names: List[str],
+    prior_config: Dict[str, Any],
+) -> tuple[np.ndarray, Dict[str, Dict[str, Any]]]:
+    """Resolve the optional centred/unit-SD control reparameterisation.
+
+    Centring/scaling a control changes the coefficient prior's implied
+    meaning ("effect per unit-SD" vs. the production-approved "effect per
+    raw unit") unless the prior itself is recalibrated to compensate - no
+    such recalibration exists, and no `docs/approved_requirements/REQ-*`
+    record or `docs/decision_log.md` entry approves this as a production
+    change (see root `AGENTS.md`: "Standardising a predictor while leaving
+    the same coefficient prior is not automatically a prior-neutral
+    numerical reparameterisation"). It therefore follows exactly the same
+    gated, default-off contract as `_resolve_media_input_scales`/
+    `K_reference`/`fixed_decay_rate` below: diagnostic-only, explicit
+    opt-in via `prior_config["enable_control_scaling"]`, never the
+    production default. Off by default, `fit_control_scaling` is not
+    called at all and the raw controls pass through unchanged with an
+    empty scaling contract - byte-identical to this repository's
+    pre-existing (pre-`REQ-PREFIT-001`-branch) behaviour.
+    """
+    if not bool(prior_config.get("enable_control_scaling", False)):
+        return np.asarray(X_controls_raw, dtype=float), {}
+    return fit_control_scaling(X_controls_raw, control_names)
+
+
 def _resolve_fixed_channel_values(
     prior_config: Dict[str, Any],
     key: str,
@@ -630,7 +658,9 @@ def build_fh_hierarchical_model(
     n_obs, n_channels = X_media.shape
     n_outcomes = len(outcome_ids)
     n_fourier = fourier.shape[1]
-    X_controls, control_scaling = fit_control_scaling(X_controls_raw, control_names)
+    X_controls, control_scaling = _resolve_control_scaling(
+        X_controls_raw, control_names, prior_config
+    )
     n_controls = X_controls.shape[1]
 
     dna_outcome_id = _default_dna_outcome_id(
@@ -1169,7 +1199,12 @@ def build_fh_hierarchical_model(
             names = outcome_control_names.get(
                 oid, [f"ctrl_{i}" for i in range(raw_arr.shape[1])]
             )
-            arr, scaling = fit_control_scaling(raw_arr, names)
+            # Same gated, default-off contract as the shared-control scaling
+            # above (`_resolve_control_scaling`) - kept in sync deliberately
+            # rather than gated separately, so a fit can never mix a scaled
+            # outcome-control prior with an unscaled shared-control prior
+            # (or vice versa) within one run.
+            arr, scaling = _resolve_control_scaling(raw_arr, names, prior_config)
             outcome_control_scaling[oid] = scaling
             o_idx = outcome_ids.index(oid)
             coord_name = f"{oid}_control"

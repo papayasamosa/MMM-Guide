@@ -560,8 +560,10 @@ state contract), `REQ-SCEN-001` (sequential scenario evaluation contract),
 (response horizon and terminal reporting contract), `REQ-ENGINE-001`
 (approved primary production MMM engine), `REQ-LEAK-001` (leakage-safe
 historical validation folds), `REQ-STAB-001` (structural stability across
-folds), and `REQ-PPD-001` (posterior predictive metric distributions) are
-approved, indexed requirement records with substantive implementation.
+folds), `REQ-PPD-001` (posterior predictive metric distributions), and
+`REQ-PREFIT-001` (mandatory pre-fit gate for official production
+submission) are approved, indexed requirement records with substantive
+implementation.
 None is a gap requiring a new decision record — each has an explicit,
 narrower capability boundary documented in its own record:
 
@@ -756,3 +758,39 @@ narrower capability boundary documented in its own record:
   `DiagnosticsService.evaluate()` (no extra fit) and rendered as its own
   table; pre-v8 artefacts upgrade the section to `not_computed`, never a
   fabricated payload.
+- `REQ-PREFIT-001` (`docs/approved_requirements/REQ-PREFIT-001.md`):
+  the mandatory pre-fit gate is implemented with one governed readiness
+  vocabulary throughout (`ready`/`review_recommended`/`blocked`) — the
+  original draft exposed a second, competing vocabulary
+  (`status: "computed"`, a separate `submission_gate` field) on
+  `core.prefit_screening`'s own report; that is fixed at the source, and
+  `core.prefit_run.consolidate_prefit_readiness`/`PrefitRun` now
+  additionally binds both evidence reports, every required fingerprint,
+  the fold-reconstruction tier, and the analyst-rationale precondition
+  into one durable run identity, persisted through the existing project
+  export/import mechanism (`config/prefit_runs.json`,
+  `core.persistence.resolve_imported_prefit_runs`) rather than loose
+  Streamlit session state — `pages/05_Model_Training.py`'s official-fit
+  button now consults that one object
+  (`core.prefit_run.official_submission_allowed`) instead of re-deriving
+  its own blocking decision from scattered sub-fields. The fold-
+  reconstruction tier is honestly reported as `prepared_frame_only` (the
+  screen splits an already-prepared frame by date; it does not yet reuse
+  `application.fold_refit_service`'s deeper point-in-time source
+  reconstruction — that reuse integration remains unimplemented). The
+  same review found an unconditional, undocumented control/outcome-
+  control centring-and-scaling step live in `core.hierarchical_model`'s
+  default production path with no compensating prior recalibration and
+  no approval; it is now gated behind the same default-off,
+  diagnostic-only contract as this record's other convergence-experiment
+  switches (`core.hierarchical_model._resolve_control_scaling`,
+  `prior_config["enable_control_scaling"]`), restoring the pre-existing
+  production default. Not yet implemented: a dedicated pre-fit workspace
+  distinct from Model Setup (Requirement 5 — this record does not itself
+  approve a specific UX placement, so none is implemented from PRD prose
+  alone); and a formally approved numeric support-threshold/prior-
+  predictive-plausibility policy (`core.prefit_identifiability.
+  SupportThresholdPolicy`'s defaults remain unapproved diagnostic
+  values — they can only ever relax a run to `review_recommended`, never
+  fabricate a `blocked` or a false `ready`, but the exact numbers are not
+  themselves approved authority).

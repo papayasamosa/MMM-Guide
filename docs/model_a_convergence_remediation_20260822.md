@@ -75,6 +75,53 @@ validation, attribution, and Search mediation Model B were not started because
 the approved computational gate failed. Increasing treedepth or changing the
 sampler would conceal rather than resolve this blocker.
 
+## Work Package 1 correction (2026-08-24): undocumented control-scaling reconciled
+
+This PR's own diff also added an unconditional, always-on control/outcome-
+control centring-and-scaling step (`core.control_scaling.fit_control_
+scaling`, called unconditionally from `core.hierarchical_model.build_fh_
+hierarchical_model`) that this document did not mention alongside the three
+interventions listed above. Standardising a control while leaving its
+coefficient prior (`Normal(0, control_sigma)`) unchanged is not a
+prior-neutral reparameterisation — it changes the prior's implied meaning
+from "effect per raw unit" to "effect per unit-SD" with no compensating
+recalibration, and no `docs/approved_requirements/REQ-*` record or
+`docs/decision_log.md` entry approved it as a production change.
+
+This has been corrected: control scaling now follows exactly the same
+gated, default-off contract as the three interventions above and the other
+undocumented gated switches noted below (`core.hierarchical_model.
+_resolve_control_scaling`, `prior_config["enable_control_scaling"]`,
+default `False`). With the default off, `X_controls`/`outcome_controls`
+pass through unscaled and the coefficient prior's implied meaning is
+unchanged from this repository's pre-existing behaviour. A consequent
+non-neutral missing-control default in `core.predict.steady_state_
+outcome_response` (a raw-value-0.0-then-centred default for a control
+absent from a reference/scenario context, rather than the documented
+"reference/recent-average levels" — the scaled value 0.0) was fixed in
+`core.control_scaling.apply_control_mapping_scaling` at the same time;
+it was reachable only when the scaling experiment was enabled, so this
+fix is a correctness improvement to that diagnostic path, not a change
+to the current production default.
+
+The same review additionally found `media_input_scale_method`,
+`K_reference="nonzero_median"` (already listed above as intervention 2),
+`fixed_decay_rate`/`fixed_hill_K`/`fixed_hill_S`, and `pooled_beta_
+reference` all live inside `build_fh_hierarchical_model` itself, each
+correctly gated off by default and reachable only from `scripts/run_uk_
+transform_identifiability_experiment.py` (a self-identified diagnostic
+harness) — never from `application.model_fit_service`, the production
+entry point. `media_input_scale_method="positive_median"` is verified as
+a genuine numerical reparameterisation (the Hill ratio `x/K` is scale-
+invariant, and the Gamma prior on `K` rescales within its own family, so
+the induced prior on original-units `K` is unchanged). The remaining
+switches change production statistical behaviour if ever enabled and
+have no citable approval; they are recorded here as existing,
+inert-by-default diagnostic tooling rather than removed, consistent with
+this document's own framing of the three listed interventions - but any
+future change turning one on by default requires the same authority
+this document itself lacks for control scaling.
+
 ## Reproducibility
 
 Diagnostic artefacts are outside Git at:

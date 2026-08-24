@@ -66,6 +66,9 @@ from ancestry_mmm.application.prefit_screening_service import (
     run_prefit_screen,
     save_prefit_analyst_review,
 )
+from ancestry_mmm.core.prefit_identifiability import SUPPORT_THRESHOLD_VERSION
+from ancestry_mmm.core.prefit_run import build_prefit_run
+from ancestry_mmm.core.prefit_screening import PREFIT_FOLD_POLICY_VERSION
 from ancestry_mmm.data import (
     adopted_model_input_frame,
     adopted_model_input_sources,
@@ -1173,6 +1176,35 @@ else:
                     "Analyst rationale retained as review evidence; production approval remains separate."
                 )
 _screen_section.__exit__(None, None, None)
+
+# REQ-PREFIT-001 (Work Package 1 correction): rebuild the one consolidated
+# PrefitRun any time either evidence report changed, so submission logic
+# (pages/05_Model_Training.py) never has to re-derive readiness from
+# scattered sub-fields of two independently-shaped dicts. Rebuilt from
+# whatever is currently in session state - not appended to incrementally -
+# so it can never go stale relative to its own inputs.
+_current_identifiability_for_run = get_state("prefit_identifiability")
+_current_screening_for_run = get_state("prefit_screening")
+if isinstance(_current_identifiability_for_run, dict) and isinstance(
+    _current_screening_for_run, dict
+):
+    try:
+        _prefit_run = build_prefit_run(
+            product=str(_current_identifiability_for_run.get("product", "")),
+            model_name=str(_current_identifiability_for_run.get("model_name", "")),
+            identifiability_report=_current_identifiability_for_run,
+            screening_report=_current_screening_for_run,
+            fold_policy_version=PREFIT_FOLD_POLICY_VERSION,
+            support_threshold_policy_version=SUPPORT_THRESHOLD_VERSION,
+        )
+    except ValueError:
+        # A blocked identifiability report (e.g. the upload/config error
+        # branch above) does not carry the full evidence shape build_
+        # prefit_run expects - leave any previously-built PrefitRun in
+        # place rather than raising inside the page render loop.
+        pass
+    else:
+        set_state("prefit_run", _prefit_run.to_dict())
 
 if get_state("frame") is not None:
     render_next_step("model_config")

@@ -34,3 +34,23 @@ def test_named_planning_context_uses_the_same_fitted_scaling_contract():
 
     result = apply_control_mapping_scaling({"trends": 60.0}, ["trends"], contract)
     np.testing.assert_allclose(result["trends"], (60.0 - 50.0) / np.std(raw))
+
+
+def test_missing_named_control_is_held_at_the_fitted_centre_not_raw_zero():
+    """A control absent from the supplied planning context must map to the
+    scaled value 0.0 (the fitted mean - "reference/recent-average levels",
+    per this function's callers), never the *raw* value 0.0 passed through
+    centring. For a control whose fitted mean is far from zero (e.g. a
+    100-point index), the old raw-then-centre behaviour silently injected a
+    large non-neutral shift for every caller that did not populate every
+    fitted control name."""
+    raw = np.array([[80.0], [90.0], [100.0]])
+    _scaled, contract = fit_control_scaling(raw, ["brand_index"])
+
+    result = apply_control_mapping_scaling({}, ["brand_index"], contract)
+    assert result["brand_index"] == 0.0
+
+
+def test_missing_control_default_is_unaffected_when_scaling_is_disabled():
+    result = apply_control_mapping_scaling({}, ["brand_index"], None)
+    assert result["brand_index"] == 0.0

@@ -51,6 +51,7 @@ from ancestry_mmm.core.market_specific_diagnostics import (
     compute_scorecard_market_specific,
 )
 from ancestry_mmm.core.diagnostics import compute_scorecard, prior_predictive_summary
+from ancestry_mmm.core.prefit_run import official_submission_allowed
 from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec
 from ancestry_mmm.core.outcomes import (
     outcome_catalogue_fingerprint_payload,
@@ -524,33 +525,20 @@ _official_fit_gate_blocked = (
 )
 _prefit_gate_reasons = []
 if _frame_mode == "official":
-    _prefit_report_for_gate = get_state("prefit_identifiability")
-    _screen_report_for_gate = get_state("prefit_screening")
-    if not isinstance(_prefit_report_for_gate, dict):
-        _prefit_gate_reasons.append("run the pre-fit support review on Model Setup")
-    elif (_prefit_report_for_gate.get("state_semantics") or {}).get(
-        "support_identifiability"
-    ) == "blocked":
-        _prefit_gate_reasons.append("resolve the blocked channel-support review")
-    if not isinstance(_screen_report_for_gate, dict):
+    # REQ-PREFIT-001 (Work Package 1 correction): consult the one governed
+    # PrefitRun (core.prefit_run) rather than re-deriving a blocking
+    # decision from scattered sub-fields of two independently-shaped
+    # evidence dicts - see pages/04_Model_Config.py, which (re)builds this
+    # object any time either evidence report changes.
+    _prefit_run_for_gate = get_state("prefit_run")
+    if not isinstance(_prefit_run_for_gate, dict):
         _prefit_gate_reasons.append(
-            "run the deterministic pre-fit screen on Model Setup"
+            "run the pre-fit support review and deterministic screen on Model Setup"
         )
     else:
-        if _screen_report_for_gate.get("status") == "blocked":
-            _prefit_gate_reasons.append(
-                "resolve the blocked deterministic pre-fit screen"
-            )
-        if _screen_report_for_gate.get("fingerprints") != (
-            _prefit_report_for_gate or {}
-        ).get("fingerprints"):
-            _prefit_gate_reasons.append("rerun the stale deterministic pre-fit screen")
-        if not (
-            (_screen_report_for_gate.get("analyst_review") or {}).get(
-                "rationale_retained"
-            )
-        ):
-            _prefit_gate_reasons.append("save the required analyst review rationale")
+        _allowed, _reason = official_submission_allowed(_prefit_run_for_gate)
+        if not _allowed:
+            _prefit_gate_reasons.append(_reason)
     if not (
         isinstance(_preview, dict)
         and _preview.get("status") == "computed"

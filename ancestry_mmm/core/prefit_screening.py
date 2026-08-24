@@ -23,6 +23,7 @@ from sklearn.preprocessing import StandardScaler
 PREFIT_SCREENING_SCHEMA_VERSION = 1
 PREFIT_SCREENING_VERSION = "prefit-screening-v1"
 PREFIT_SCREEN_GRID_VERSION = "bounded-adstock-hill-grid-v1"
+PREFIT_FOLD_POLICY_VERSION = "expanding-date-fold-v1"
 
 
 def _matrix(
@@ -217,10 +218,15 @@ def record_prefit_analyst_review(
         }
     )
     result["analyst_review"] = analyst_review
-    result["submission_gate"] = (
-        "blocked" if result.get("status") == "blocked" else "review_rationale_retained"
-    )
-    # The screen remains preparation evidence only, even after review.
+    # Retaining rationale satisfies REQ-PREFIT-001's "review_recommended
+    # requires retained analyst rationale" precondition; it does not change
+    # the evidence's own quality, so `review_status` (the one governed
+    # readiness field - see core.prefit_run.consolidate_prefit_readiness)
+    # is left exactly as the evidence itself computed it. There is no
+    # separate `submission_gate` vocabulary: a caller that needs "is this
+    # run allowed to submit right now" must consult core.prefit_run.
+    # official_submission_allowed, which reads review_status plus
+    # analyst_review.rationale_retained together.
     result["official_eligibility"] = False
     result["diagnostic_only"] = True
     return result
@@ -267,6 +273,7 @@ def build_prefit_screening_report(
             "diagnostic_version": PREFIT_SCREENING_VERSION,
             "status": "blocked",
             "review_status": "blocked",
+            "reconstruction_tier": "cannot_verify",
             "reason": "insufficient ordered history for a leakage-safe expanding fold",
             "folds": [],
             "diagnostic_only": True,
@@ -280,7 +287,6 @@ def build_prefit_screening_report(
                 "rationale": None,
                 "rationale_retained": False,
             },
-            "submission_gate": "blocked",
         }
 
     markets = frame.get("markets")
@@ -427,6 +433,16 @@ def build_prefit_screening_report(
         "screen_grid_version": PREFIT_SCREEN_GRID_VERSION,
         "status": "computed",
         "review_status": "review_recommended",
+        # This screen operates on ``frame`` - an already-prepared model-ready
+        # frame - and its leakage-safe folds only respect the dates present
+        # in that frame. It does not reconstruct each fold from raw sources
+        # governed by their own upload-timing/point-in-time cutoff (that
+        # deeper tier is `application.fold_refit_service.
+        # run_leakage_safe_fold_refit_from_sources`). Reporting the weaker
+        # tier honestly - never the stronger one - is required by
+        # REQ-PREFIT-001's review: a caller must not label a prepared-frame
+        # screen as fully point-in-time leakage-safe.
+        "reconstruction_tier": "prepared_frame_only",
         "reason": "deterministic surrogate evidence requires analyst review; it is not a posterior or production approval",
         "folds": [
             {
@@ -466,7 +482,6 @@ def build_prefit_screening_report(
             "rationale": None,
             "rationale_retained": False,
         },
-        "submission_gate": "blocked_pending_analyst_rationale",
         "fingerprints": dict(fingerprints or {}),
         "runtime_seconds": round(time.perf_counter() - started, 3),
         "diagnostic_only": True,

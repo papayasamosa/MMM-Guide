@@ -319,6 +319,7 @@ def export_project(
     source_domain_semantics: Optional[List[dict]] = None,
     experiments: Optional[dict] = None,
     named_events: Optional[dict] = None,
+    prefit_runs: Optional[List[dict]] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp_str:
@@ -609,6 +610,24 @@ def export_project(
         if named_events is not None and bool(named_events):
             (tmp / "config" / "named_events.json").write_text(
                 json.dumps(named_events, indent=2, default=str)
+            )
+        # REQ-PREFIT-001 (Work Package 1 correction): the durable governed
+        # pre-fit run registry (core.prefit_run.PrefitRun), under
+        # PREFIT_RUN_SCHEMA_VERSION - each entry binds the identifiability
+        # and screening evidence, every fingerprint, the fold-
+        # reconstruction tier and the one consolidated readiness state to
+        # one run identity. Written only when the registry has content, and
+        # never through the untyped generic `diagnostics` blob.
+        if prefit_runs is not None and bool(prefit_runs):
+            (tmp / "config" / "prefit_runs.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "runs": list(prefit_runs),
+                    },
+                    indent=2,
+                    default=str,
+                )
             )
         if diagnostics is not None:
             for name, value in diagnostics.items():
@@ -1093,6 +1112,14 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "named_events.json").exists():
             result["named_events"] = json.loads(
                 (config_dir / "named_events.json").read_text()
+            )
+        # REQ-PREFIT-001 (Work Package 1 correction): raw prefit-run-
+        # registry file. Validation/quarantine happens in
+        # resolve_imported_prefit_runs - this loader never guesses an
+        # unrecognised record-level schema.
+        if (config_dir / "prefit_runs.json").exists():
+            result["prefit_runs"] = json.loads(
+                (config_dir / "prefit_runs.json").read_text()
             )
         # G2A.7 (REQ-OUT-002): outcome approvals persisted alongside outcome
         # definitions. Absent in legacy bundles — treated as no approvals on
@@ -1724,6 +1751,79 @@ def resolve_imported_variable_coverage_matrices(
                 f"quarantined (dropped, not silently kept): {exc}"
             )
     return normalised, warnings
+
+
+def resolve_imported_prefit_runs(
+    imported: Dict[str, Any],
+) -> Tuple[List[dict], List[str]]:
+    """REQ-PREFIT-001 (Work Package 1 correction): resolve the durable
+    pre-fit run registry an imported bundle should use.
+
+    Returns `(runs, warnings)` - a list of `core.prefit_run.PrefitRun.
+    to_dict()` payloads ready for session state, plus quarantine warnings.
+    Every run round-trips through `PrefitRun.from_dict`/`to_dict` for
+    validation: a malformed run, or a registry file carrying an
+    unrecognised future `schema_version`, is quarantined (dropped) and
+    named in `warnings`, never silently trusted or fabricated as a passing
+    run. Old project bundles exported before this capability existed carry
+    no `prefit_runs.json` and resolve to an empty list with no warnings -
+    "no pre-fit run recorded yet", never a fabricated pass.
+    """
+    from .prefit_run import PREFIT_RUN_SCHEMA_VERSION, PrefitRun
+
+    warnings: List[str] = []
+    raw = imported.get("prefit_runs")
+    if raw is None:
+        return [], warnings
+    if not isinstance(raw, Mapping):
+        warnings.append(
+            "The pre-fit run registry file is not a mapping and was "
+            "quarantined (dropped, not silently kept)."
+        )
+        return [], warnings
+
+    schema_version = raw.get("schema_version")
+    if type(schema_version) is not int or schema_version < 1:
+        warnings.append(
+            f"Pre-fit run registry schema_version {schema_version!r} is not "
+            "a valid integer >= 1 - the whole registry was quarantined."
+        )
+        return [], warnings
+    if schema_version != 1:
+        warnings.append(
+            f"Pre-fit run registry schema_version {schema_version} is an "
+            "unrecognised future version - the whole registry was "
+            "quarantined rather than guessed."
+        )
+        return [], warnings
+
+    runs: List[dict] = []
+    for index, item in enumerate(raw.get("runs") or []):
+        if not isinstance(item, Mapping):
+            warnings.append(
+                f"Pre-fit run {index} is not a mapping and was quarantined."
+            )
+            continue
+        try:
+            run = PrefitRun.from_dict(item)
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            run_id = item.get("run_id", "<unknown>")
+            warnings.append(
+                f"Pre-fit run {index} (run_id={run_id!r}) was malformed and "
+                f"was quarantined - a stale/fabricated pass is never "
+                f"silently kept: {exc}"
+            )
+            continue
+        if run.schema_version != PREFIT_RUN_SCHEMA_VERSION:
+            warnings.append(
+                f"Pre-fit run {index} (run_id={run.run_id!r}) has "
+                f"schema_version {run.schema_version}, expected "
+                f"{PREFIT_RUN_SCHEMA_VERSION} - quarantined."
+            )
+            continue
+        runs.append(run.to_dict())
+
+    return runs, warnings
 
 
 def resolve_imported_experiments(

@@ -459,7 +459,14 @@ def test_deterministic_screen_records_folds_surrogates_stability_and_safeguards(
     assert result["official_eligibility"] is False
     assert result["model_mutation_applied"] is False
     assert result["analyst_review"]["rationale"] is None
-    assert result["submission_gate"] == "blocked_pending_analyst_rationale"
+    # REQ-PREFIT-001 (Work Package 1 correction): the review vocabulary is
+    # exactly ready/review_recommended/blocked (result["review_status"],
+    # asserted above) - there is no separate `submission_gate` vocabulary.
+    # "Can this run support official submission" is answered by
+    # core.prefit_run.official_submission_allowed on the consolidated
+    # PrefitRun, not by a second field on this report alone.
+    assert "submission_gate" not in result
+    assert result["reconstruction_tier"] == "prepared_frame_only"
 
 
 def test_analyst_rationale_is_retained_without_granting_official_eligibility():
@@ -473,7 +480,10 @@ def test_analyst_rationale_is_retained_without_granting_official_eligibility():
     )
     assert reviewed["analyst_review"]["status"] == "retained"
     assert reviewed["analyst_review"]["rationale_retained"] is True
-    assert reviewed["submission_gate"] == "review_rationale_retained"
+    # Retaining rationale satisfies REQ-PREFIT-001's precondition for
+    # review_recommended evidence to support submission; it does not
+    # change the evidence's own quality, so review_status is unchanged.
+    assert reviewed["review_status"] == report["review_status"]
     assert reviewed["official_eligibility"] is False
 
 

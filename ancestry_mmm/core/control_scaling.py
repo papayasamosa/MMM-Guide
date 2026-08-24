@@ -63,14 +63,28 @@ def apply_control_mapping_scaling(
     names: Sequence[str],
     contract: Mapping[str, Mapping[str, Any]] | None,
 ) -> dict[str, float]:
-    """Scale a named raw-value context used by steady-state planning."""
+    """Scale a named raw-value context used by steady-state planning.
+
+    A control absent from ``values`` is held at the fitted centre (its
+    training-window mean) - the neutral choice consistent with this
+    function's callers describing missing controls as "reference,
+    typically recent-average levels". Under the ``mean_sd`` contract that
+    is exactly the scaled value 0.0, never the *raw* value 0.0 passed
+    through centring (which would silently inject a large, non-neutral
+    shift for any control whose fitted mean is far from zero, e.g. a
+    100-point index).
+    """
 
     if not contract:
         return {str(name): float(values.get(name, 0.0)) for name in names}
     return {
-        str(name): float(
-            (float(values.get(name, 0.0)) - float(contract[str(name)]["centre"]))
-            / float(contract[str(name)]["scale"])
+        str(name): (
+            float(
+                (float(values[str(name)]) - float(contract[str(name)]["centre"]))
+                / float(contract[str(name)]["scale"])
+            )
+            if str(name) in values
+            else 0.0
         )
         for name in names
     }
