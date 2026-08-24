@@ -524,12 +524,60 @@ _official_fit_gate_blocked = (
     and bool(_official_result)
     and _frame_mode != "official"
 )
+_prefit_gate_reasons = []
+if _frame_mode == "official":
+    _prefit_report_for_gate = get_state("prefit_identifiability")
+    _screen_report_for_gate = get_state("prefit_screening")
+    if not isinstance(_prefit_report_for_gate, dict):
+        _prefit_gate_reasons.append("run the pre-fit support review on Model Setup")
+    elif (
+        (_prefit_report_for_gate.get("state_semantics") or {}).get(
+            "support_identifiability"
+        )
+        == "blocked"
+    ):
+        _prefit_gate_reasons.append("resolve the blocked channel-support review")
+    if not isinstance(_screen_report_for_gate, dict):
+        _prefit_gate_reasons.append(
+            "run the deterministic pre-fit screen on Model Setup"
+        )
+    else:
+        if _screen_report_for_gate.get("status") == "blocked":
+            _prefit_gate_reasons.append("resolve the blocked deterministic pre-fit screen")
+        if _screen_report_for_gate.get("fingerprints") != (
+            _prefit_report_for_gate or {}
+        ).get("fingerprints"):
+            _prefit_gate_reasons.append("rerun the stale deterministic pre-fit screen")
+        if not (
+            (_screen_report_for_gate.get("analyst_review") or {}).get(
+                "rationale_retained"
+            )
+        ):
+            _prefit_gate_reasons.append("save the required analyst review rationale")
+    if not (
+        isinstance(_preview, dict)
+        and _preview.get("status") == "computed"
+        and _preview.get("proposed_model_fingerprint")
+        == _proposed_model_fingerprint(model_type)
+    ):
+        _prefit_gate_reasons.append(
+            "run a current prior-predictive preview before fitting"
+        )
+if _prefit_gate_reasons:
+    _official_fit_gate_blocked = True
 if _official_fit_gate_blocked:
-    st.error(
-        "Fitting is blocked for this frame because it is exploratory while "
-        "official preparation is unresolved. Return to Model Setup and "
-        "prepare the official canonical frame before fitting an official run."
-    )
+    if _prefit_gate_reasons:
+        st.error(
+            "Official fitting is blocked by the mandatory pre-fit gate: "
+            + "; ".join(_prefit_gate_reasons)
+            + "."
+        )
+    else:
+        st.error(
+            "Fitting is blocked for this frame because it is exploratory while "
+            "official preparation is unresolved. Return to Model Setup and "
+            "prepare the official canonical frame before fitting an official run."
+        )
 if (not _official_fit_gate_blocked) and st.button("Build & fit model", type="primary"):
     try:
         with st.spinner("Building model..."):
