@@ -24,7 +24,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 import arviz as az
 import numpy as np
@@ -918,7 +918,21 @@ def run(
     governed_start: str = COMMON_WINDOW_START,
     governed_end: str = COMMON_WINDOW_END,
     prior_config: Mapping[str, Any] | None = None,
+    frame_callback: Callable[[str, dict[str, Any], ModelSpec], None] | None = None,
 ) -> dict[str, Any]:
+    """Run the governed UK official-preparation and (optionally) production
+    fit pipeline.
+
+    ``frame_callback``, when supplied, is invoked once per model
+    immediately after its governed model-ready ``frame`` and ``ModelSpec``
+    are built (readiness gate already passed) and before any PyMC model is
+    constructed or fitted - a read-only observation hook for reusing this
+    exact governed pipeline (e.g. `scripts/run_uk_prefit_governance.py`'s
+    pre-fit evidence run) without duplicating source loading, channel/
+    outcome resolution, or frame preparation. It never changes what this
+    function returns or does; the default (``None``) is a no-op, fully
+    backward compatible.
+    """
     prior_config = dict(prior_config or {})
     output_dir.mkdir(parents=True, exist_ok=True)
     pack = _load_pack(pack_dir)
@@ -1146,6 +1160,8 @@ def run(
             and set(group.member_outcome_ids).issubset(set(frame["outcome_ids"]))
         ]
         frame["preparation_mode"] = "official"
+        if frame_callback is not None:
+            frame_callback(model_name, frame, spec)
         history_evidence = _add_history(
             frame,
             pack.activity_bundle.model_input_media,

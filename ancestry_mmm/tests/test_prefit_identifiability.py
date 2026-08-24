@@ -425,6 +425,47 @@ def _screen_frame(n_obs: int = 30):
     }
 
 
+def _multi_market_screen_frame(n_per_market: int = 20):
+    """The real governed frame contract (data.preprocessor.
+    prepare_fh_modeling_frame): `markets` is the short list of *distinct*
+    market names, and `market_idx` is the separate per-row integer group
+    key - never a per-row array of market names itself. A real multi-week,
+    multi-market frame is the case that surfaced this: `frame["markets"]`
+    (2 elements) fed directly into row-indexed grouping raised
+    `ValueError: frame['markets'] must have one value per row` the moment
+    n_obs != len(markets)."""
+    n_obs = n_per_market * 2
+    dates = pd.date_range("2023-01-01", periods=n_per_market, freq="7D")
+    index = np.arange(n_per_market, dtype=float)
+    return {
+        "dates": np.concatenate([dates.to_numpy(), dates.to_numpy()]),
+        "markets": ["UK", "IE"],
+        "market_idx": np.concatenate(
+            [np.zeros(n_per_market, dtype=int), np.ones(n_per_market, dtype=int)]
+        ),
+        "market_bounds": [(0, n_per_market), (n_per_market, n_obs)],
+        "X_media": np.tile(
+            np.column_stack([10 + index % 9, 5 + (index * 2) % 11]), (2, 1)
+        ),
+        "Y": np.tile(np.column_stack([20 + index * 0.2, 8 + (index % 5)]), (2, 1)),
+        "channels": ["TV", "Paid Search"],
+        "outcome_ids": ["New", "Winback"],
+        "trend": np.tile(index, 2),
+        "fourier": np.tile(
+            np.column_stack([np.sin(index / 3), np.cos(index / 4)]), (2, 1)
+        ),
+        "X_controls": np.zeros((n_obs, 0)),
+    }
+
+
+def test_deterministic_screen_handles_the_real_multi_market_frame_contract():
+    result = build_prefit_screening_report(
+        _multi_market_screen_frame(), n_folds=2, min_train_periods=10
+    )
+    assert result["status"] == "computed"
+    assert result["diagnostic_only"] is True
+
+
 def test_deterministic_screen_records_folds_surrogates_stability_and_safeguards():
     folds = build_leakage_safe_folds(
         _screen_frame()["dates"], n_folds=2, min_train_periods=8

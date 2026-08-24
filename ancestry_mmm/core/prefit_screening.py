@@ -289,7 +289,16 @@ def build_prefit_screening_report(
             },
         }
 
-    markets = frame.get("markets")
+    # frame["markets"] is the short list of *distinct* market names (see
+    # data.preprocessor.prepare_fh_modeling_frame); the governed per-row
+    # group key every other consumer of this frame contract uses
+    # (core.hierarchical_model, core.predict, ...) is frame["market_idx"].
+    # Passing the distinct-name list itself here previously fed a
+    # 1-or-few-element array into row-indexed grouping/adstock/shift logic
+    # that expects one value per row - correct only by accident for a
+    # single-market frame with `n_obs == 1`, and a ValueError otherwise
+    # (caught only once this ran against the real, multi-week UK frame).
+    markets = frame.get("market_idx")
     base = _base_features(frame, rows)
     grid = _screen_grid(transform_config)
     surrogate_kinds = ("ridge", "elastic_net")
