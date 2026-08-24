@@ -173,6 +173,11 @@ def init_session_state():
         # This is diagnostic-only and is independently fingerprinted; it is
         # not a fit, convergence result, or reporting approval.
         "prefit_identifiability": None,
+        # Deterministic, leakage-safe surrogate evidence.  This is separate
+        # from Bayesian prior-predictive and sampler evidence and is never a
+        # fit, channel-selection rule, or production approval.
+        "prefit_screening": None,
+        "prefit_analyst_rationale_input": "",
         # Optional explicit project-calendar configuration. It is intentionally
         # empty by default: official preparation must not infer a calendar
         # from source intersection or observed dates.
@@ -311,6 +316,8 @@ def clear_model_state() -> None:
         "official_preparation_result",
         "official_capability_report",
         "prefit_identifiability",
+        "prefit_screening",
+        "prefit_analyst_rationale_input",
     ]
     for key in model_keys:
         st.session_state[key] = None

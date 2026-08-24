@@ -9,12 +9,22 @@ import pytest
 from ancestry_mmm.core.persistence import export_project, import_project
 from ancestry_mmm.core.prefit_identifiability import (
     PriorPredictiveThresholdPolicy,
+    SupportThresholdPolicy,
     build_prefit_fingerprints,
     build_prefit_identifiability_report,
     classify_short_sampler_screen,
     compute_channel_support_diagnostics,
     prefit_diagnostic_freshness,
     prior_predictive_plausibility,
+)
+from ancestry_mmm.core.prefit_identifiability import (
+    _channel_support_status,
+    _grouped_adstock,
+)
+from ancestry_mmm.core.prefit_screening import (
+    build_leakage_safe_folds,
+    build_prefit_screening_report,
+    record_prefit_analyst_review,
 )
 
 
@@ -96,10 +106,83 @@ def test_continuous_and_mid_window_support_preserve_target_window_and_history():
     assert tv["response_domain_adstock_over_K"]["q50"] is not None
 
 
+def test_support_classification_covers_continuous_channel_without_a_fixed_window():
+    values = [float(10 + (index % 23) * 3) for index in range(72)]
+    result = compute_channel_support_diagnostics(
+        _data({"TV": values}, n=72),
+        ["TV"],
+        date_col="date",
+        market_col="market",
+        target_start="2023-01-01",
+        target_end="2024-05-19",
+        units={"TV": "GRPs"},
+        transform_config=_config(),
+    )
+    row = result["rows"][0]
+    assert row["target_weeks"] == 72
+    assert row["support_status"] == "strong"
+    assert "Strong support" in row["review_recommendation"]["interpretation"]
+    assert row["current_transform_priors"]["hill_K"]["beta"] > 0
+
+
+def test_market_grouped_adstock_does_not_carry_one_market_into_another():
+    data = pd.DataFrame(
+        {
+            "date": list(pd.date_range("2023-01-01", periods=4, freq="7D")) * 2,
+            "market": ["UK"] * 4 + ["IE"] * 4,
+            "TV": [100.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        }
+    )
+    effective = _grouped_adstock(
+        data[["TV"]].to_numpy(),
+        data,
+        np.array([0.8]),
+        market_col="market",
+    )
+    # IE has no activity and must not inherit UK's carry-in value.
+    assert np.allclose(effective[4:, 0], 0.0)
+
+
 def test_missing_values_are_not_zero_filled():
     data = _data({"TV": [1.0, np.nan, 2.0]})
     with pytest.raises(ValueError, match="finite"):
         compute_channel_support_diagnostics(data, ["TV"])
+
+
+def test_support_diagnostic_does_not_mutate_arbitrary_input_data():
+    data = _data({"TV": [1.0, 2.0, 3.0]})
+    before = data.copy(deep=True)
+    compute_channel_support_diagnostics(
+        data,
+        ["TV"],
+        date_col="date",
+        market_col="market",
+        transform_config=_config(),
+    )
+    pd.testing.assert_frame_equal(data, before)
+
+
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    [
+        (
+            {"positive_weeks": 60, "distinct_positive_values": 20, "effective_adstock_cv": 0.25},
+            "strong",
+        ),
+        (
+            {"positive_weeks": 30, "distinct_positive_values": 10, "effective_adstock_cv": 0.10},
+            "moderate",
+        ),
+        (
+            {"positive_weeks": 10, "distinct_positive_values": 4, "effective_adstock_cv": 0.0},
+            "weak",
+        ),
+    ],
+)
+def test_support_threshold_boundaries_are_versioned_and_interpretable(row, expected):
+    policy = SupportThresholdPolicy()
+    assert _channel_support_status(row, policy) == expected
+    assert policy.version == "support-diagnostic-v1"
 
 
 def test_no_posterior_evidence_is_explicit_and_does_not_change_support():
@@ -137,6 +220,25 @@ def test_prior_predictive_nonfinite_is_blocked():
     assert result["status"] == "numerically_invalid"
     assert result["review_status"] == "blocked"
     assert result["rows"][0]["status"] == "numerically_invalid"
+
+
+def test_prior_predictive_invalid_likelihood_evidence_is_explicitly_blocked():
+    result = prior_predictive_plausibility(
+        np.ones((3, 4)),
+        validity_evidence={
+            "invalid_likelihood_values": True,
+            "warnings": ["synthetic invalid likelihood warning"],
+        },
+    )
+    assert result["status"] == "numerically_invalid"
+    assert result["layer_a_evidence"]["invalid_likelihood_values"] is True
+    assert result["layer_a_evidence"]["warnings"]
+
+
+def test_prior_predictive_without_observed_values_remains_reviewable():
+    result = prior_predictive_plausibility(np.ones((4, 3)))
+    assert result["rows"][0]["observed_quantiles"] is None
+    assert result["rows"][0]["status"] == "wide_but_reviewable"
 
 
 def test_prior_predictive_policy_distinguishes_plausible_wide_and_extreme():
@@ -203,6 +305,44 @@ def test_fingerprints_and_staleness_cover_every_prefit_identity_dimension():
         assert key in freshness["mismatches"]
 
 
+def test_optional_candidate_prepared_and_causal_fingerprints_are_freshness_bound():
+    data = _data({"TV": [1.0, 2.0, 3.0]})
+    fingerprints = build_prefit_fingerprints(
+        data,
+        channels=["TV"],
+        date_col="date",
+        market_col="market",
+        target_start=None,
+        target_end=None,
+        transform_config=_config(),
+        candidate_spec={"channels": ["TV"]},
+        prepared_frame={"shape": [3, 1]},
+        causal_graph={"version": "g1"},
+    )
+    assert {
+        "candidate_spec_fingerprint",
+        "prepared_frame_fingerprint",
+        "causal_graph_fingerprint",
+    } <= fingerprints.keys()
+    report = {"fingerprints": fingerprints}
+    changed = dict(fingerprints)
+    changed["causal_graph_fingerprint"] = "changed"
+    assert prefit_diagnostic_freshness(report, changed)["status"] == "stale"
+    complete_report = build_prefit_identifiability_report(
+        data,
+        ["TV"],
+        product="Family History",
+        model_name="Model A",
+        date_col="date",
+        market_col="market",
+        transform_config=_config(),
+        candidate_spec={"channels": ["TV"]},
+        prepared_frame={"shape": [3, 1]},
+        causal_graph={"version": "g1"},
+    )
+    assert set(fingerprints) <= set(complete_report["fingerprints"])
+
+
 def test_prefit_report_keeps_state_semantics_separate():
     report = build_prefit_identifiability_report(
         _data({"TV": [1.0, 2.0, 3.0]}),
@@ -215,7 +355,7 @@ def test_prefit_report_keeps_state_semantics_separate():
     )
     assert report["state_semantics"] == {
         "static_readiness": "computed",
-        "support_identifiability": "computed",
+        "support_identifiability": "review_recommended",
         "prior_predictive": "not_run",
         "short_sampler_screen": "not_run",
         "production_convergence": "not_assessed",
@@ -242,7 +382,100 @@ def test_short_sampler_zero_divergence_is_not_convergence():
     assert "production convergence was not assessed" in result["interpretation"]
 
 
+def test_short_sampler_divergence_failure_is_still_diagnostic_only():
+    result = classify_short_sampler_screen(
+        divergences=2,
+        rhat_max=1.4,
+        ess_min=3.0,
+        bfmi_min=0.1,
+        chains=1,
+        tune=20,
+        draws=20,
+    )
+    assert result["divergence_smoke_test"] == "failed"
+    assert result["production_convergence_assessed"] is False
+    assert result["diagnostic_only"] is True
+
+
+def _screen_frame(n_obs: int = 30):
+    dates = pd.date_range("2023-01-01", periods=n_obs, freq="7D")
+    index = np.arange(n_obs, dtype=float)
+    return {
+        "dates": dates,
+        "markets": np.array(["UK"] * n_obs),
+        "X_media": np.column_stack([10 + index % 9, 5 + (index * 2) % 11]),
+        "Y": np.column_stack([20 + index * 0.2, 8 + (index % 5)]),
+        "channels": ["TV", "Paid Search"],
+        "outcome_ids": ["New", "Winback"],
+        "trend": index,
+        "fourier": np.column_stack([np.sin(index / 3), np.cos(index / 4)]),
+        "X_controls": np.zeros((n_obs, 0)),
+    }
+
+
+def test_deterministic_screen_records_folds_surrogates_stability_and_safeguards():
+    folds = build_leakage_safe_folds(
+        _screen_frame()["dates"], n_folds=2, min_train_periods=8
+    )
+    assert len(folds) == 2
+    assert all(fold["leakage_safe"] for fold in folds)
+    assert all(fold["train_end"] < fold["test_start"] for fold in folds)
+    result = build_prefit_screening_report(
+        _screen_frame(),
+        n_folds=2,
+        min_train_periods=8,
+        transform_config={"prefit_decay_grid": (0.0, 0.5), "prefit_hill_s_grid": (1.0,)},
+        fingerprints={"candidate_spec_fingerprint": "candidate"},
+    )
+    assert result["status"] == "computed"
+    assert result["review_status"] == "review_recommended"
+    assert {row["surrogate"] for row in result["surrogate_results"]} == {
+        "ridge",
+        "elastic_net",
+    }
+    assert all(
+        "baseline_context_only" in row
+        and "baseline_context_plus_media" in row
+        for row in result["surrogate_results"]
+    )
+    assert result["channel_stability"]
+    assert result["transform_stability"]
+    assert result["timing_refutation"]["future_to_past_is_not_a_production_predictor"]
+    assert result["same_sample_prior_safeguards"]["transform_fit_on_training_rows_only"]
+    assert result["official_eligibility"] is False
+    assert result["model_mutation_applied"] is False
+    assert result["analyst_review"]["rationale"] is None
+    assert result["submission_gate"] == "blocked_pending_analyst_rationale"
+
+
+def test_analyst_rationale_is_retained_without_granting_official_eligibility():
+    report = build_prefit_screening_report(
+        _screen_frame(), n_folds=2, min_train_periods=8
+    )
+    with pytest.raises(ValueError, match="rationale is required"):
+        record_prefit_analyst_review(report, " ")
+    reviewed = record_prefit_analyst_review(
+        report, "Retain current transforms for analyst sensitivity review."
+    )
+    assert reviewed["analyst_review"]["status"] == "retained"
+    assert reviewed["analyst_review"]["rationale_retained"] is True
+    assert reviewed["submission_gate"] == "review_rationale_retained"
+    assert reviewed["official_eligibility"] is False
+
+
+def test_deterministic_screen_blocks_without_enough_ordered_history():
+    result = build_prefit_screening_report(
+        _screen_frame(6), min_train_periods=8
+    )
+    assert result["status"] == "blocked"
+    assert result["diagnostic_only"] is True
+
+
 def test_prefit_diagnostics_round_trip_in_generic_project_diagnostics(tmp_path):
+    prior = prior_predictive_plausibility(
+        np.ones((4, 3)),
+        np.ones(3),
+    )
     report = build_prefit_identifiability_report(
         _data({"TV": [1.0, 2.0, 3.0]}),
         ["TV"],
@@ -251,6 +484,7 @@ def test_prefit_diagnostics_round_trip_in_generic_project_diagnostics(tmp_path):
         date_col="date",
         market_col="market",
         transform_config=_config(),
+        prior_predictive=prior,
     )
     bundle = export_project(
         tmp_path / "prefit.zip",
@@ -262,7 +496,17 @@ def test_prefit_diagnostics_round_trip_in_generic_project_diagnostics(tmp_path):
         dna_lag_weeks=4,
         trace=None,
         scenarios=[],
-        diagnostics={"prefit_identifiability": report},
+        diagnostics={
+            "prefit_identifiability": report,
+            "prior_predictive": prior,
+            "prefit_screening": {
+                "status": "review_recommended",
+                "diagnostic_only": True,
+                "official_eligibility": False,
+            },
+        },
     )
     imported = import_project(bundle)
     assert imported["diagnostics"]["prefit_identifiability"] == report
+    assert imported["diagnostics"]["prefit_identifiability"]["prior_predictive"] == prior
+    assert imported["diagnostics"]["prefit_screening"]["official_eligibility"] is False

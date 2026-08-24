@@ -80,6 +80,38 @@ def _json_fingerprint(payload: Any) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
+def _fingerprint_payload(value: Any) -> str:
+    """Fingerprint a candidate/configuration payload without machine paths."""
+
+    if value is None:
+        return _json_fingerprint(None)
+    if isinstance(value, pd.DataFrame):
+        return fingerprint_dataframe(value)
+    if hasattr(value, "to_dict") and not isinstance(value, (dict, list, tuple)):
+        value = value.to_dict()
+    if isinstance(value, np.ndarray):
+        value = {"shape": list(value.shape), "values": value.tolist()}
+    elif isinstance(value, Mapping):
+        value = {str(key): _fingerprint_value(item) for key, item in value.items()}
+    elif isinstance(value, (list, tuple)):
+        value = [_fingerprint_value(item) for item in value]
+    return _json_fingerprint(value)
+
+
+def _fingerprint_value(value: Any) -> Any:
+    if isinstance(value, np.ndarray):
+        return {"shape": list(value.shape), "values": value.tolist()}
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if isinstance(value, Mapping):
+        return {str(key): _fingerprint_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_fingerprint_value(item) for item in value]
+    if hasattr(value, "to_dict") and not isinstance(value, (str, bytes)):
+        return _fingerprint_value(value.to_dict())
+    return value
+
+
 def _as_float_matrix(values: Any, *, name: str) -> np.ndarray:
     array = np.asarray(values, dtype=float)
     if array.ndim != 2:
@@ -181,6 +213,7 @@ def _target_selection(
     if date_col is None:
         if target_start is not None or target_end is not None:
             raise ValueError("target_start/target_end require date_col")
+        frame = frame.reset_index(drop=True)
         mask = pd.Series(True, index=frame.index)
         return frame, mask, "input_rows"
     if date_col not in frame.columns:
@@ -203,6 +236,26 @@ def _target_selection(
     if end is not None:
         mask &= frame[date_col] <= end
     return frame, mask, "provided_dates"
+
+
+def _grouped_adstock(
+    values: np.ndarray,
+    frame: pd.DataFrame,
+    decay_rates: np.ndarray,
+    *,
+    market_col: str | None,
+) -> np.ndarray:
+    """Apply the same carryover contract independently within each market."""
+
+    if not market_col or market_col not in frame.columns:
+        return geometric_adstock_matrix(values, decay_rates, normalize=True)
+    result = np.zeros_like(values, dtype=float)
+    for _, positions in frame.groupby(market_col, sort=False).groups.items():
+        indices = np.asarray(list(positions), dtype=int)
+        result[indices] = geometric_adstock_matrix(
+            values[indices], decay_rates, normalize=True
+        )
+    return result
 
 
 def _channel_support_status(row: Mapping[str, Any], policy: SupportThresholdPolicy) -> str:
@@ -258,11 +311,35 @@ def _review_recommendation(
     if not actions:
         actions.append("retain the configured transform and confirm analyst review")
     blocked = int(row["target_weeks"]) == 0 or int(row["positive_weeks"]) == 0
+    support_status = str(row["support_status"])
+    interpretation = {
+        "strong": (
+            "Strong support: this channel has enough variation and active weeks "
+            "for a flexible transform to be considered. This does not guarantee "
+            "parameter identifiability."
+        ),
+        "moderate": (
+            "Moderate support: the observed history may support the current "
+            "transform, but analyst review is still needed before interpreting "
+            "separate decay and saturation parameters."
+        ),
+        "weak": (
+            "Weak support: this channel has limited variation or too few active "
+            "weeks to confidently learn several independent adstock/saturation "
+            "parameters."
+        ),
+        "very_weak": (
+            "Very weak support: the available history is unlikely to identify a "
+            "fully flexible channel-specific adstock + Hill K + Hill S "
+            "specification without substantial prior information or pooling."
+        ),
+    }[support_status]
     return {
-        "support_status": row["support_status"],
+        "support_status": support_status,
         "review_status": "blocked" if blocked else (
             "ready" if row["support_status"] in {"strong", "moderate"} else "review_recommended"
         ),
+        "interpretation": interpretation,
         "reasons": reasons,
         "current_transform_complexity": transform_complexity,
         "possible_review_actions": actions,
@@ -350,7 +427,12 @@ def compute_channel_support_diagnostics(
     )
     if decay_reference is None:  # pragma: no cover - default resolves this
         decay_reference = np.full(len(channel_names), 0.5)
-    effective = geometric_adstock_matrix(scaled, decay_reference, normalize=True)
+    effective = _grouped_adstock(
+        scaled,
+        frame,
+        decay_reference,
+        market_col=market_col,
+    )
     target_effective = effective[np.asarray(target_mask, dtype=bool)]
 
     k_reference = _resolve_channel_vector(
@@ -440,8 +522,11 @@ def compute_channel_support_diagnostics(
                 "hill_K": {
                     "distribution": "Gamma",
                     "alpha": float(config.get("K_alpha", 3.0)),
+                    "beta": float(config.get("K_alpha", 3.0))
+                    / float(k_reference[index]),
                     "mean": float(k_reference[index]),
                     "reference": float(k_reference[index]),
+                    "scale": float(config.get("K_scale", 1.0)),
                 },
                 "hill_S": {
                     "distribution": "Gamma",
@@ -497,21 +582,25 @@ def _normalise_outcome_draws(
     outcome_ids: Sequence[str] | None,
 ) -> list[tuple[str, np.ndarray, np.ndarray | None]]:
     if isinstance(draws, Mapping):
-        labels = [str(label) for label in draws]
+        keys = list(draws)
+        labels = [str(label) for label in keys]
         if outcome_ids is not None and list(map(str, outcome_ids)) != labels:
             raise ValueError("outcome_ids must match mapped prior-predictive labels")
         observed_mapping = observed if isinstance(observed, Mapping) else {}
         return [
             (
                 label,
-                np.asarray(draws[label], dtype=float),
+                np.asarray(draws[key], dtype=float),
                 (
-                    np.asarray(observed_mapping[label], dtype=float)
-                    if label in observed_mapping
+                    np.asarray(
+                        observed_mapping.get(label, observed_mapping.get(key)),
+                        dtype=float,
+                    )
+                    if label in observed_mapping or key in observed_mapping
                     else None
                 ),
             )
-            for label in labels
+            for key, label in zip(keys, labels)
         ]
     array = np.asarray(draws, dtype=float)
     if array.ndim == 1:
@@ -547,8 +636,16 @@ def _ratio(numerator: float | None, denominator: float | None) -> float | None:
 
 def _component_summary(components: Mapping[str, Any] | None) -> dict[str, Any]:
     if not components:
-        return {"status": "unavailable", "reason": "component draws were not supplied"}
-    result: dict[str, Any] = {"status": "available", "components": {}}
+        return {
+            "status": "unavailable",
+            "reason": "component draws were not supplied",
+            "diagnostic_only": True,
+        }
+    result: dict[str, Any] = {
+        "status": "available",
+        "components": {},
+        "diagnostic_only": True,
+    }
     for name, values in components.items():
         array = np.asarray(values, dtype=float)
         finite = array[np.isfinite(array)]
@@ -569,6 +666,7 @@ def prior_predictive_plausibility(
     outcome_ids: Sequence[str] | None = None,
     threshold_policy: PriorPredictiveThresholdPolicy | Mapping[str, Any] | None = None,
     component_draws: Mapping[str, Any] | None = None,
+    validity_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compare prior-predictive draws with observed outcome scale.
 
@@ -583,6 +681,10 @@ def prior_predictive_plausibility(
     else:
         policy = threshold_policy
     rows: list[dict[str, Any]] = []
+    validity_evidence = dict(validity_evidence or {})
+    invalid_likelihood_values = validity_evidence.get(
+        "invalid_likelihood_values", "not_supplied"
+    )
     any_nonfinite = False
     for label, raw_draws, raw_observed in _normalise_outcome_draws(
         draws, observed, outcome_ids
@@ -617,10 +719,14 @@ def prior_predictive_plausibility(
                         predictive["max"], observed_summary["max"]
                     ),
                 }
-        if not finite_ok:
+        if not finite_ok or invalid_likelihood_values is True:
             status = "numerically_invalid"
             review_status = "blocked"
-            reason = "prior-predictive draws contain no finite values or contain non-finite values"
+            reason = (
+                "prior-predictive draws contain no finite values or contain non-finite values"
+                if not finite_ok
+                else "invalid likelihood values were reported by the sampler"
+            )
         elif policy is None or observed_summary is None:
             status = "wide_but_reviewable"
             review_status = "review_recommended"
@@ -669,8 +775,21 @@ def prior_predictive_plausibility(
         "layer_b": "observed_scale_comparison",
         "threshold_policy": policy.to_dict() if policy is not None else None,
         "threshold_policy_status": "supplied" if policy is not None else "not_approved",
-        "status": "numerically_invalid" if any_nonfinite else "computed",
-        "review_status": "blocked" if any_nonfinite else "review_recommended",
+        "status": (
+            "numerically_invalid"
+            if any_nonfinite or invalid_likelihood_values is True
+            else "computed"
+        ),
+        "review_status": (
+            "blocked"
+            if any_nonfinite or invalid_likelihood_values is True
+            else "review_recommended"
+        ),
+        "layer_a_evidence": {
+            "all_draws_finite": not any_nonfinite,
+            "invalid_likelihood_values": invalid_likelihood_values,
+            "warnings": list(validity_evidence.get("warnings") or []),
+        },
         "component_decomposition": _component_summary(component_draws),
         "rows": rows,
         "diagnostic_only": True,
@@ -686,6 +805,9 @@ def build_prefit_fingerprints(
     target_start: str | pd.Timestamp | None,
     target_end: str | pd.Timestamp | None,
     transform_config: Mapping[str, Any] | None,
+    candidate_spec: Any = None,
+    prepared_frame: Any = None,
+    causal_graph: Any = None,
 ) -> dict[str, str]:
     """Return the four fingerprints required to judge evidence freshness."""
 
@@ -699,12 +821,20 @@ def build_prefit_fingerprints(
         "target_start": str(pd.Timestamp(target_start)) if target_start is not None else None,
         "target_end": str(pd.Timestamp(target_end)) if target_end is not None else None,
     }
-    return {
+    result = {
         "data_fingerprint": fingerprint_dataframe(data),
         "model_window_fingerprint": _json_fingerprint(window),
         "channel_set_fingerprint": _json_fingerprint(channel_set),
         "transform_config_fingerprint": _json_fingerprint(transform_config or {}),
     }
+    # The official pre-fit contract binds all three identity objects even
+    # when one is currently unavailable.  Hashing ``None`` makes absence
+    # explicit and ensures that later availability/change marks evidence
+    # stale instead of silently weakening the contract.
+    result["candidate_spec_fingerprint"] = _fingerprint_payload(candidate_spec)
+    result["prepared_frame_fingerprint"] = _fingerprint_payload(prepared_frame)
+    result["causal_graph_fingerprint"] = _fingerprint_payload(causal_graph)
+    return result
 
 
 def prefit_diagnostic_freshness(
@@ -713,14 +843,10 @@ def prefit_diagnostic_freshness(
     """Compare persisted evidence with current input fingerprints."""
 
     recorded = dict(report.get("fingerprints") or {})
+    keys = set(recorded) | set(current_fingerprints)
     mismatches = {
         key: {"recorded": recorded.get(key), "current": current_fingerprints.get(key)}
-        for key in (
-            "data_fingerprint",
-            "model_window_fingerprint",
-            "channel_set_fingerprint",
-            "transform_config_fingerprint",
-        )
+        for key in sorted(keys)
         if recorded.get(key) != current_fingerprints.get(key)
     }
     return {
@@ -795,6 +921,9 @@ def build_prefit_identifiability_report(
     prior_predictive_threshold_policy: PriorPredictiveThresholdPolicy
     | Mapping[str, Any]
     | None = None,
+    candidate_spec: Any = None,
+    prepared_frame: Any = None,
+    causal_graph: Any = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     """Build the complete persisted pre-fit evidence object."""
@@ -820,17 +949,42 @@ def build_prefit_identifiability_report(
         target_start=target_start,
         target_end=target_end,
         transform_config=transform_config,
+        candidate_spec=candidate_spec,
+        prepared_frame=prepared_frame,
+        causal_graph=causal_graph,
     )
+    support_statuses = [
+        row["review_recommendation"]["review_status"]
+        for row in support["rows"]
+    ]
+    support_state = (
+        "blocked"
+        if "blocked" in support_statuses
+        else (
+            "review_recommended"
+            if "review_recommended" in support_statuses
+            else "ready"
+        )
+    )
+    prior_state = "not_run"
+    if prior_predictive is not None:
+        prior_state = str(
+            prior_predictive.get("review_status")
+            or prior_predictive.get("status")
+            or "review_recommended"
+        )
     return {
         "schema_version": PREFIT_IDENTIFIABILITY_SCHEMA_VERSION,
         "diagnostic_version": PREFIT_IDENTIFIABILITY_VERSION,
+        "status": support_state,
+        "review_status": support_state,
         "generated_at": generated_at or pd.Timestamp.now(tz="UTC").isoformat(),
         "product": str(product),
         "model_name": str(model_name),
         "state_semantics": {
             "static_readiness": "computed",
-            "support_identifiability": "computed",
-            "prior_predictive": "computed" if prior_predictive is not None else "not_run",
+            "support_identifiability": support_state,
+            "prior_predictive": prior_state,
             "short_sampler_screen": "not_run",
             "production_convergence": "not_assessed",
             "postfit_validation": "not_run",

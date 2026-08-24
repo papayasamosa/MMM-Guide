@@ -6,6 +6,7 @@ headline R-squared.
 
 from __future__ import annotations
 
+import re
 import warnings
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -422,6 +423,11 @@ def prior_predictive_summary(
     # policy-plausible by an invented cutoff.
     from .prefit_identifiability import prior_predictive_plausibility
 
+    invalid_likelihood_values = any(
+        re.search(r"\b(?:invalid|nan|inf|non[- ]finite)\b", warning, re.IGNORECASE)
+        for warning in captured_warnings
+    )
+
     prior_draws: Dict[str, np.ndarray] = {}
     observed_values: Dict[str, np.ndarray] = {}
     for m_i, market in enumerate(markets):
@@ -438,6 +444,10 @@ def prior_predictive_summary(
         "plausibility": prior_predictive_plausibility(
             prior_draws,
             observed_values,
+            validity_evidence={
+                "invalid_likelihood_values": invalid_likelihood_values,
+                "warnings": captured_warnings,
+            },
         ),
         "warnings": captured_warnings,
     }

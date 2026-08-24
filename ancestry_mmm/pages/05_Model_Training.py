@@ -409,7 +409,11 @@ if st.button("Preview prior predictive (no fitting)"):
                 _prefit_states = dict(
                     _prefit_report.get("state_semantics") or {}
                 )
-                _prefit_states["prior_predictive"] = "computed"
+                _prefit_states["prior_predictive"] = str(
+                    _prefit_report["prior_predictive"].get(
+                        "review_status", "review_recommended"
+                    )
+                )
                 _prefit_report["state_semantics"] = _prefit_states
                 set_state("prefit_identifiability", _prefit_report)
 
@@ -473,15 +477,25 @@ elif _preview and _preview.get("status") == "computed":
                     "Finite": row.get("finite"),
                     "Status": row.get("status"),
                     "Review": row.get("review_status"),
-                    "Predictive median": (
-                        row.get("predictive_quantiles") or {}
-                    ).get("q50"),
-                    "Observed median": (row.get("observed_quantiles") or {}).get(
-                        "q50"
-                    ),
-                    "Predictive q99 / observed q95": (
+                    "Observed min": (row.get("observed_quantiles") or {}).get("min"),
+                    "Observed median": (row.get("observed_quantiles") or {}).get("q50"),
+                    "Observed mean": (row.get("observed_quantiles") or {}).get("mean"),
+                    "Observed max": (row.get("observed_quantiles") or {}).get("max"),
+                    "Prior q01": (row.get("predictive_quantiles") or {}).get("q01"),
+                    "Prior q05": (row.get("predictive_quantiles") or {}).get("q05"),
+                    "Prior median": (row.get("predictive_quantiles") or {}).get("q50"),
+                    "Prior q95": (row.get("predictive_quantiles") or {}).get("q95"),
+                    "Prior q99": (row.get("predictive_quantiles") or {}).get("q99"),
+                    "Prior max": (row.get("predictive_quantiles") or {}).get("max"),
+                    "q95 / observed median": (
                         row.get("observed_scale_ratios") or {}
-                    ).get("q99_to_observed_q95"),
+                    ).get("q95_to_observed_median"),
+                    "q99 / observed max": (
+                        row.get("observed_scale_ratios") or {}
+                    ).get("q99_to_observed_max"),
+                    "Median / observed median": (
+                        row.get("observed_scale_ratios") or {}
+                    ).get("median_to_observed_median"),
                 }
                 for row in _plausibility.get("rows", [])
             ]

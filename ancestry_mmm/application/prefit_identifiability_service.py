@@ -36,6 +36,9 @@ def review_prefit_identifiability(
     prior_predictive_threshold_policy: PriorPredictiveThresholdPolicy
     | Mapping[str, Any]
     | None = None,
+    candidate_spec: Any = None,
+    prepared_frame: Any = None,
+    causal_graph: Any = None,
 ) -> dict[str, Any]:
     """Compute a serialisable review for the current model-ready input.
 
@@ -60,6 +63,9 @@ def review_prefit_identifiability(
         prior_predictive=prior_predictive,
         support_threshold_policy=support_threshold_policy,
         prior_predictive_threshold_policy=prior_predictive_threshold_policy,
+        candidate_spec=candidate_spec,
+        prepared_frame=prepared_frame,
+        causal_graph=causal_graph,
     )
 
 
@@ -72,6 +78,9 @@ def current_prefit_fingerprint_set(
     target_start: str | pd.Timestamp | None,
     target_end: str | pd.Timestamp | None,
     transform_config: Mapping[str, Any] | None,
+    candidate_spec: Any = None,
+    prepared_frame: Any = None,
+    causal_graph: Any = None,
 ) -> dict[str, str]:
     """Return the current input identity for a persisted review."""
 
@@ -83,6 +92,9 @@ def current_prefit_fingerprint_set(
         target_start=target_start,
         target_end=target_end,
         transform_config=transform_config,
+        candidate_spec=candidate_spec,
+        prepared_frame=prepared_frame,
+        causal_graph=causal_graph,
     )
 
 

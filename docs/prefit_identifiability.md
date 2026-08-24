@@ -32,11 +32,35 @@ convergence or create a production candidate.
 
 ## Freshness and persistence
 
-Evidence records carry data, model-window, channel-set, and transform-config
-fingerprints, a diagnostic version, and a generation timestamp. Any mismatch
-is stale. The project bundle persists the evidence through its existing
-diagnostics directory, so older bundles remain importable without inferring
-new evidence.
+Evidence records carry data, model-window, channel-set, transform-config,
+candidate-specification, prepared-frame, and causal-graph fingerprints. If an
+identity object is unavailable, its explicit `None` value is fingerprinted so
+later availability/change makes evidence stale rather than weakening the
+contract. A diagnostic version and generation timestamp are also retained.
+Any mismatch is stale. The project bundle persists the evidence through its
+existing diagnostics directory, so older bundles remain importable without
+inferring new evidence.
+
+## Deterministic pre-fit screen
+
+`ancestry_mmm/core/prefit_screening.py` and
+`ancestry_mmm/application/prefit_screening_service.py` provide the required
+deterministic layer in the official pre-fit sequence. It uses expanding,
+time-respecting folds and fold-local media transform references to compare
+baseline/context-only with baseline/context-plus-media Ridge and ElasticNet
+surrogates. A bounded geometric-adstock/Hill grid is used for diagnostic
+geometry only. The persisted result includes channel and transform stability,
+residual/autocorrelation metrics, a future-to-past timing refutation,
+same-sample safeguards, fingerprints, and a retained-but-empty analyst
+rationale field.
+
+The screen is explicitly `diagnostic_only` and
+`official_eligibility: false`. It cannot select or remove channels, modify
+priors, create posterior evidence, or approve attribution, CPA/ROI, curves,
+planning, or optimisation. `review_recommended` remains the safe default until
+an analyst records the required rationale. The Model Setup control retains that
+text as review evidence, while the official-eligibility flag remains false; no
+rationale is invented by the application.
 
 ## Upstream alignment and custom gap
 
@@ -51,9 +75,22 @@ The closest upstream references consulted for the modelling boundary are:
   predictive sampling and inference-data shapes.
 - 'pymc-labs/pymc-marketing', pinned by this repository to PyMC-Marketing
   0.19.4, for the conceptual MMM transformation and response-curve boundary.
+- 'scikit-learn/scikit-learn', pinned by this repository through `uv.lock`,
+  for the public `Pipeline`, `StandardScaler`, `Ridge`, and `ElasticNet` APIs
+  used by the deterministic screen.
+
+Context7 resolution was recorded for `/pymc-devs/pymc`,
+`/pymc-labs/pymc-marketing`, and `/scikit-learn/scikit-learn`. Its catalogue
+exposed PyMC-Marketing 0.18.1 and scikit-learn 1.7.1 documentation at review
+time; the repository lock remains authoritative for the installed PyMC-
+Marketing 0.19.4 and scikit-learn 1.9.0 runtime. The implementation uses only
+documented public APIs; local tests against the locked runtime are the
+compatibility check for this repository.
 
 Neither upstream package provides Ancestry's governed support matrix,
 outcome-scale review states, stale evidence fingerprints, or the explicit
 separation between a short sampler smoke test and production convergence.
-Those are the narrow custom services implemented here. No upstream private
-internals are copied and no upstream dependency is added by this feature.
+Neither provides this exact leakage-safe, transformation-aware pre-fit
+evidence contract; that is the narrow custom service implemented here. No
+upstream private internals are copied and no upstream dependency is added by
+this feature.
