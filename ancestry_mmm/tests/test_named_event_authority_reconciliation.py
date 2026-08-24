@@ -147,7 +147,8 @@ class TestNamedEventOverlayReconciled:
     def test_part5_gap_updated_without_claiming_v16(self):
         """The stale 'only Part 5 v1.4 is present' statement is updated to
         record Part 5 v1.5 as supplied, while Part 5 v1.6 remains absent
-        and is not claimed to exist."""
+        (as recorded at this overlay's own 2026-08-19 reconciliation date)
+        and is not claimed to have existed at that time."""
         content = AUTHORITY_PATH.read_text()
         gaps_subsection = content.split("### Known version-reference gaps", 1)[1]
         assert "Part 5 v1.5" in gaps_subsection
@@ -155,6 +156,28 @@ class TestNamedEventOverlayReconciled:
         assert (
             "Part 5 v1.6" in gaps_subsection and "remains absent" in gaps_subsection
         ) or ("Part 5 v1.6 remains" in gaps_subsection and "absent" in gaps_subsection)
+
+    def test_part5_v16_gap_later_closed_without_rewriting_history(self):
+        """A later (2026-08-24) reconciliation pass supplied Part 5 v1.6
+        locally. That later record must say so explicitly - closing the gap
+        as a documentation fact - without deleting or rewriting this
+        overlay's own honest 2026-08-19 'referenced but absent' record."""
+        content = AUTHORITY_PATH.read_text()
+        closure_section = content.split(
+            "### Known version-reference gaps: Part 5 v1.6 gap closed as a documentation fact",
+            1,
+        )[1]
+        assert "supplied locally" in closure_section
+        assert "closing that specific gap as" in closure_section
+        assert "does not retroactively approve or\nreconcile Part 5 v1.6" in closure_section or (
+            "does not retroactively approve" in closure_section
+            and "Part 5 v1.6" in closure_section
+        )
+        # The original 2026-08-19 "remains absent" record must still be
+        # present verbatim elsewhere in the document - history is not
+        # rewritten just because a later pass closed the gap.
+        gaps_subsection = content.split("### Known version-reference gaps", 1)[1]
+        assert "Part 5 v1.6" in gaps_subsection and "remains absent" in gaps_subsection
 
     def test_part9_named_event_reporting_not_invented(self):
         """Part 9 v1.6 Final contains no dedicated named-event reporting

@@ -9,6 +9,12 @@
 #
 # See docs/development/graphify.md for the rationale behind each entry.
 
+# Local PRD suite - internal Ancestry product material, not code-navigation
+# input; excluded regardless of git-tracked status (it is untracked/
+# .git/info/exclude-protected in this repository, but Graphify must never
+# depend on that for confidentiality).
+docs/PRD/
+
 # Deprecated/superseded code - not part of the current implementation
 archive/
 
