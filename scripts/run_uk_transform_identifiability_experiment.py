@@ -35,6 +35,10 @@ import arviz as az
 import numpy as np
 import pandas as pd
 
+from ancestry_mmm.core.prefit_identifiability import (
+    classify_short_sampler_screen,
+)
+
 
 LADDER = ("C0", "C1", "C2", "C3", "C4", "C5")
 PRODUCTS = ("family_history", "dna_kit")
@@ -164,7 +168,9 @@ def _materialise_variant_config(
     return config
 
 
-def _trace_metrics(trace: az.InferenceData) -> dict[str, Any]:
+def _trace_metrics(
+    trace: az.InferenceData, *, chains: int, tune: int, draws: int
+) -> dict[str, Any]:
     diagnostics = RUNNER.compute_model_diagnostics(trace)
     stats = trace.sample_stats
     divergences = int(stats["diverging"].sum()) if "diverging" in stats else 0
@@ -179,7 +185,7 @@ def _trace_metrics(trace: az.InferenceData) -> dict[str, Any]:
     finite = True
     for variable in trace.posterior.data_vars.values():
         finite = finite and bool(np.isfinite(np.asarray(variable)).all())
-    return {
+    metrics = {
         "divergences": divergences,
         "rhat_max": float(diagnostics["rhat_max"]),
         "ess_min": float(diagnostics["ess_min"]),
@@ -205,6 +211,16 @@ def _trace_metrics(trace: az.InferenceData) -> dict[str, Any]:
             and (not bfmi_values.size or float(np.nanmin(bfmi_values)) >= 0.3)
         ),
     }
+    metrics["short_screen_state"] = classify_short_sampler_screen(
+        divergences=divergences,
+        rhat_max=metrics["rhat_max"],
+        ess_min=metrics["ess_min"],
+        bfmi_min=metrics["bfmi_min"],
+        chains=chains,
+        tune=tune,
+        draws=draws,
+    )
+    return metrics
 
 
 def _diagnostic_fit_one(
@@ -256,7 +272,7 @@ def _diagnostic_fit_one(
     model_dir.mkdir(parents=True, exist_ok=True)
     trace_path = model_dir / "posterior.nc"
     trace.to_netcdf(trace_path)
-    metrics = _trace_metrics(trace)
+    metrics = _trace_metrics(trace, chains=chains, tune=tune, draws=draws)
     result = {
         "status": "diagnostic_fit_completed",
         "model_name": name,
@@ -733,7 +749,10 @@ def _markdown_report(payload: Mapping[str, Any]) -> str:
     lines.extend(["```", "", "Classifications are diagnostics for identifiability only; they are not channel-selection gates.", "", "## C0-C5 ladder", ""])
     for row in payload["ladder"]:
         lines.append(
-            f"- {row['variant']}: {row['status']}; FH divergences={row.get('family_history_divergences')}, DNA divergences={row.get('dna_kit_divergences')}; all-model healthy={row.get('all_models_healthy')}"
+            f"- {row['variant']}: {row['status']}; FH divergences={row.get('family_history_divergences')}, DNA divergences={row.get('dna_kit_divergences')}; "
+            f"divergence smoke-test={row.get('divergence_smoke_test')}; mixing={row.get('mixing_status')}; "
+            "production convergence assessed="
+            f"{row.get('production_convergence_assessed')}"
         )
     lines.extend(["", "## Decision", "", payload["decision_required"], ""])
     return "\n".join(lines)
@@ -799,6 +818,33 @@ def main(argv: Sequence[str] | None = None) -> int:
                             model_rows.get(product, {}).get("metrics", {}).get("short_screen_healthy", False)
                             for product in PRODUCTS
                         )
+                    ),
+                    "divergence_smoke_test": (
+                        "passed"
+                        if all(
+                            model_rows.get(product, {})
+                            .get("metrics", {})
+                            .get("short_screen_state", {})
+                            .get("divergence_smoke_test")
+                            == "passed"
+                            for product in PRODUCTS
+                        )
+                        else "failed"
+                    ),
+                    "mixing_status": "inconclusive",
+                    "production_convergence_assessed": False,
+                    "interpretation": (
+                        "divergence smoke-test passed; mixing is inconclusive on "
+                        "this short screen; production convergence was not assessed"
+                        if all(
+                            model_rows.get(product, {})
+                            .get("metrics", {})
+                            .get("short_screen_state", {})
+                            .get("divergence_smoke_test")
+                            == "passed"
+                            for product in PRODUCTS
+                        )
+                        else "divergence smoke-test failed; production convergence was not assessed"
                     ),
                     "detail": result,
                 }
@@ -867,9 +913,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         }
         model_status = "blocked_no_production_candidate"
         decision = (
-            "Production Model A remains blocked. The bounded diagnostic ladder did not produce a repeated, healthy candidate; do not fix transforms, change pooling, change the saturation family, or alter business priors without analyst approval."
+            "Production Model A remains blocked. All C0-C5 variants passed the "
+            "divergence smoke-test, but the short screens provide inconclusive "
+            "mixing evidence and did not assess production convergence. No "
+            "production candidate was selected; do not fix transforms, change "
+            "pooling, change the saturation family, or alter business priors "
+            "without analyst approval."
             if candidate is None
-            else "A diagnostic candidate reached the initial short-screen gate, but it remains non-production until repeated screens, recovery evidence, and the approved full confirmation gate are satisfied."
+            else "A diagnostic candidate reached the initial short-screen gate, "
+            "but the short screen did not assess production convergence. It "
+            "remains non-production until repeated screens, recovery evidence, "
+            "and the approved full confirmation gate are satisfied."
         )
         payload = {
             "schema_version": 1,
@@ -891,6 +945,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             "reference_metrics": reference_metrics,
             "support_matrix_path": str(args.output_dir / "support-transform-identifiability-matrix.json"),
             "ladder": ladder_rows,
+            "ladder_semantics": {
+                "short_screen_is_diagnostic_only": True,
+                "zero_divergences_do_not_establish_convergence": True,
+                "short_screen_mixing_interpretation": "inconclusive",
+                "production_convergence_assessed": False,
+            },
             "hierarchy_prior_audit": hierarchy_audit,
             "prior_predictive_audit": prior_audit,
             "target_accept_sensitivity": target_accept,

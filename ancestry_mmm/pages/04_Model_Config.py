@@ -59,6 +59,9 @@ from ancestry_mmm.application.official_preparation_service import (
     describe_official_preparation,
     review_official_preparation,
 )
+from ancestry_mmm.application.prefit_identifiability_service import (
+    review_prefit_identifiability,
+)
 from ancestry_mmm.data import (
     adopted_model_input_frame,
     adopted_model_input_sources,
@@ -922,6 +925,122 @@ else:
                 f"Could not prepare the modelling frame: {e} Review the structure and try again."
             )
 _prepare_frame_section.__exit__(None, None, None)
+
+st.markdown("---")
+_prefit_section = SectionCard(
+    "Pre-fit support and transform review",
+    description=(
+        "A diagnostic review of observed channel support and the current "
+        "transform contract before sampling. It does not select channels, "
+        "change roles, or mutate model assumptions."
+    ),
+)
+_prefit_section.__enter__()
+_prefit_data = get_state("official_prepared_data")
+if _prefit_data is None:
+    _prefit_data = df
+_prefit_calendar = get_state("canonical_calendar") or {}
+_prefit_units = {}
+for _input_spec in get_state("media_input_specs") or []:
+    if isinstance(_input_spec, dict):
+        _channel = _input_spec.get("channel") or _input_spec.get("model_input_column")
+        if _channel:
+            _prefit_units[str(_channel)] = _input_spec.get("unit", "unresolved")
+
+if _prefit_data is None:
+    st.info("Prepare model-ready data before running the pre-fit support review.")
+else:
+    try:
+        _prefit_report = review_prefit_identifiability(
+            _prefit_data,
+            spec.channels,
+            product="project",
+            model_name="Model A pre-fit review",
+            date_col=spec.date_col,
+            market_col=spec.market_col,
+            target_start=_prefit_calendar.get("start"),
+            target_end=_prefit_calendar.get("end"),
+            units=_prefit_units,
+            transform_config=prior_config,
+        )
+    except (TypeError, ValueError) as _prefit_error:
+        _prefit_report = {
+            "schema_version": 1,
+            "diagnostic_version": "prefit-identifiability-v1",
+            "product": "project",
+            "model_name": "Model A pre-fit review",
+            "state_semantics": {
+                "static_readiness": "blocked",
+                "support_identifiability": "blocked",
+                "prior_predictive": "not_run",
+                "short_sampler_screen": "not_run",
+                "production_convergence": "not_assessed",
+                "postfit_validation": "not_run",
+                "reporting_eligibility": "not_eligible",
+            },
+            "status": "blocked",
+            "reason": str(_prefit_error),
+            "diagnostic_only": True,
+            "channel_selection_rule": False,
+            "model_mutation_applied": False,
+        }
+    set_state("prefit_identifiability", _prefit_report)
+    if _prefit_report.get("status") == "blocked":
+        st.warning(
+            "Pre-fit support review is blocked for the current inputs: "
+            + str(
+                _prefit_report.get(
+                    "reason", "review could not be calculated"
+                )
+            )
+        )
+    else:
+        st.caption(
+            "Support classifications are transform-identifiability diagnostics only. "
+            "They are not channel-selection gates and do not change the fitted inputs."
+        )
+        _prefit_rows = [
+            {
+                "Channel": row["channel"],
+                "Unit": row["model_input_unit"],
+                "Target weeks": row["target_weeks"],
+                "Positive weeks": row["positive_weeks"],
+                "Distinct positive values": row["distinct_positive_values"],
+                "Support": row["support_status"],
+                "Review": row["review_recommendation"]["review_status"],
+            }
+            for row in _prefit_report["support_identifiability"]["rows"]
+        ]
+        if _prefit_rows:
+            st.dataframe(pd.DataFrame(_prefit_rows), width="stretch", hide_index=True)
+        _prefit_review_rows = [
+            row
+            for row in _prefit_report["support_identifiability"]["rows"]
+            if row["review_recommendation"]["review_status"] != "ready"
+        ]
+        if _prefit_review_rows:
+            with st.expander("Channels needing analyst review"):
+                for _row in _prefit_review_rows:
+                    _recommendation = _row["review_recommendation"]
+                    st.markdown(
+                        f"- **{_row['channel']}**: "
+                        + "; ".join(_recommendation["reasons"])
+                        + ". Possible review actions: "
+                        + "; ".join(
+                            _recommendation["possible_review_actions"]
+                        )
+                    )
+        render_technical_details(
+            details={
+                "Evidence version": _prefit_report["diagnostic_version"],
+                "Target window": _prefit_report["support_identifiability"][
+                    "target_window"
+                ],
+                "Fingerprints": _prefit_report["fingerprints"],
+                "State semantics": _prefit_report["state_semantics"],
+            }
+        )
+_prefit_section.__exit__(None, None, None)
 
 if get_state("frame") is not None:
     render_next_step("model_config")

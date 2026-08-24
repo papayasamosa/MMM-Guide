@@ -713,6 +713,7 @@ if st.button("Build export bundle", type="primary"):
             diagnostics={
                 "scorecard": get_state("scorecard"),
                 "backtest_results": get_state("backtest_results"),
+                "prefit_identifiability": get_state("prefit_identifiability"),
             },
             notes=get_state("project_notes"),
             calibration_records=get_state("calibration_records") or [],
@@ -1186,6 +1187,10 @@ if uploaded_zip is not None and st.button("Import bundle"):
         imported_diagnostics = imported.get("diagnostics") or {}
         set_state("scorecard", imported_diagnostics.get("scorecard"))
         set_state("backtest_results", imported_diagnostics.get("backtest_results"))
+        set_state(
+            "prefit_identifiability",
+            imported_diagnostics.get("prefit_identifiability"),
+        )
         if imported.get("curve_bank_files") or imported.get("curve_bank_binary_files"):
             restored_curve_dir = curve_bank_dir()
             restored_curve_dir.mkdir(parents=True, exist_ok=True)

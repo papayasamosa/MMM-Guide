@@ -399,10 +399,16 @@ def prior_predictive_summary(
                     "non_finite_count": int(cell.size - finite.size),
                     "mean": float(np.mean(finite)) if has_finite else float("nan"),
                     "median": float(np.median(finite)) if has_finite else float("nan"),
+                    "q01": float(np.quantile(finite, 0.01))
+                    if has_finite
+                    else float("nan"),
                     "q05": float(np.quantile(finite, 0.05))
                     if has_finite
                     else float("nan"),
                     "q95": float(np.quantile(finite, 0.95))
+                    if has_finite
+                    else float("nan"),
+                    "q99": float(np.quantile(finite, 0.99))
                     if has_finite
                     else float("nan"),
                     "min": float(np.min(finite)) if has_finite else float("nan"),
@@ -410,10 +416,29 @@ def prior_predictive_summary(
                 }
             )
 
+    # Keep the finite/non-finite audit and observed-scale comparison as a
+    # separate, diagnostic-only layer.  No threshold policy is supplied here:
+    # a finite preview therefore remains reviewable rather than being called
+    # policy-plausible by an invented cutoff.
+    from .prefit_identifiability import prior_predictive_plausibility
+
+    prior_draws: Dict[str, np.ndarray] = {}
+    observed_values: Dict[str, np.ndarray] = {}
+    for m_i, market in enumerate(markets):
+        start, end = market_bounds[m_i]
+        for o_i, oid in enumerate(meta.outcome_ids):
+            label = f"{market}::{oid}"
+            prior_draws[label] = flat[:, start:end, o_i]
+            observed_values[label] = np.asarray(frame["Y"])[start:end, o_i]
+
     return {
         "n_samples": n_samples,
         "random_seed": random_seed,
         "rows": rows,
+        "plausibility": prior_predictive_plausibility(
+            prior_draws,
+            observed_values,
+        ),
         "warnings": captured_warnings,
     }
 

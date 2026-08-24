@@ -169,6 +169,10 @@ def init_session_state():
         # it is cleared whenever model/data state is invalidated.
         "official_preparation_result": None,
         "official_capability_report": None,
+        # Reusable pre-fit support/transform and prior-predictive evidence.
+        # This is diagnostic-only and is independently fingerprinted; it is
+        # not a fit, convergence result, or reporting approval.
+        "prefit_identifiability": None,
         # Optional explicit project-calendar configuration. It is intentionally
         # empty by default: official preparation must not infer a calendar
         # from source intersection or observed dates.
@@ -306,6 +310,7 @@ def clear_model_state() -> None:
         "validation_service_result",
         "official_preparation_result",
         "official_capability_report",
+        "prefit_identifiability",
     ]
     for key in model_keys:
         st.session_state[key] = None

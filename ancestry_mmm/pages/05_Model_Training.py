@@ -395,6 +395,23 @@ if st.button("Preview prior predictive (no fitting)"):
                     ),
                 },
             )
+            _prefit_report = get_state("prefit_identifiability")
+            if isinstance(_prefit_report, dict):
+                _prefit_report = dict(_prefit_report)
+                _prefit_report["prior_predictive"] = preview_result.get(
+                    "plausibility",
+                    {
+                        "status": "not_run",
+                        "review_status": "not_run",
+                        "diagnostic_only": True,
+                    },
+                )
+                _prefit_states = dict(
+                    _prefit_report.get("state_semantics") or {}
+                )
+                _prefit_states["prior_predictive"] = "computed"
+                _prefit_report["state_semantics"] = _prefit_states
+                set_state("prefit_identifiability", _prefit_report)
 
 _preview = get_state("prior_predictive_preview")
 # Prior-predictive preview status badge - reuses the exact same staleness
@@ -440,6 +457,47 @@ elif _preview and _preview.get("status") == "computed":
         )
         for w in _preview_payload.get("warnings", []):
             st.caption(f"Sampling warning: {w}")
+
+        _plausibility = _preview_payload.get("plausibility") or {}
+        if _plausibility:
+            st.markdown("### Prior-predictive observed-scale review")
+            st.caption(
+                "This is diagnostic evidence from the proposed priors. "
+                "No approved threshold policy is applied by default, so finite "
+                "results remain review-recommended until an analyst-approved "
+                "policy exists."
+            )
+            _plausibility_rows = [
+                {
+                    "Outcome": row.get("outcome_id"),
+                    "Finite": row.get("finite"),
+                    "Status": row.get("status"),
+                    "Review": row.get("review_status"),
+                    "Predictive median": (
+                        row.get("predictive_quantiles") or {}
+                    ).get("q50"),
+                    "Observed median": (row.get("observed_quantiles") or {}).get(
+                        "q50"
+                    ),
+                    "Predictive q99 / observed q95": (
+                        row.get("observed_scale_ratios") or {}
+                    ).get("q99_to_observed_q95"),
+                }
+                for row in _plausibility.get("rows", [])
+            ]
+            if _plausibility_rows:
+                st.dataframe(
+                    pd.DataFrame(_plausibility_rows),
+                    width="stretch",
+                    hide_index=True,
+                )
+            if _plausibility.get("component_decomposition", {}).get("status") == (
+                "unavailable"
+            ):
+                st.caption(
+                    "Component decomposition is unavailable because the current "
+                    "prior preview retains outcome draws only."
+                )
 
 st.markdown("### Fit action")
 st.caption(
