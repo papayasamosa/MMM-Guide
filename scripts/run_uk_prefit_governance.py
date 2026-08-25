@@ -231,6 +231,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=20260824)
     parser.add_argument("--governed-start", default=runner.COMMON_WINDOW_START)
     parser.add_argument("--governed-end", default=runner.COMMON_WINDOW_END)
+    parser.add_argument(
+        "--prior-config",
+        type=Path,
+        help=(
+            "Optional JSON object of approved diagnostic/fit prior "
+            "overrides. Defaults to "
+            "runner.APPROVED_UK_MODEL_A_PRIOR_CONFIG (REQ-CONTROL-001) - "
+            "this pre-fit evidence run must reflect the same prior the "
+            "production fit actually uses, not a stale {} default."
+        ),
+    )
     return parser
 
 
@@ -240,6 +251,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    prior_config: dict[str, Any] = dict(runner.APPROVED_UK_MODEL_A_PRIOR_CONFIG)
+    if args.prior_config is not None:
+        payload = json.loads(args.prior_config.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("--prior-config must contain a JSON object.")
+        prior_config = payload
 
     captured: dict[str, tuple[dict[str, Any], ModelSpec]] = {}
 
@@ -258,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
         only_model=args.only_model,
         governed_start=args.governed_start,
         governed_end=args.governed_end,
-        prior_config={},
+        prior_config=prior_config,
         frame_callback=_capture,
     )
     _write_json(
@@ -272,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
             model_name=model_name,
             frame=frame,
             spec=spec,
-            prior_config={},
+            prior_config=prior_config,
             governed_start=args.governed_start,
             governed_end=args.governed_end,
             n_prior_samples=args.n_prior_samples,

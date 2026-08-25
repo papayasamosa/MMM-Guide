@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 
 def _runner_module():
@@ -42,3 +43,66 @@ def test_no_target_window_variation_identifies_constant_inputs() -> None:
         "constant_positive",
         "constant_zero",
     ]
+
+
+def test_approved_prior_config_matches_req_control_001() -> None:
+    runner = _runner_module()
+
+    assert runner.APPROVED_UK_MODEL_A_PRIOR_CONFIG == {
+        "control_sigma": 0.20,
+        "enable_control_scaling": True,
+    }
+    assert runner.APPROVED_STANDARDISED_CONTROL_NAMES == {
+        "fh_category_demand_google_trends",
+        "dna_category_demand_google_trends",
+    }
+
+
+def test_control_scaling_scope_is_a_noop_when_scaling_is_disabled() -> None:
+    runner = _runner_module()
+    frame = {
+        "control_names": ["anything_at_all"],
+        "outcome_controls": {"oid": object()},
+    }
+
+    runner._validate_approved_control_scaling_scope(
+        "family_history", frame, {"enable_control_scaling": False}
+    )
+
+
+def test_control_scaling_scope_allows_the_approved_controls() -> None:
+    runner = _runner_module()
+    frame = {
+        "control_names": ["fh_category_demand_google_trends"],
+        "outcome_controls": {},
+    }
+
+    runner._validate_approved_control_scaling_scope(
+        "family_history", frame, runner.APPROVED_UK_MODEL_A_PRIOR_CONFIG
+    )
+
+
+def test_control_scaling_scope_blocks_an_unapproved_control_name() -> None:
+    runner = _runner_module()
+    frame = {
+        "control_names": ["fh_category_demand_google_trends", "some_new_control"],
+        "outcome_controls": {},
+    }
+
+    with pytest.raises(runner.FitGateError, match="some_new_control"):
+        runner._validate_approved_control_scaling_scope(
+            "family_history", frame, runner.APPROVED_UK_MODEL_A_PRIOR_CONFIG
+        )
+
+
+def test_control_scaling_scope_blocks_nonempty_outcome_controls() -> None:
+    runner = _runner_module()
+    frame = {
+        "control_names": ["fh_category_demand_google_trends"],
+        "outcome_controls": {"UK::fh_net_billthrough_count_new": np.zeros((3, 1))},
+    }
+
+    with pytest.raises(runner.FitGateError, match="outcome_controls"):
+        runner._validate_approved_control_scaling_scope(
+            "family_history", frame, runner.APPROVED_UK_MODEL_A_PRIOR_CONFIG
+        )

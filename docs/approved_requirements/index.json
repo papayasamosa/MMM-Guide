@@ -1087,6 +1087,34 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
         "ancestry_mmm/tests/test_named_event_authority_reconciliation.py::TestNamedEventOverlayReconciled::test_req_event_002_indexed_and_classified_incomplete"
       ]
+    },
+    {
+      "requirement_id": "REQ-CONTROL-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-CONTROL-001.md",
+      "affected_modules": [
+        "scripts/run_uk_production_fit.py",
+        "ancestry_mmm/core/hierarchical_model.py",
+        "ancestry_mmm/core/control_scaling.py",
+        "ancestry_mmm/core/predict.py",
+        "ancestry_mmm/core/persistence.py",
+        "docs/approved_requirements/REQ-CONTROL-001.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_uk_production_fit_runner.py::test_approved_prior_config_matches_req_control_001",
+        "ancestry_mmm/tests/test_uk_production_fit_runner.py::test_control_scaling_scope_is_a_noop_when_scaling_is_disabled",
+        "ancestry_mmm/tests/test_uk_production_fit_runner.py::test_control_scaling_scope_allows_the_approved_controls",
+        "ancestry_mmm/tests/test_uk_production_fit_runner.py::test_control_scaling_scope_blocks_an_unapproved_control_name",
+        "ancestry_mmm/tests/test_uk_production_fit_runner.py::test_control_scaling_scope_blocks_nonempty_outcome_controls"
+      ]
     }
   ]
 }

@@ -101,6 +101,25 @@ WEEKLY_CONTEXT_CONTROLS = {
     "family_history": ("fh_category_demand_google_trends",),
     "dna_kit": ("dna_category_demand_google_trends",),
 }
+# REQ-CONTROL-001 (2026-08-25): the analyst approved standardising and
+# recalibrating the coefficient prior specifically for the continuous
+# category-demand controls WEEKLY_CONTEXT_CONTROLS above already selects
+# into each model's equation - not as a universal default for any future
+# control. Derived from WEEKLY_CONTEXT_CONTROLS rather than duplicated, so
+# the approved-scaling scope can never silently drift out of sync with
+# which controls are actually in the model.
+APPROVED_STANDARDISED_CONTROL_NAMES = frozenset(
+    name for names in WEEKLY_CONTEXT_CONTROLS.values() for name in names
+)
+# REQ-CONTROL-001's approved production prior for the current UK Model A
+# candidate only - `core.hierarchical_model`'s own fallback defaults
+# (control_sigma=0.5, enable_control_scaling=False) are deliberately left
+# unchanged so this stays scoped to this script's production entrypoint
+# rather than becoming a universal default for every model/caller.
+APPROVED_UK_MODEL_A_PRIOR_CONFIG: dict[str, Any] = {
+    "control_sigma": 0.20,
+    "enable_control_scaling": True,
+}
 MONTHLY_CONTEXT_BLOCK_REASON = (
     "Monthly source has no exact publication/release timing in the supplied "
     "context metadata; governed release-aware LOCF cannot be executed without "
@@ -110,6 +129,44 @@ MONTHLY_CONTEXT_BLOCK_REASON = (
 
 class FitGateError(RuntimeError):
     """Raised when official preparation cannot authorise a specific fit."""
+
+
+def _validate_approved_control_scaling_scope(
+    model_name: str, frame: dict[str, Any], prior_config: Mapping[str, Any]
+) -> None:
+    """Fail closed if `enable_control_scaling` would standardise anything
+    REQ-CONTROL-001 did not review.
+
+    `core.hierarchical_model._resolve_control_scaling`'s gate applies
+    uniformly to whatever is in `frame["control_names"]`/`frame[
+    "outcome_controls"]` with no type-awareness of its own (binary vs.
+    continuous, or shared vs. outcome-level) - this check is what actually
+    keeps the analyst's approved scope ("these named continuous
+    category-demand controls in the current Model A candidate", not a
+    universal prior for any future control) enforced in code rather than
+    only documented.
+    """
+    if not bool(prior_config.get("enable_control_scaling", False)):
+        return
+    control_names = set(frame.get("control_names") or [])
+    unapproved = control_names - APPROVED_STANDARDISED_CONTROL_NAMES
+    if unapproved:
+        raise FitGateError(
+            f"{model_name}: enable_control_scaling is on but frame['control_names'] "
+            f"includes control(s) REQ-CONTROL-001 never reviewed: "
+            f"{sorted(unapproved)}. Add an explicit new approved requirement "
+            f"covering them, or pass an explicit --prior-config that turns "
+            f"scaling off for this run."
+        )
+    outcome_controls = frame.get("outcome_controls") or {}
+    if outcome_controls:
+        raise FitGateError(
+            f"{model_name}: enable_control_scaling is on and "
+            f"frame['outcome_controls'] is non-empty "
+            f"({sorted(outcome_controls)}) - REQ-CONTROL-001 only approved "
+            f"standardising the shared continuous category-demand controls, "
+            f"not any outcome-level control. Investigate before proceeding."
+        )
 
 
 class _Upload:
@@ -1162,6 +1219,7 @@ def run(
         frame["preparation_mode"] = "official"
         if frame_callback is not None:
             frame_callback(model_name, frame, spec)
+        _validate_approved_control_scaling_scope(model_name, frame, prior_config)
         history_evidence = _add_history(
             frame,
             pack.activity_bundle.model_input_media,
@@ -1319,7 +1377,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--prior-config",
         type=Path,
-        help="Optional JSON object of approved diagnostic/fit prior overrides.",
+        help=(
+            "Optional JSON object of approved diagnostic/fit prior overrides. "
+            "Replaces APPROVED_UK_MODEL_A_PRIOR_CONFIG (REQ-CONTROL-001) "
+            "entirely rather than merging with it - omit this flag for the "
+            "approved production prior."
+        ),
     )
     parser.add_argument("--seed", type=int, default=20260820)
     parser.add_argument("--governed-start", default=COMMON_WINDOW_START)
@@ -1340,7 +1403,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        prior_config: Mapping[str, Any] = {}
+        # REQ-CONTROL-001's approved production prior config is the
+        # default; --prior-config, when supplied, replaces it entirely
+        # (e.g. for a bounded diagnostic run that needs something else).
+        prior_config: Mapping[str, Any] = APPROVED_UK_MODEL_A_PRIOR_CONFIG
         if args.prior_config is not None:
             payload = json.loads(args.prior_config.read_text(encoding="utf-8"))
             if not isinstance(payload, dict):
