@@ -393,20 +393,30 @@ def _resolve_control_scaling(
     """Resolve the optional centred/unit-SD control reparameterisation.
 
     Centring/scaling a control changes the coefficient prior's implied
-    meaning ("effect per unit-SD" vs. the production-approved "effect per
-    raw unit") unless the prior itself is recalibrated to compensate - no
-    such recalibration exists, and no `docs/approved_requirements/REQ-*`
-    record or `docs/decision_log.md` entry approves this as a production
-    change (see root `AGENTS.md`: "Standardising a predictor while leaving
-    the same coefficient prior is not automatically a prior-neutral
-    numerical reparameterisation"). It therefore follows exactly the same
-    gated, default-off contract as `_resolve_media_input_scales`/
-    `K_reference`/`fixed_decay_rate` below: diagnostic-only, explicit
-    opt-in via `prior_config["enable_control_scaling"]`, never the
-    production default. Off by default, `fit_control_scaling` is not
+    meaning ("effect per unit-SD" vs. "effect per raw unit") unless the
+    prior itself is recalibrated to compensate (see root `AGENTS.md`:
+    "Standardising a predictor while leaving the same coefficient prior
+    is not automatically a prior-neutral numerical reparameterisation").
+    This function itself stays gated and default-off - explicit opt-in via
+    `prior_config["enable_control_scaling"]`, never a default here - the
+    same contract as `_resolve_media_input_scales`/`K_reference`/
+    `fixed_decay_rate` below. Off by default, `fit_control_scaling` is not
     called at all and the raw controls pass through unchanged with an
     empty scaling contract - byte-identical to this repository's
     pre-existing (pre-`REQ-PREFIT-001`-branch) behaviour.
+
+    `docs/approved_requirements/REQ-CONTROL-001.md` (2026-08-25) approves
+    turning this on, with `control_sigma=0.20`, specifically for the
+    current UK Model A candidate's named continuous category-demand
+    controls - not as a universal default for this function's every
+    caller. That scope is enforced by the caller
+    (`scripts/run_uk_production_fit.py`'s
+    `_validate_approved_control_scaling_scope` and its
+    `APPROVED_UK_MODEL_A_PRIOR_CONFIG`/`APPROVED_STANDARDISED_CONTROL_
+    NAMES`), not here - this function has no name/type awareness of its
+    own and will standardise whatever it is given whenever
+    `enable_control_scaling` is on, so any other caller enabling it must
+    bring its own equivalent, separately approved scope check.
     """
     if not bool(prior_config.get("enable_control_scaling", False)):
         return np.asarray(X_controls_raw, dtype=float), {}

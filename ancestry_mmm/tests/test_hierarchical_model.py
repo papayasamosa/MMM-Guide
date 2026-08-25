@@ -180,15 +180,20 @@ class TestMediaInputScaleContract:
 
 
 class TestControlScalingContract:
-    """`_resolve_control_scaling` must default to leaving controls raw and
-    the coefficient prior's implied meaning unchanged - production-default
-    behaviour before and after PR #304's pre-fit remediation branch must be
-    byte-identical here. Centring/scaling changes the prior's implied
-    meaning without a compensating recalibration (no `docs/
-    approved_requirements/REQ-*` record or `docs/decision_log.md` entry
-    approves it as a production change), so it must remain a gated,
-    default-off diagnostic experiment - the same pattern already used by
-    `_resolve_media_input_scales`/`K_reference`/`fixed_decay_rate`."""
+    """`_resolve_control_scaling` itself must default to leaving controls
+    raw and the coefficient prior's implied meaning unchanged - production-
+    default behaviour before and after PR #304's pre-fit remediation branch
+    must be byte-identical here. Centring/scaling changes the prior's
+    implied meaning without a compensating recalibration, so this function
+    stays a gated, default-off mechanism with no opinion of its own about
+    when to turn on - the same pattern already used by
+    `_resolve_media_input_scales`/`K_reference`/`fixed_decay_rate`.
+    `docs/approved_requirements/REQ-CONTROL-001.md` now approves turning
+    this on for the current UK Model A candidate's two named continuous
+    category-demand controls specifically, via
+    `scripts/run_uk_production_fit.py`'s own explicit opt-in - not by
+    changing this function's default, which is exactly what these tests
+    guard."""
 
     def test_default_leaves_controls_raw_with_empty_contract(self):
         raw = np.array([[40.0, 2.0], [50.0, 4.0], [60.0, 6.0]])

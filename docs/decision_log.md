@@ -4,6 +4,66 @@ Format: Date, Decision, Reason, Alternatives considered, Impact, Owner, Status.
 
 ---
 
+**Date:** 2026-08-25
+**Decision:** Approve and implement `docs/approved_requirements/
+REQ-CONTROL-001.md`: standardise the two named continuous category-
+demand controls (`fh_category_demand_google_trends`,
+`dna_category_demand_google_trends`) in the current UK Model A
+candidate before modelling, with coefficient prior `Normal(0, 0.20)` on
+the standardised scale. Implemented via a new
+`APPROVED_UK_MODEL_A_PRIOR_CONFIG` default in
+`scripts/run_uk_production_fit.py`'s `main()` (used whenever no
+`--prior-config` override is supplied) plus a new
+`_validate_approved_control_scaling_scope` fail-closed guard that
+blocks `enable_control_scaling` for any control name outside the
+approved allowlist or any non-empty `outcome_controls`. No change to
+`core.control_scaling.py`, `core.predict.py`, or `core.persistence.py`
+- the existing scaling-contract/replay/persistence machinery already
+carries the retained scaling parameters through posterior prediction,
+attribution, and scenario replay unconditionally once
+`enable_control_scaling=True` at training time. `core.hierarchical_
+model.py`'s own fallback defaults (`control_sigma=0.5`,
+`enable_control_scaling=False`) are unchanged - this is scoped to the
+UK production-fit script's default, not a change to the shared model
+builder's behaviour for any other caller.
+**Reason:** WP2.6's real-data evidence
+(`docs/wp2_6_control_prior_calibration_decision_package.md`) showed the
+raw (unscaled) control representation produced ±40-49 log-unit
+`eta_controls` swings under the same nominal prior - the direct cause
+of WP2.5's implausible prior-predictive tails - and a `control_sigma`
+sensitivity grid gave the analyst enough evidence to select `0.20`
+(90% multiplicative interval ~0.71x-1.37x, zero ceiling-clipping) over
+the wider `0.5` default (unnecessarily broad for a secondary context
+control) or `1.0` (measurable ceiling-clipping).
+**Alternatives considered:** changing `core.hierarchical_model.py`'s
+own fallback `control_sigma`/`enable_control_scaling` defaults directly
+(rejected - would silently make `0.20` a universal default for every
+model/market/caller, not the analyst-approved candidate-specific
+decision); relying on documentation alone to keep the decision scoped
+to the two named controls (rejected - `_resolve_control_scaling` has no
+type/name awareness of its own, so a future binary control or
+outcome-level control would otherwise be silently standardised the
+first time `enable_control_scaling` is turned on for any reason;
+addressed instead with a fail-closed code guard); winsorising/capping
+media priors or the overall prior-predictive tail to compensate
+further (rejected - out of scope for this decision and not requested;
+WP2.6 already showed the control-prior fix does not fully resolve the
+tail, and WP2.7 explicitly defers that to analyst review rather than
+silent tightening).
+**Impact:** `scripts/run_uk_production_fit.py`'s production entrypoint
+now standardises the two named controls with `control_sigma=0.20` by
+default; `docs/approved_requirements/REQ-CONTROL-001.md` (new) and
+`index.json`/`README.md` updated; 5 new tests in
+`ancestry_mmm/tests/test_uk_production_fit_runner.py`. No other prior,
+transform, pooling, channel-selection, or fold-policy default changed.
+**Owner:** Modelling / Platform engineering, per the human analyst's
+WP2.7 instruction (2026-08-25).
+**Status:** Implemented. Governed UK pre-fit re-run and short sampler
+screen to follow under this same work package before any WP3 full-fit
+authorisation.
+
+---
+
 **Date:** 2026-08-24
 **Decision:** Do not proceed to WP3 full Model A NUTS sampling. The human
 analyst reviewed WP2's real UK governed pre-fit evidence and did not
