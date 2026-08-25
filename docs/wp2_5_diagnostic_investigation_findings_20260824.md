@@ -178,11 +178,15 @@ default):
 | prefit-fold-3 | 82 | 37 |
 
 Fold 1's 8-week training window is barely more than the `min_train_periods`
-default floor itself, for an 18-channel (Family History) / 19-channel
-(DNA, including the DNA-specific channel) weekly model. With that few
-training weeks and that many channels, most channels necessarily have
-zero or near-zero variation within the training window alone - this
-fold cannot meaningfully separate 18-19 channels' worth of signal
+default floor itself, for a 19-channel (Family History) / 18-channel
+(DNA) weekly model - confirmed directly against `core.prefit_
+identifiability`'s own channel lists in the real evidence
+(`identifiability_report.support_identifiability.channels`), correcting
+this section's earlier reversed "18 FH / 19 DNA" wording (WP2.6 item 6).
+With that few training weeks and that many channels, most channels
+necessarily have zero or near-zero variation within the training window
+alone - this fold cannot meaningfully separate 18-19 channels' worth of
+signal
 regardless of the true underlying process, and its own evidence (§1)
 shows a deeply negative baseline R2, consistent with this being an
 inherent property of the fold, not a candidate-specific finding.
