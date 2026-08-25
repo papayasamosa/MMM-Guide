@@ -60,7 +60,10 @@ def test_approved_prior_config_matches_req_control_001() -> None:
 
 def test_control_scaling_scope_is_a_noop_when_scaling_is_disabled() -> None:
     runner = _runner_module()
-    frame = {"control_names": ["anything_at_all"], "outcome_controls": {"oid": object()}}
+    frame = {
+        "control_names": ["anything_at_all"],
+        "outcome_controls": {"oid": object()},
+    }
 
     runner._validate_approved_control_scaling_scope(
         "family_history", frame, {"enable_control_scaling": False}
