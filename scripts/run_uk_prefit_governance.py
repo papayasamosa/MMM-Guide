@@ -113,6 +113,19 @@ def _build_prefit_evidence(
         target_end=governed_end,
         units=_governed_units(frame),
         transform_config=prior_config,
+        # WP2.9 item 1: bind the review to the actual candidate
+        # specification and prepared frame this pre-fit evidence run
+        # itself used, rather than leaving `build_prefit_fingerprints`
+        # defaulting both to `None` (silently producing the null/
+        # placeholder fingerprint every governed run since WP2 actually
+        # persisted). `causal_graph=None` is passed unchanged below to
+        # `build_model_for_spec` for this candidate - this run genuinely
+        # uses no explicit causal graph override (the default
+        # pathway-catalogue engine), so `causal_graph=None` here
+        # correctly reflects that real state rather than an omission.
+        candidate_spec=spec,
+        prepared_frame=frame,
+        causal_graph=None,
     )
 
     screening_report = run_prefit_screen(
