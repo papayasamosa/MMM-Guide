@@ -5,6 +5,58 @@ Format: Date, Decision, Reason, Alternatives considered, Impact, Owner, Status.
 ---
 
 **Date:** 2026-08-25
+**Decision:** WP2.8 (staged Model A convergence escalation) is blocked
+before its first stage. The analyst directed running the repository's
+"4-chain geometry screen" and, if healthy, "medium run" - the next two
+stages of the convergence-remediation ladder named in `docs/model_a_
+convergence_remediation_20260822.md` - using an existing governed
+sampler configuration for each, explicitly instructing that no new
+configuration be invented and that a decision package be produced and
+the work stopped if none is documented. An exhaustive search (every doc,
+every script's draws/tune/chains/target_accept default, every REQ
+record, the full decision log, and the complete git history of the
+remediation doc and the identifiability-experiment script) found that
+neither stage has ever had a concrete configuration attached anywhere in
+the repository - the remediation doc names both stages in one sentence
+with zero numbers, unchanged across its entire history. See
+`docs/wp2_8_missing_sampler_configuration_decision_package_20260825.md`
+for the full search record and illustrative (not selected) candidate
+configurations.
+**Reason:** The only two governed sampler configurations in the
+repository are the 100-draw/150-tune/2-chain/0.95 short screen (already
+run for WP2.7) and the 2000-draw/1000-tune/4-chain/0.9 full production
+configuration (`scripts/run_uk_production_fit.py`) - nothing sized
+between them, and nothing labelled for either intermediate stage.
+Proceeding without an approved configuration would mean silently
+selecting sampler settings for a real, potentially expensive NUTS run
+without authority to do so, which the analyst explicitly prohibited.
+**Alternatives considered:** inferring a "reasonable" configuration
+from the existing short-screen/full-production bracket (rejected -
+explicitly prohibited by the analyst's instruction); treating the
+short screen itself as satisfying the geometry-screen requirement
+since it already used a real NUTS run (rejected - the short screen was
+2 chains, not 4, and WP2.7 explicitly evaluated it as a short screen
+only, not a geometry screen); silently defaulting to the full
+production configuration for a "medium" run (rejected - that is the
+full WP3 configuration this document and prior work packages have
+repeatedly deferred pending analyst authorisation, not an intermediate
+stage).
+**Impact:** No sampling run, no code changed, no statistical
+specification changed (control priors, seasonality, trend, adstock,
+Hill K/S, pooling, channel selection, causal structure, and
+sparse-channel treatment remain exactly as frozen at the WP2.7 state).
+One new document:
+`docs/wp2_8_missing_sampler_configuration_decision_package_20260825.md`.
+**Owner:** Modelling / Platform engineering, per the human analyst's
+WP2.8 instruction (2026-08-25); the requested next decision (approving
+a 4-chain-geometry-screen configuration) belongs to the analyst.
+**Status:** Blocked, awaiting analyst decision on the missing sampler
+configuration before WP2.8's items 1-7 can proceed. No WP3 sampling
+authorised.
+
+---
+
+**Date:** 2026-08-25
 **Decision:** Approve and implement `docs/approved_requirements/
 REQ-CONTROL-001.md`: standardise the two named continuous category-
 demand controls (`fh_category_demand_google_trends`,
