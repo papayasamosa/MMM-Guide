@@ -80,11 +80,22 @@ def _json_fingerprint(payload: Any) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
+# The fingerprint an absent (`None`) candidate/config payload produces.
+# `causal_graph_fingerprint` legitimately equals this for any candidate
+# using the default no-explicit-graph engine path (`resolve_engine`'s
+# `causal_graph is None` branch - a real, governed production state, not a
+# missing value). `candidate_spec_fingerprint`/`prepared_frame_fingerprint`
+# must never legitimately equal it: every fit has an actual specification
+# and prepared frame, so this value appearing there means the caller failed
+# to pass the real object through, not that the real object is absent.
+NULL_FINGERPRINT = _json_fingerprint(None)
+
+
 def _fingerprint_payload(value: Any) -> str:
     """Fingerprint a candidate/configuration payload without machine paths."""
 
     if value is None:
-        return _json_fingerprint(None)
+        return NULL_FINGERPRINT
     if isinstance(value, pd.DataFrame):
         return fingerprint_dataframe(value)
     if hasattr(value, "to_dict") and not isinstance(value, (dict, list, tuple)):
@@ -101,6 +112,16 @@ def _fingerprint_payload(value: Any) -> str:
 def _fingerprint_value(value: Any) -> Any:
     if isinstance(value, np.ndarray):
         return {"shape": list(value.shape), "values": value.tolist()}
+    if isinstance(value, pd.DataFrame):
+        # A prepared modelling frame nests its DataFrame inside a dict
+        # (e.g. `frame["df"]`) rather than passing it as the top-level
+        # fingerprint payload, so this recursive path needs the same
+        # dedicated row/column/dtype fingerprint `_fingerprint_payload`
+        # already uses at the top level - falling through to the generic
+        # `to_dict()` branch below would key a nested dict by the
+        # DataFrame's index (often a Timestamp), which `json.dumps` cannot
+        # serialise as an object key and would raise.
+        return fingerprint_dataframe(value)
     if isinstance(value, pd.Timestamp):
         return value.isoformat()
     if isinstance(value, Mapping):

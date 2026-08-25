@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import pytest
 
+from ancestry_mmm.core.prefit_identifiability import NULL_FINGERPRINT
 from ancestry_mmm.core.prefit_run import (
     BLOCKED,
     CANNOT_VERIFY,
@@ -260,6 +261,55 @@ class TestOfficialSubmissionAllowed:
         run = _minimal_run(readiness=BLOCKED)
         allowed, _reason = official_submission_allowed(run.to_dict())
         assert allowed is False
+
+    def test_unbound_candidate_spec_blocks_submission_even_when_otherwise_ready(self):
+        """WP2.9 item 1 fail-closed guarantee: a null/placeholder
+        `candidate_spec_fingerprint` (the defect found in every governed
+        pre-fit run since WP2 - `scripts/run_uk_prefit_governance.py` never
+        passed the real candidate spec through) must block official
+        submission regardless of readiness or retained rationale."""
+        run = _minimal_run(
+            readiness=READY,
+            candidate_spec_fingerprint=NULL_FINGERPRINT,
+            analyst_review={"rationale_retained": True},
+        )
+        allowed, reason = official_submission_allowed(run)
+        assert allowed is False
+        assert "candidate_spec_fingerprint" in reason
+
+    def test_unbound_prepared_frame_blocks_submission_even_when_otherwise_ready(self):
+        run = _minimal_run(
+            readiness=READY,
+            prepared_frame_fingerprint=NULL_FINGERPRINT,
+            analyst_review={"rationale_retained": True},
+        )
+        allowed, reason = official_submission_allowed(run)
+        assert allowed is False
+        assert "prepared_frame_fingerprint" in reason
+
+    def test_unbound_candidate_spec_blocks_even_a_plain_dict_payload(self):
+        run = _minimal_run(
+            readiness=READY,
+            candidate_spec_fingerprint=NULL_FINGERPRINT,
+            analyst_review={"rationale_retained": True},
+        )
+        allowed, _reason = official_submission_allowed(run.to_dict())
+        assert allowed is False
+
+    def test_a_null_causal_graph_fingerprint_alone_does_not_block_submission(self):
+        """`causal_graph_fingerprint` legitimately equals the null/
+        placeholder fingerprint for any candidate using the default
+        no-explicit-graph engine path (a real, governed production state -
+        see `core.prefit_identifiability.NULL_FINGERPRINT`), so it must not
+        be fail-closed on its own the way an unbound candidate spec or
+        prepared frame is."""
+        run = _minimal_run(
+            readiness=READY,
+            causal_graph_fingerprint=NULL_FINGERPRINT,
+            analyst_review={"rationale_retained": True},
+        )
+        allowed, _reason = official_submission_allowed(run)
+        assert allowed is True
 
 
 class TestBuildRunId:

@@ -8,6 +8,7 @@ import pytest
 
 from ancestry_mmm.core.persistence import export_project, import_project
 from ancestry_mmm.core.prefit_identifiability import (
+    NULL_FINGERPRINT,
     PriorPredictiveThresholdPolicy,
     SupportThresholdPolicy,
     build_prefit_fingerprints,
@@ -353,6 +354,67 @@ def test_optional_candidate_prepared_and_causal_fingerprints_are_freshness_bound
         causal_graph={"version": "g1"},
     )
     assert set(fingerprints) <= set(complete_report["fingerprints"])
+
+
+def test_a_real_prepared_frame_with_a_nested_dataframe_fingerprints_without_crashing():
+    """WP2.9 item 1 regression: `scripts/run_uk_prefit_governance.py` binds
+    `prepared_frame` to the real prepared modelling frame dict, whose `"df"`
+    entry is a DataFrame indexed by date. Recursing through a plain
+    `to_dict()` call (as the generic Mapping/`to_dict` fallback previously
+    did) would key the resulting JSON payload by `Timestamp` objects, which
+    `json.dumps` cannot serialise - this must route through the same
+    dedicated `fingerprint_dataframe` path `_fingerprint_payload` already
+    uses at the top level, not crash and not silently fall back to the
+    null/placeholder fingerprint."""
+
+    df = pd.DataFrame(
+        {"TV": [1.0, 2.0, 3.0]},
+        index=pd.date_range("2023-01-01", periods=3, freq="7D"),
+    )
+    prepared_frame = {
+        "df": df,
+        "channels": ["TV"],
+        "X_media": np.array([[1.0], [2.0], [3.0]]),
+    }
+    fingerprints = build_prefit_fingerprints(
+        df.reset_index(names="date").assign(market="UK"),
+        channels=["TV"],
+        date_col="date",
+        market_col="market",
+        target_start=None,
+        target_end=None,
+        transform_config=_config(),
+        candidate_spec={"channels": ["TV"]},
+        prepared_frame=prepared_frame,
+        causal_graph=None,
+    )
+    assert fingerprints["prepared_frame_fingerprint"] != NULL_FINGERPRINT
+    # causal_graph_fingerprint legitimately equals the null/placeholder
+    # fingerprint here: this candidate uses no explicit causal graph
+    # override (the default pathway-catalogue engine), so `None` is the
+    # real, governed value being fingerprinted - not a missing plumbing
+    # defect the way an unbound candidate_spec/prepared_frame would be.
+    assert fingerprints["causal_graph_fingerprint"] == NULL_FINGERPRINT
+
+    changed_frame = dict(prepared_frame)
+    changed_frame["df"] = df.copy()
+    changed_frame["df"]["TV"] = [9.0, 9.0, 9.0]
+    changed_fingerprints = build_prefit_fingerprints(
+        df.reset_index(names="date").assign(market="UK"),
+        channels=["TV"],
+        date_col="date",
+        market_col="market",
+        target_start=None,
+        target_end=None,
+        transform_config=_config(),
+        candidate_spec={"channels": ["TV"]},
+        prepared_frame=changed_frame,
+        causal_graph=None,
+    )
+    assert (
+        changed_fingerprints["prepared_frame_fingerprint"]
+        != fingerprints["prepared_frame_fingerprint"]
+    )
 
 
 def test_prefit_report_keeps_state_semantics_separate():

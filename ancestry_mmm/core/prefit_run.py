@@ -34,7 +34,21 @@ from typing import Any, Mapping
 
 import pandas as pd
 
+from .prefit_identifiability import NULL_FINGERPRINT
+
 PREFIT_RUN_SCHEMA_VERSION = 1
+
+# Fingerprint fields that must always derive from a real, present object.
+# `causal_graph_fingerprint` is deliberately excluded: it legitimately
+# resolves to `NULL_FINGERPRINT` for any candidate using the default
+# no-explicit-graph engine path (a real, governed production state - see
+# `core.prefit_identifiability.NULL_FINGERPRINT`), so it cannot be
+# fail-closed on its own the way an unbound candidate spec or prepared
+# frame can.
+REQUIRED_NON_NULL_FINGERPRINTS = (
+    "candidate_spec_fingerprint",
+    "prepared_frame_fingerprint",
+)
 
 # The exact three-state vocabulary REQ-PREFIT-001 requires. Every consumer of
 # pre-fit readiness - the consolidated PrefitRun.readiness field, and every
@@ -455,6 +469,17 @@ def official_submission_allowed(run: PrefitRun | Mapping[str, Any]) -> tuple[boo
         payload = run.to_dict()
     else:
         payload = dict(run)
+    unbound_fields = [
+        field_name
+        for field_name in REQUIRED_NON_NULL_FINGERPRINTS
+        if payload.get(field_name) == NULL_FINGERPRINT
+    ]
+    if unbound_fields:
+        return False, (
+            "candidate identity is not bound to real evidence: "
+            + ", ".join(unbound_fields)
+            + " still resolve to the null/placeholder fingerprint"
+        )
     readiness = payload.get("readiness")
     if readiness == BLOCKED:
         return False, "pre-fit readiness is blocked"
