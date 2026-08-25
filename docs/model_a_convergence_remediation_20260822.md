@@ -75,6 +75,29 @@ validation, attribution, and Search mediation Model B were not started because
 the approved computational gate failed. Increasing treedepth or changing the
 sampler would conceal rather than resolve this blocker.
 
+**WP2.8 reconciliation (2026-08-25):** "4-chain geometry screen" and
+"medium run" above were originally envisaged as intermediate stages
+between a short probabilistic screen and the full posterior. A
+repository-wide review conducted for WP2.8 (docs, scripts, `docs/
+approved_requirements/`, `docs/decision_log.md`, and the complete git
+history of this document) confirmed neither stage was ever given a
+governed or reproducible sampler configuration (draws/tune/chains/
+target_accept) anywhere - they exist only as the descriptive names in
+the sentence above, unchanged since this document was first written.
+The approved `docs/approved_requirements/REQ-PREFIT-001.md` workflow
+does not require them either: it goes directly from "optional short/
+approximate probabilistic screening" to "full production PyMC
+posterior." The analyst reviewed this finding
+(`docs/wp2_8_missing_sampler_configuration_decision_package_20260825.md`)
+and decided **not** to formalise new intermediate sampler
+configurations solely to implement this historical wording. These two
+stage names are retained here as a record of what was originally
+envisaged, but are not mandatory workflow gates and require no REQ
+record to skip. `REQ-PREFIT-001`'s own governed sequence - candidate
+specification, static readiness, deterministic pre-fit, analyst review,
+prior predictive, optional short screen, full posterior, post-fit
+validation - remains authoritative.
+
 ## Work Package 1 correction (2026-08-24): undocumented control-scaling reconciled
 
 This PR's own diff also added an unconditional, always-on control/outcome-
