@@ -84,7 +84,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, replace
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+
+import time
 
 import numpy as np
 import pandas as pd
@@ -106,6 +108,12 @@ from ancestry_mmm.core.market_specific_predict import (
     extract_market_specific_posterior_params,
     predict_mu_market_specific,
 )
+from ancestry_mmm.core.fit_progress import (
+    FoldFitContext,
+    SamplingProgressReporter,
+    format_fold_fit_context_line,
+)
+from ancestry_mmm.core.fold_data_support import fold_support_report
 from ancestry_mmm.core.models import fit_model
 from ancestry_mmm.core.official_preparation import (
     OfficialPreparationDataError,
@@ -281,6 +289,7 @@ def fit_fold_with_real_model(
     target_accept: float = 0.9,
     posterior_draw_subsample: int = 100,
     random_seed: int = 42,
+    on_progress_line: Optional[Callable[[str], None]] = None,
 ) -> FoldRefitOutcome:
     """Refit the real production model on `train_df`, evaluate it on
     `test_df`, and extract a genuine `FoldParameterSnapshot` - the same
@@ -316,6 +325,21 @@ def fit_fold_with_real_model(
     draw, subsampled (not every draw) for speed - the same trade-off
     `core.uncertainty` already makes for per-draw scenario/curve
     uncertainty.
+
+    `on_progress_line` defaults to `None`, preserving this function's exact
+    pre-existing silent behaviour. A caller that supplies it (e.g. a
+    fold-refit backtest script driven from a terminal) gets one line before
+    sampling starts (training window, observation count, model-build time -
+    `core.fit_progress.FoldFitContext`) and periodic lines during sampling
+    carrying the real NUTS geometry for this specific fold's fit (step size,
+    tree depth, divergences - `core.fit_progress.SamplingProgressReporter`),
+    never only `(n_done, n_total)`. This exists because a real fold-refit run
+    can legitimately take hours per fold when a fold's training slice has
+    much weaker per-variable data support than the full candidate (see
+    `core.fold_data_support`) - a caller must never be left with no way to
+    tell "still working, here is why it is slow" apart from "silently stuck",
+    which is exactly what happened in the WP2.11 item-5 backtest incident
+    this module's instrumentation was added to prevent from recurring.
     """
     resolved_dna_outcome_id = (
         dna_outcome_id
@@ -332,6 +356,26 @@ def fit_fold_with_real_model(
     resolved_activity_definitions = (
         list(activity_definitions) if activity_definitions is not None else None
     )
+
+    if on_progress_line is not None:
+        outcome_cols = (
+            [o.source_column for o in resolved_outcomes] if resolved_outcomes else []
+        )
+        support = fold_support_report(
+            train_df,
+            spec.date_col,
+            spec.channels,
+            spec.control_cols,
+            outcome_cols,
+            fold_id=fold_id,
+        )
+        on_progress_line(
+            f"[{fold_id}] data-support: {len(support.variables)} variables, "
+            f"training {support.train_start}..{support.train_end}"
+        )
+        for v in support.variables:
+            on_progress_line(f"[{fold_id}]   {v.summary_line()}")
+
     train_frame = prepare_fh_modeling_frame(
         train_df,
         spec,
@@ -349,6 +393,7 @@ def fit_fold_with_real_model(
         MODEL_TYPE_MARKET_SPECIFIC if is_market_specific else MODEL_TYPE_SHARED
     )
 
+    _build_start = time.monotonic()
     fit_result = build_model_for_spec(
         frame=train_frame,
         model_spec=spec,
@@ -359,6 +404,31 @@ def fit_fold_with_real_model(
         causal_graph=causal_graph,
         prior_config=prior_config,
     )
+    _build_seconds = time.monotonic() - _build_start
+
+    stats_callback = None
+    if on_progress_line is not None:
+        train_dates = pd.to_datetime(train_df[spec.date_col])
+        on_progress_line(
+            format_fold_fit_context_line(
+                FoldFitContext(
+                    fold_id=fold_id,
+                    model_label=resolved_model_type,
+                    train_start=str(train_dates.min().date())
+                    if not train_dates.empty
+                    else None,
+                    train_end=str(train_dates.max().date())
+                    if not train_dates.empty
+                    else None,
+                    n_obs=len(train_df),
+                    build_seconds=_build_seconds,
+                )
+            )
+        )
+        stats_callback = SamplingProgressReporter(
+            fold_id=fold_id, model_label=resolved_model_type, emit=on_progress_line
+        )
+
     trace = fit_model(
         fit_result.model,
         draws=draws,
@@ -367,6 +437,7 @@ def fit_fold_with_real_model(
         cores=cores,
         target_accept=target_accept,
         random_seed=random_seed,
+        stats_callback=stats_callback,
     )
 
     test_frame = prepare_fh_modeling_frame(
@@ -502,6 +573,7 @@ def run_leakage_safe_fold_refit(
     target_accept: float = 0.9,
     posterior_draw_subsample: int = 100,
     random_seed: int = 42,
+    on_progress_line: Optional[Callable[[str], None]] = None,
 ) -> LeakageSafeFoldRefitResult:
     """Leakage-safe, real-PyMC-refit counterpart to `core.validation_
     folds.leakage_safe_expanding_window_backtest`: builds the same typed
@@ -520,6 +592,9 @@ def run_leakage_safe_fold_refit(
     not pass them - see `fit_fold_with_real_model`'s docstring for what
     each one does and why a caller backtesting the real governed
     candidate (rather than an ad hoc/test spec) should supply them.
+
+    `on_progress_line` (also `None` by default) is passed straight through
+    to `fit_fold_with_real_model` for every fold - see its docstring.
     """
     folds = build_expanding_window_folds(
         df, spec.date_col, n_folds=n_folds, min_train_frac=min_train_frac
@@ -580,6 +655,7 @@ def run_leakage_safe_fold_refit(
             target_accept=target_accept,
             posterior_draw_subsample=posterior_draw_subsample,
             random_seed=random_seed,
+            on_progress_line=on_progress_line,
         )
         snapshots.append(outcome.snapshot)
         for oid in outcome.r2_by_outcome:
@@ -631,6 +707,7 @@ def run_leakage_safe_fold_refit_from_sources(
     target_accept: float = 0.9,
     posterior_draw_subsample: int = 100,
     random_seed: int = 42,
+    on_progress_line: Optional[Callable[[str], None]] = None,
 ) -> LeakageSafeFoldRefitResult:
     """Point-in-time source reconstruction (REQ-LEAK-001 §"rebuilding the
     full model-ready frame ... per fold", Work Package 1 part 2): unlike
@@ -858,6 +935,7 @@ def run_leakage_safe_fold_refit_from_sources(
             target_accept=target_accept,
             posterior_draw_subsample=posterior_draw_subsample,
             random_seed=random_seed,
+            on_progress_line=on_progress_line,
         )
         snapshots.append(outcome.snapshot)
         for oid in outcome.r2_by_outcome:
