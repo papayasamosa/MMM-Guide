@@ -10,9 +10,11 @@ reused unchanged from core.diagnostics; only the pieces that read
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
 import arviz as az
+import numpy as np
 import pandas as pd
 
 from .diagnostics import (
@@ -137,6 +139,64 @@ def residual_temporal_diagnostics_market_specific(
                     "durbin_watson": durbin_watson,
                 }
             )
+    return pd.DataFrame(rows)
+
+
+def residual_series_market_specific(
+    frame: Dict,
+    meta: FHModelMeta,
+    params: FHMarketSpecificPosteriorParams,
+    trace: Optional[az.InferenceData] = None,
+    credible_mass: float = 0.9,
+) -> pd.DataFrame:
+    """Model C equivalent of `core.diagnostics.residual_series` - identical
+    per-`market x date x outcome_id` row shape and column names (same
+    `residual = actual - predicted` convention, same `expected_mean_*`
+    interval labelling), only using `predict_mu_market_specific` since
+    Model C's `hill_K`/`beta` are market-indexed."""
+    mu = predict_mu_market_specific(frame, meta, params)
+    Y = frame["Y"]
+    markets = frame["markets"]
+    market_bounds = frame["market_bounds"]
+    dates = frame.get("dates")
+    outcome_ids = list(meta.outcome_ids)
+
+    mu_lower = mu_upper = None
+    if trace is not None and "mu" in getattr(trace, "posterior", {}):
+        lower_q, upper_q = (1 - credible_mass) / 2, 1 - (1 - credible_mass) / 2
+        mu_posterior = trace.posterior["mu"]
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=RuntimeWarning)
+            mu_lower = mu_posterior.quantile(lower_q, dim=("chain", "draw")).values
+            mu_upper = mu_posterior.quantile(upper_q, dim=("chain", "draw")).values
+
+    rows: List[Dict[str, Any]] = []
+    for m_i, market in enumerate(markets):
+        start, end = market_bounds[m_i]
+        for i, oid in enumerate(outcome_ids):
+            actual = np.asarray(Y[start:end, i], dtype=float)
+            predicted = np.asarray(mu[start:end, i], dtype=float)
+            residual = actual - predicted
+            abs_residual = np.abs(residual)
+            residual_rank_pct = pd.Series(residual).rank(pct=True).to_numpy()
+            abs_residual_rank_pct = pd.Series(abs_residual).rank(pct=True).to_numpy()
+            for j in range(end - start):
+                row: Dict[str, Any] = {
+                    "market": market,
+                    "date": dates[start + j] if dates is not None else start + j,
+                    "outcome_id": oid,
+                    "actual": float(actual[j]),
+                    "predicted": float(predicted[j]),
+                    "residual": float(residual[j]),
+                    "abs_residual": float(abs_residual[j]),
+                    "residual_rank_pct": float(residual_rank_pct[j]),
+                    "abs_residual_rank_pct": float(abs_residual_rank_pct[j]),
+                }
+                if mu_lower is not None and mu_upper is not None:
+                    row["expected_mean_lower"] = float(mu_lower[start + j, i])
+                    row["expected_mean_upper"] = float(mu_upper[start + j, i])
+                    row["expected_mean_credible_mass"] = credible_mass
+                rows.append(row)
     return pd.DataFrame(rows)
 
 

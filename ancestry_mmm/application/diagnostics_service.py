@@ -46,13 +46,16 @@ from ancestry_mmm.core.diagnostics import (
     expanding_window_backtest,
     predictive_density_summary,
     prior_predictive_summary,
+    residual_series,
     residual_temporal_diagnostics,
+    shared_residual_evidence,
 )
 from ancestry_mmm.core.market_specific_diagnostics import (
     error_metrics_by_outcome_market_specific,
     in_sample_fit_market_specific,
     curve_plausibility_checks_market_specific,
     posterior_predictive_metric_distributions_market_specific,
+    residual_series_market_specific,
     residual_temporal_diagnostics_market_specific,
 )
 from ancestry_mmm.core.identification_diagnostics import (
@@ -227,8 +230,8 @@ CANDIDATE_A_LATENT_DEMAND_STATE_ID = "candidate_a_latent_branded_search_demand"
 # `ApprovalReadiness` are unchanged by this schema addition - the existing
 # `diagnostic_artefact_fingerprint` staleness mechanism already reacts to
 # this artefact's now-larger fingerprint automatically).
-CURRENT_DIAGNOSTICS_SCHEMA_VERSION = 8
-CURRENT_DIAGNOSTICS_VERSION = "8.0.0"
+CURRENT_DIAGNOSTICS_SCHEMA_VERSION = 9
+CURRENT_DIAGNOSTICS_VERSION = "9.0.0"
 
 # ---------------------------------------------------------------------------
 # Section status
@@ -380,6 +383,16 @@ class DiagnosticsArtefact:
     artefacts are unaffected - ``from_dict`` keeps its own explicit
     historical fallbacks.
 
+    WP2.11 item 6: Schema v9 adds ``residual_series`` - the canonical
+    per-``market x date x outcome_id`` residual evidence
+    (``core.diagnostics.residual_series``/``core.market_specific_
+    diagnostics.residual_series_market_specific``, plus ``core.
+    diagnostics.shared_residual_evidence``'s cross-outcome comparison as
+    a sub-key of the same section's payload) the Residual Explorer
+    (``pages/06_Diagnostics.py``) reads - additive, alongside (never
+    replacing) ``residual_diagnostics``'s existing aggregate lag-1/
+    Durbin-Watson evidence, which continues unchanged.
+
     Schema-v1 artefacts loaded via ``from_dict`` are marked
     ``legacy_incomplete`` and cannot support a new official approval.
     Schema-v2 artefacts are upgraded to v3 with ``error_metrics``/
@@ -425,6 +438,9 @@ class DiagnosticsArtefact:
         default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
     )
     residual_diagnostics: DiagnosticSection = field(
+        default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
+    )
+    residual_series: DiagnosticSection = field(
         default_factory=lambda: DiagnosticSection(status="not_computed", payload=None)
     )
     prior_predictive: DiagnosticSection = field(
@@ -486,6 +502,7 @@ class DiagnosticsArtefact:
             "backtest": self.backtest.fingerprint_payload(),
             "error_metrics": self.error_metrics.fingerprint_payload(),
             "residual_diagnostics": self.residual_diagnostics.fingerprint_payload(),
+            "residual_series": self.residual_series.fingerprint_payload(),
             "prior_predictive": self.prior_predictive.fingerprint_payload(),
             "predictive_density": self.predictive_density.fingerprint_payload(),
             "market_channel_capability": self.market_channel_capability.fingerprint_payload(),
@@ -529,6 +546,7 @@ class DiagnosticsArtefact:
             "backtest": self.backtest.to_dict(),
             "error_metrics": self.error_metrics.to_dict(),
             "residual_diagnostics": self.residual_diagnostics.to_dict(),
+            "residual_series": self.residual_series.to_dict(),
             "prior_predictive": self.prior_predictive.to_dict(),
             "predictive_density": self.predictive_density.to_dict(),
             "market_channel_capability": self.market_channel_capability.to_dict(),
@@ -550,7 +568,7 @@ class DiagnosticsArtefact:
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "DiagnosticsArtefact":
         """Load from a dict. Supports schema v1 (legacy_incomplete) through
-        the current schema v8 (each upgraded in place to the current shape
+        the current schema v9 (each upgraded in place to the current shape
         - see the class docstring for why this is not also marked
         legacy_incomplete).
 
@@ -570,7 +588,7 @@ class DiagnosticsArtefact:
         if sv == 1:
             # Schema v1 → wrap summaries into sections, mark legacy_incomplete
             return cls._from_v1(d)
-        if sv in (2, 3, 4, 5, 6, 7, 8):
+        if sv in (2, 3, 4, 5, 6, 7, 8, 9):
             if sv >= 3:
                 error_metrics_sec = DiagnosticSection.from_dict(
                     d.get("error_metrics", {})
@@ -751,6 +769,25 @@ class DiagnosticsArtefact:
                     "evidence (REQ-EXPMODE-001 / REQ-CALIB-001) was added "
                     "in schema v8.",
                 )
+            if sv >= 9:
+                residual_series_sec = DiagnosticSection.from_dict(
+                    d.get("residual_series", {})
+                )
+            else:
+                # WP2.11 item 6: canonical per-market x date x outcome_id
+                # residual evidence did not exist when a schema-v2..v8
+                # artefact was computed - not_computed, never a fabricated
+                # payload (mirrors every earlier schema-bump precedent
+                # above). The aggregate residual_diagnostics section
+                # (lag-1/Durbin-Watson) is unaffected and still loads
+                # normally regardless of this gate.
+                residual_series_sec = DiagnosticSection(
+                    status="not_computed",
+                    payload=None,
+                    error=f"Not available in schema v{sv} - canonical "
+                    "per-market x date x outcome_id residual evidence "
+                    "(the Residual Explorer) was added in schema v9.",
+                )
             return cls(
                 artefact_id=d.get("artefact_id", ""),
                 diagnostics_version=d.get("diagnostics_version", "2.0.0"),
@@ -774,6 +811,7 @@ class DiagnosticsArtefact:
                 backtest=DiagnosticSection.from_dict(d.get("backtest", {})),
                 error_metrics=error_metrics_sec,
                 residual_diagnostics=residual_diagnostics_sec,
+                residual_series=residual_series_sec,
                 prior_predictive=prior_predictive_sec,
                 predictive_density=predictive_density_sec,
                 market_channel_capability=market_channel_capability_sec,
@@ -1130,6 +1168,48 @@ class DiagnosticsService:
                 status="failed", payload=None, error=str(exc)
             )
             residual_diagnostics_sec = DiagnosticSection(
+                status="failed", payload=None, error=str(exc)
+            )
+
+        # --- 2c-bis. Canonical per-market x date x outcome_id residual
+        # evidence (WP2.11 item 6, the Residual Explorer's data source) +
+        # cross-outcome shared-residual comparison. A separate try/except
+        # from error_metrics/residual_diagnostics above - same "independent
+        # single-authoritative calculation" pattern every section here
+        # follows, so a failure here never hides the aggregate lag-1/
+        # Durbin-Watson evidence above (or vice versa). Reuses the exact
+        # same per-draw params already extracted above (no second
+        # extraction). ---
+        residual_series_sec: DiagnosticSection
+        try:
+            if diag_input.model_type == "market_specific":
+                residual_series_df = residual_series_market_specific(
+                    diag_input.frame,
+                    diag_input.meta,
+                    market_em_params,
+                    trace=diag_input.trace,
+                    credible_mass=diag_input.credible_mass,
+                )
+            else:
+                residual_series_df = residual_series(
+                    diag_input.frame,
+                    diag_input.meta,
+                    shared_em_params,
+                    trace=diag_input.trace,
+                    credible_mass=diag_input.credible_mass,
+                )
+            residual_series_sec = DiagnosticSection(
+                status="computed",
+                payload={
+                    "rows": residual_series_df.to_dict(orient="records"),
+                    "shared_residual_evidence": shared_residual_evidence(
+                        residual_series_df
+                    ),
+                },
+            )
+        except Exception as exc:
+            errors.append(f"Residual series computation failed: {exc}")
+            residual_series_sec = DiagnosticSection(
                 status="failed", payload=None, error=str(exc)
             )
 
@@ -1651,6 +1731,7 @@ class DiagnosticsService:
             backtest=bt_sec,
             error_metrics=error_metrics_sec,
             residual_diagnostics=residual_diagnostics_sec,
+            residual_series=residual_series_sec,
             market_channel_capability=capability_sec,
             search_capacity=search_capacity_sec,
             posterior_predictive_metric_distributions=ppd_sec,

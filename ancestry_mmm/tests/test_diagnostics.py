@@ -15,6 +15,7 @@ from __future__ import annotations
 import dataclasses
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from ancestry_mmm.core.diagnostics import (
@@ -25,7 +26,9 @@ from ancestry_mmm.core.diagnostics import (
     _smape,
     _wape,
     error_metrics_by_outcome,
+    residual_series,
     residual_temporal_diagnostics,
+    shared_residual_evidence,
 )
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.predict import FHPosteriorParams, predict_mu
@@ -301,6 +304,167 @@ class TestResidualTemporalDiagnosticsMarketSafety:
         assert len(result) == len(frame["markets"]) * len(meta.outcome_ids)
         assert set(result["market"]) == {"UK", "US"}
         assert set(result["outcome_id"]) == set(OUTCOME_IDS)
+
+
+class TestResidualSeriesEndToEnd:
+    """WP2.11 item 6: `residual_series` is the canonical per-observation
+    evidence backing the Residual Explorer - one row per (market, date,
+    outcome_id), never an aggregate statistic."""
+
+    def test_perfect_fit_gives_zero_residuals_one_row_per_observation(
+        self, meta, params
+    ):
+        frame = _frame_with_actuals(meta, params)
+        result = residual_series(frame, meta, params)
+        assert len(result) == len(frame["Y"]) * len(OUTCOME_IDS)
+        assert set(result["outcome_id"]) == set(OUTCOME_IDS)
+        assert set(result["market"]) == {"UK"}
+        assert (result["residual"].abs() < 1e-9).all()
+        assert (result["abs_residual"].abs() < 1e-9).all()
+
+    def test_residual_sign_convention_is_actual_minus_predicted(self, meta, params):
+        # `actual - predicted` (never the reverse): a positive offset on
+        # the actuals must show up as a positive residual, i.e. the model
+        # under-predicted.
+        frame = _frame_with_actuals(meta, params)
+        offset = 7.0
+        frame["Y"] = frame["Y"] + offset
+        result = residual_series(frame, meta, params)
+        assert np.allclose(result["residual"].to_numpy(), offset)
+        assert np.allclose(result["abs_residual"].to_numpy(), abs(offset))
+
+    def test_no_trace_supplied_omits_expected_mean_columns(self, meta, params):
+        frame = _frame_with_actuals(meta, params)
+        result = residual_series(frame, meta, params, trace=None)
+        assert "expected_mean_lower" not in result.columns
+        assert "expected_mean_upper" not in result.columns
+        assert "expected_mean_credible_mass" not in result.columns
+
+    def test_rank_pct_is_computed_within_market_only(self, meta, params):
+        """Reuses `TestResidualTemporalDiagnosticsMarketSafety`'s two-market
+        fixture pattern: a large residual in one market must never distort
+        the other market's own rank percentiles. Uses strictly-increasing,
+        untied values in each market (scaled 500x apart) so the expected
+        rank order is unambiguous and not sensitive to floating-point
+        noise the way tied values would be."""
+        two_market_meta = TestResidualTemporalDiagnosticsMarketSafety._two_market_meta(
+            meta
+        )
+        two_market_params = (
+            TestResidualTemporalDiagnosticsMarketSafety._two_market_params(params)
+        )
+        n_per_market = 6
+        frame = TestResidualTemporalDiagnosticsMarketSafety._two_market_frame(
+            two_market_meta, two_market_params, n_per_market
+        )
+        outcome_idx = meta.outcome_ids.index("New")
+        baseline_mu = frame["Y"][:, outcome_idx].copy()
+        shape = np.array([3.0, 1.0, 5.0, 2.0, 6.0, 4.0])
+        uk_residuals = shape
+        us_residuals = shape * 500.0
+        frame["Y"][:, outcome_idx] = baseline_mu + np.concatenate(
+            [uk_residuals, us_residuals]
+        )
+
+        result = residual_series(frame, two_market_meta, two_market_params)
+        uk_rows = result[
+            (result["market"] == "UK") & (result["outcome_id"] == "New")
+        ].sort_values("date")
+        us_rows = result[
+            (result["market"] == "US") & (result["outcome_id"] == "New")
+        ].sort_values("date")
+        # Both markets have the identical relative ordering, so their rank
+        # percentiles must be identical to each other despite the US
+        # magnitude being 500x larger - proof ranking never crosses the
+        # market boundary.
+        assert np.allclose(
+            uk_rows["residual_rank_pct"].to_numpy(),
+            us_rows["residual_rank_pct"].to_numpy(),
+        )
+
+
+class TestSharedResidualEvidence:
+    """WP2.11 item 6.3: cross-outcome shared-residual comparison - no
+    causal claim, purely a correlation/co-occurrence summary."""
+
+    def test_empty_frame_returns_empty_evidence(self):
+        result = shared_residual_evidence(pd.DataFrame())
+        assert result == {"pairwise_correlation": [], "shared_extreme_weeks": []}
+
+    def test_perfectly_correlated_outcomes(self):
+        dates = pd.date_range("2024-01-01", periods=10, freq="W")
+        residual_df = pd.concat(
+            [
+                pd.DataFrame(
+                    {
+                        "market": "UK",
+                        "date": dates,
+                        "outcome_id": "A",
+                        "residual": np.linspace(-5, 5, 10),
+                    }
+                ),
+                pd.DataFrame(
+                    {
+                        "market": "UK",
+                        "date": dates,
+                        "outcome_id": "B",
+                        "residual": np.linspace(-5, 5, 10) * 2,
+                    }
+                ),
+            ],
+            ignore_index=True,
+        )
+        result = shared_residual_evidence(residual_df)
+        assert len(result["pairwise_correlation"]) == 1
+        pair = result["pairwise_correlation"][0]
+        assert {pair["outcome_a"], pair["outcome_b"]} == {"A", "B"}
+        assert pair["residual_correlation"] == pytest.approx(1.0)
+
+    def test_shared_extreme_week_detected_with_sign_agreement(self):
+        dates = pd.date_range("2024-01-01", periods=10, freq="W")
+        a_residuals = np.array(
+            [0.1, 0.2, -0.1, 0.15, 0.05, -0.2, 0.1, -0.05, 0.2, 50.0]
+        )
+        b_residuals = np.array(
+            [0.3, -0.1, 0.2, -0.15, 0.1, 0.05, -0.2, 0.1, -0.1, 40.0]
+        )
+        residual_df = pd.concat(
+            [
+                pd.DataFrame(
+                    {
+                        "market": "UK",
+                        "date": dates,
+                        "outcome_id": "A",
+                        "residual": a_residuals,
+                    }
+                ),
+                pd.DataFrame(
+                    {
+                        "market": "UK",
+                        "date": dates,
+                        "outcome_id": "B",
+                        "residual": b_residuals,
+                    }
+                ),
+            ],
+            ignore_index=True,
+        )
+        result = shared_residual_evidence(residual_df, top_fraction=0.1)
+        shared = result["shared_extreme_weeks"]
+        assert len(shared) == 1
+        week = shared[0]
+        assert week["date"] == dates[-1]
+        assert set(week["outcomes"]) == {"A", "B"}
+        assert week["all_same_sign"] is True
+
+    def test_no_causal_claim_in_payload_keys(self):
+        # Guardrail: the evidence structure itself must never carry a
+        # causal/explanatory field name - WP2.11 item 7.5 explicitly
+        # forbids inferring a causal explanation from this evidence.
+        result = shared_residual_evidence(pd.DataFrame())
+        for key in result:
+            assert "cause" not in key.lower()
+            assert "explan" not in key.lower()
 
 
 class TestMae:
