@@ -36,6 +36,10 @@ from ancestry_mmm.core.coverage import (
     VariableCoverageMatrix,
     VariableCoverageRecord,
 )
+from ancestry_mmm.core.net_billthrough import (
+    NBT_METRIC_KEY,
+    NetBillthroughCompletenessMetadata,
+)
 from ancestry_mmm.core.outcomes import FAMILY_HISTORY, METRIC_GSA, OutcomeDefinition
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.structural_stability import (
@@ -285,13 +289,14 @@ def _sources_spec() -> ModelSpec:
 
 
 def _sources_outcomes() -> list:
-    """Matches exactly what `core.outcomes.fh_outcomes_from_spec` would
-    derive from `_sources_spec().segment_outcomes` - `fit_fold_with_real_
-    model` calls `prepare_fh_modeling_frame(train_df, spec)` without an
-    explicit `outcomes` list, so that internal auto-derivation and this
-    module's explicit `outcomes` argument (needed for the capability/
-    consumed-variable resolution `build_official_capability_report`
-    requires) must resolve to the same outcome_id/source_column."""
+    """WP2.11 item 4: this catalogue is now actually forwarded into the
+    per-fold `fit_fold_with_real_model` call (previously it was only used
+    for this module's own capability/consumed-variable resolution and the
+    per-fold fit silently re-derived a *different*, legacy `segment_
+    outcomes`-based catalogue instead - see this file's
+    `TestOutcomeCataloguePropagation` for the regression coverage proving
+    that defect is fixed). `outcome_id="fh_new"` here is this fixture's
+    own deliberate choice, not a coincidence with the legacy fallback."""
     return [
         OutcomeDefinition(
             outcome_id="fh_new",
@@ -533,3 +538,247 @@ class TestRunLeakageSafeFoldRefitFromSourcesBlockedPaths:
             **FIT_KWARGS,
         )
         assert result.assessments[0].is_leakage_safe
+
+
+# ---------------------------------------------------------------------------
+# WP2.11 item 4: outcome-catalogue propagation regression tests.
+#
+# WP2.10 found `fit_fold_with_real_model` silently re-deriving a *different*
+# legacy catalogue (`core.outcomes.fh_outcomes_from_spec`, `fh_new`/`fh_dna
+# cross-sell`/`fh_winback`-style ids, `metric="GSA"`) instead of the real
+# governed `OutcomeDefinition` catalogue (`fh_net_billthrough_count_new`
+# etc., `metric_key="fh_net_billthrough_count"`) a candidate actually fits -
+# both `run_leakage_safe_fold_refit` and `run_leakage_safe_fold_refit_from_
+# sources` never forwarded `outcomes` (and, for the from-sources path, never
+# forwarded the `outcomes` it already receives for its own capability
+# resolution) into the per-fold fit at all. These tests prove that is fixed
+# without changing default behaviour for existing callers.
+# ---------------------------------------------------------------------------
+
+
+def _nbt_raw_dataframe(n_weeks: int = 40) -> pd.DataFrame:
+    """Genuinely integer-valued outcome column - `core.net_billthrough.
+    validate_supplied_net_billthrough` requires NBT counts to be
+    integer-like, unlike `_raw_dataframe`'s GSA-style fractional
+    `np.linspace` values."""
+    dates = pd.date_range("2024-01-01", periods=n_weeks, freq="W")
+    frames = []
+    for i, market in enumerate(["UK", "US"]):
+        frames.append(
+            pd.DataFrame(
+                {
+                    "date": dates,
+                    "market": market,
+                    "TV_Brand": np.linspace(100.0 + i * 10, 900.0 + i * 10, n_weeks),
+                    "NBT_New": np.round(
+                        np.linspace(20.0 + i * 5, 120.0 + i * 5, n_weeks)
+                    ),
+                }
+            )
+        )
+    return pd.concat(frames, ignore_index=True)
+
+
+def _nbt_spec() -> ModelSpec:
+    return ModelSpec(
+        date_col="date",
+        market_col="market",
+        markets=["UK", "US"],
+        segment_outcomes={"New": "NBT_New"},
+        channels=["TV_Brand"],
+    )
+
+
+def _nbt_outcomes(outcome_id: str = "fh_net_billthrough_count_new") -> list:
+    return [
+        OutcomeDefinition(
+            outcome_id=outcome_id,
+            product=FAMILY_HISTORY,
+            segment="New",
+            metric="Net Billthrough Count",
+            metric_key=NBT_METRIC_KEY,
+            source_column="NBT_New",
+        )
+    ]
+
+
+def _nbt_metadata() -> NetBillthroughCompletenessMetadata:
+    """`model_start_week`/`model_end_week` are placeholders here -
+    `fit_fold_with_real_model`'s `_fold_local_net_billthrough_metadata`
+    always overrides them to each fold's own actual date range; only the
+    fold-independent fields set here matter for this fixture."""
+    return NetBillthroughCompletenessMetadata(
+        data_as_of_date="2025-12-31",
+        model_start_week="2024-01-01",
+        model_end_week="2024-12-31",
+        latest_complete_net_billthrough_week="2025-12-31",
+        maturity_rule_description="test fixture - immediate maturity",
+        source_owner="test",
+    )
+
+
+class TestOutcomeCataloguePropagation:
+    def test_outcomes_none_preserves_legacy_default_behaviour(self):
+        """Old callers that never pass `outcomes` get exactly today's
+        behaviour - the legacy `fh_new` id - unchanged."""
+        result = run_leakage_safe_fold_refit(
+            _raw_dataframe(n_weeks=40),
+            _spec(),
+            _empty_coverage_matrix(),
+            model_type=MODEL_TYPE_SHARED,
+            n_folds=1,
+            min_train_frac=0.7,
+            posterior_draw_subsample=5,
+            **FIT_KWARGS,
+        )
+        assert result.results_df.iloc[0]["outcome_id"] == "fh_new"
+
+    def test_real_governed_nbt_outcome_id_survives_fold_construction(self):
+        """A real governed NBT outcome_id - not the legacy fallback's
+        `fh_new` - comes back unchanged when `outcomes` is supplied."""
+        result = run_leakage_safe_fold_refit(
+            _nbt_raw_dataframe(n_weeks=40),
+            _nbt_spec(),
+            _empty_coverage_matrix(),
+            outcomes=_nbt_outcomes(),
+            net_billthrough_metadata=_nbt_metadata(),
+            model_type=MODEL_TYPE_SHARED,
+            n_folds=1,
+            min_train_frac=0.7,
+            posterior_draw_subsample=5,
+            **FIT_KWARGS,
+        )
+        row = result.results_df.iloc[0]
+        assert row["outcome_id"] == "fh_net_billthrough_count_new"
+        assert row["outcome_id"] not in {"fh_new", "fh_dna cross-sell", "fh_winback"}
+        assert np.isfinite(row["r_squared"])
+        assert np.isfinite(row["mape_pct"])
+
+    def test_net_billthrough_metadata_required_when_real_nbt_outcomes_supplied(self):
+        """Passing a real NBT-metric outcome catalogue without real
+        `net_billthrough_metadata` must fail closed with a clear error,
+        never silently skip the completeness gate the real candidate is
+        itself governed by."""
+        with pytest.raises(ValueError, match="net bill-through"):
+            run_leakage_safe_fold_refit(
+                _nbt_raw_dataframe(n_weeks=40),
+                _nbt_spec(),
+                _empty_coverage_matrix(),
+                outcomes=_nbt_outcomes(),
+                net_billthrough_metadata=None,
+                model_type=MODEL_TYPE_SHARED,
+                n_folds=1,
+                min_train_frac=0.7,
+                posterior_draw_subsample=5,
+                **FIT_KWARGS,
+            )
+
+    def test_dna_cross_sell_outcome_id_remains_valid_through_fold_refit(self):
+        """A DNA-channel candidate's `dna_outcome_id` (the FH DNA
+        cross-sell outcome) must resolve against the real governed
+        outcome_ids passed through, not the legacy fallback's - this is
+        exactly the `ValueError` WP2.10 found in the prepared-frame
+        backtest for the real FH candidate."""
+        spec = ModelSpec(
+            date_col="date",
+            market_col="market",
+            markets=["UK", "US"],
+            segment_outcomes={"New": "NBT_New"},
+            channels=["TV_Brand", "DNA_Channel"],
+            dna_channels=["DNA_Channel"],
+        )
+        df = _nbt_raw_dataframe(n_weeks=40)
+        df["DNA_Channel"] = np.linspace(50.0, 500.0, len(df))
+        outcomes = _nbt_outcomes(outcome_id="fh_net_billthrough_count_dna_cross_sell")
+
+        result = run_leakage_safe_fold_refit(
+            df,
+            spec,
+            _empty_coverage_matrix(),
+            outcomes=outcomes,
+            dna_outcome_id="fh_net_billthrough_count_dna_cross_sell",
+            net_billthrough_metadata=_nbt_metadata(),
+            model_type=MODEL_TYPE_SHARED,
+            n_folds=1,
+            min_train_frac=0.7,
+            posterior_draw_subsample=5,
+            **FIT_KWARGS,
+        )
+        assert (
+            result.results_df.iloc[0]["outcome_id"]
+            == "fh_net_billthrough_count_dna_cross_sell"
+        )
+        assert np.isfinite(result.results_df.iloc[0]["r_squared"])
+
+    def test_chronological_fold_boundaries_are_unaffected_by_outcome_catalogue(self):
+        """The fold-selection loop (`build_expanding_window_folds`) only
+        ever depends on `df`/`spec.date_col`/`n_folds`/`min_train_frac` -
+        passing a real `outcomes` catalogue must not change which weeks
+        land in which fold's train/test window."""
+        legacy_result = run_leakage_safe_fold_refit(
+            _raw_dataframe(n_weeks=40),
+            _spec(),
+            _empty_coverage_matrix(),
+            model_type=MODEL_TYPE_SHARED,
+            n_folds=1,
+            min_train_frac=0.7,
+            posterior_draw_subsample=5,
+            **FIT_KWARGS,
+        )
+        catalogue_result = run_leakage_safe_fold_refit(
+            _nbt_raw_dataframe(n_weeks=40),
+            _nbt_spec(),
+            _empty_coverage_matrix(),
+            outcomes=_nbt_outcomes(),
+            net_billthrough_metadata=_nbt_metadata(),
+            model_type=MODEL_TYPE_SHARED,
+            n_folds=1,
+            min_train_frac=0.7,
+            posterior_draw_subsample=5,
+            **FIT_KWARGS,
+        )
+        assert legacy_result.folds[0].train_end == catalogue_result.folds[0].train_end
+        assert legacy_result.folds[0].test_end == catalogue_result.folds[0].test_end
+
+    def test_from_sources_forwards_its_own_outcomes_catalogue_into_the_fold_fit(self):
+        """`run_leakage_safe_fold_refit_from_sources` already receives the
+        real governed `outcomes` catalogue (needed for its own capability/
+        consumed-variable resolution) - WP2.10 found it never actually
+        reached the per-fold fit. `_sources_outcomes()` deliberately
+        chooses `outcome_id="fh_new"`, matching what the legacy fallback
+        would also derive - so this alone cannot distinguish "forwarded
+        correctly" from "silently using the legacy fallback". This test
+        uses a distinguishable outcome_id/metric_key instead."""
+        spec = _sources_spec()
+        outcomes = [
+            OutcomeDefinition(
+                outcome_id="fh_net_billthrough_count_new",
+                product=FAMILY_HISTORY,
+                segment="New",
+                metric="Net Billthrough Count",
+                metric_key=NBT_METRIC_KEY,
+                source_column="GSA_New",
+            )
+        ]
+        source_frames = _source_frames(n_weeks=40)
+        # GSA_New's fractional np.linspace values fail the NBT
+        # integer-like check - round the outcomes-source column in place.
+        source_frames["outcomes-src"] = source_frames["outcomes-src"].assign(
+            GSA_New=np.round(source_frames["outcomes-src"]["GSA_New"])
+        )
+        result = run_leakage_safe_fold_refit_from_sources(
+            source_frames,
+            spec,
+            _sources_coverage_matrix(),
+            outcomes,
+            net_billthrough_metadata=_nbt_metadata(),
+            model_type=MODEL_TYPE_SHARED,
+            n_folds=1,
+            min_train_frac=0.7,
+            posterior_draw_subsample=5,
+            **FIT_KWARGS,
+        )
+        row = result.results_df.iloc[0]
+        assert row["outcome_id"] == "fh_net_billthrough_count_new"
+        assert row["outcome_id"] not in {"fh_new", "fh_dna cross-sell", "fh_winback"}
+        assert np.isfinite(row["r_squared"])
