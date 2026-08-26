@@ -361,50 +361,63 @@ def shared_residual_evidence(
     causal claim: pairwise residual correlation, and which weeks land in
     more than one outcome's own largest-`|residual|` decile (`top_
     fraction`, default 10%) at the same time, with sign agreement.
+
+    Computed within each market's own slice, never pooled across markets -
+    the same market-safety convention `residual_temporal_diagnostics`/
+    `residual_series` already use. A model frame can carry more than one
+    market (`model_type="shared"` does not imply one market); correlating
+    or ranking one market's weeks against a different market's weeks on
+    the same calendar date would compare unrelated series.
     """
     if residual_df.empty:
         return {"pairwise_correlation": [], "shared_extreme_weeks": []}
 
-    pivot = residual_df.pivot_table(
-        index=["market", "date"], columns="outcome_id", values="residual"
-    )
-    outcome_ids = list(pivot.columns)
-
     pairwise: List[Dict[str, Any]] = []
-    for a_idx, oid_a in enumerate(outcome_ids):
-        for oid_b in outcome_ids[a_idx + 1 :]:
-            a, b = pivot[oid_a].to_numpy(), pivot[oid_b].to_numpy()
-            valid = np.isfinite(a) & np.isfinite(b)
-            correlation = (
-                float(np.corrcoef(a[valid], b[valid])[0, 1])
-                if valid.sum() >= 2 and np.std(a[valid]) > 0 and np.std(b[valid]) > 0
-                else None
-            )
-            pairwise.append(
+    shared_weeks: List[Dict[str, Any]] = []
+    for market, market_df in residual_df.groupby("market", sort=False):
+        pivot = market_df.pivot_table(
+            index="date", columns="outcome_id", values="residual"
+        )
+        outcome_ids = list(pivot.columns)
+
+        for a_idx, oid_a in enumerate(outcome_ids):
+            for oid_b in outcome_ids[a_idx + 1 :]:
+                a, b = pivot[oid_a].to_numpy(), pivot[oid_b].to_numpy()
+                valid = np.isfinite(a) & np.isfinite(b)
+                correlation = (
+                    float(np.corrcoef(a[valid], b[valid])[0, 1])
+                    if valid.sum() >= 2
+                    and np.std(a[valid]) > 0
+                    and np.std(b[valid]) > 0
+                    else None
+                )
+                pairwise.append(
+                    {
+                        "market": market,
+                        "outcome_a": oid_a,
+                        "outcome_b": oid_b,
+                        "residual_correlation": correlation,
+                    }
+                )
+
+        n_top = max(1, int(round(len(pivot) * top_fraction)))
+        top_sets = {
+            oid: set(pivot[oid].abs().nlargest(n_top).index) for oid in outcome_ids
+        }
+        for date in pivot.index:
+            members = [oid for oid in outcome_ids if date in top_sets[oid]]
+            if len(members) < 2:
+                continue
+            signs = {oid: (1 if pivot.loc[date, oid] > 0 else -1) for oid in members}
+            shared_weeks.append(
                 {
-                    "outcome_a": oid_a,
-                    "outcome_b": oid_b,
-                    "residual_correlation": correlation,
+                    "market": market,
+                    "date": date,
+                    "outcomes": members,
+                    "signs": signs,
+                    "all_same_sign": len(set(signs.values())) == 1,
                 }
             )
-
-    n_top = max(1, int(round(len(pivot) * top_fraction)))
-    top_sets = {oid: set(pivot[oid].abs().nlargest(n_top).index) for oid in outcome_ids}
-    shared_weeks: List[Dict[str, Any]] = []
-    for key in pivot.index:
-        members = [oid for oid in outcome_ids if key in top_sets[oid]]
-        if len(members) < 2:
-            continue
-        signs = {oid: (1 if pivot.loc[key, oid] > 0 else -1) for oid in members}
-        shared_weeks.append(
-            {
-                "market": key[0],
-                "date": key[1],
-                "outcomes": members,
-                "signs": signs,
-                "all_same_sign": len(set(signs.values())) == 1,
-            }
-        )
     return {"pairwise_correlation": pairwise, "shared_extreme_weeks": shared_weeks}
 
 

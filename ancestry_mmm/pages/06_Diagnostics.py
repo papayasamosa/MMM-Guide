@@ -19,6 +19,8 @@ from ancestry_mmm.utils import (
     format_number,
     dataframe_column_config,
     FIELD_HELP,
+    readable_label,
+    outcome_display_label,
 )
 from ancestry_mmm.components import (
     apply_theme,
@@ -92,6 +94,12 @@ from ancestry_mmm.core.pathways import (
     MediaOutcomePathway,
     pathway_catalogue_fingerprint_payload,
     pathways_drift_dataframe,
+)
+from ancestry_mmm.core.outcome_group_totals import reporting_group_options
+from ancestry_mmm.components.charts import (
+    create_actual_vs_fitted_chart,
+    create_residual_bar_chart,
+    create_time_series_chart,
 )
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
@@ -197,8 +205,20 @@ if trace is None or frame is None or meta is None:
 model_type = get_state("model_type", "shared")
 
 spec_dict = get_state("model_spec")
+# WP2.11 item 7 (Residual Explorer): human-readable outcome labels, built
+# the same way every other page derives them - resolved once here and
+# reused, never a second independent label lookup.
+residual_outcome_labels: dict = {}
 if spec_dict:
     _spec_for_drift = ModelSpec.from_dict(spec_dict)
+    residual_outcome_labels = {
+        o.outcome_id: outcome_display_label(o)
+        for o in resolve_outcome_definitions(
+            get_state("outcome_definitions"),
+            _spec_for_drift.segment_outcomes,
+            _spec_for_drift.segment_ltv,
+        )
+    }
     render_drift_status(
         resolve_outcome_definitions(
             get_state("outcome_definitions"),
@@ -521,6 +541,304 @@ def _render_summary_into(slot) -> None:
 # second fill below, after that button's handler, corrects that case).
 _render_summary_into(_summary_slot)
 
+
+def _residual_outcome_label(outcome_id: str, outcome_labels: dict) -> str:
+    return outcome_labels.get(outcome_id, readable_label(outcome_id))
+
+
+def _residual_group_view(
+    market_df: pd.DataFrame, group, group_id: str
+) -> "pd.DataFrame | None":
+    """WP2.11 item 6.1/7.1: an Overall/group view for a governed semantic
+    outcome group, summing only outcomes an analyst has explicitly declared
+    additive in compatible units (`core.outcome_group_totals`'s own
+    "components_joint"/"total_only" gate - never an arbitrary sum of
+    whatever outcomes happen to be fitted). The expected-mean credible
+    interval is deliberately dropped for a group total: independently
+    summing per-outcome interval bounds is not a valid joint interval, and
+    fabricating one is explicitly against WP2.11 item 6's constraint."""
+    member_df = market_df[market_df["outcome_id"].isin(group.member_outcome_ids)]
+    if member_df.empty:
+        return None
+    agg = member_df.groupby("date", as_index=False)[["actual", "predicted"]].sum(
+        min_count=1
+    )
+    agg["residual"] = agg["actual"] - agg["predicted"]
+    agg["abs_residual"] = agg["residual"].abs()
+    agg = agg.sort_values("date").reset_index(drop=True)
+    agg["residual_rank_pct"] = agg["residual"].rank(pct=True)
+    agg["abs_residual_rank_pct"] = agg["abs_residual"].rank(pct=True)
+    agg["market"] = market_df["market"].iloc[0]
+    agg["outcome_id"] = group_id
+    return agg
+
+
+def _render_residual_explorer(payload: dict, meta, outcome_labels: dict) -> None:
+    """WP2.11 item 7: the Residual Explorer. Reads only the canonical
+    `residual_series`/`shared_residual_evidence` evidence already computed
+    by `DiagnosticsService.evaluate()` (item 6) - never recomputes a
+    residual independently on this page."""
+    residual_df = pd.DataFrame(payload.get("rows") or [])
+    if residual_df.empty:
+        st.info("No residual-series rows available.")
+        return
+
+    markets = [m for m in meta.markets if m in set(residual_df["market"])]
+    if not markets:
+        markets = sorted(residual_df["market"].unique().tolist())
+    outcome_ids = [
+        oid for oid in meta.outcome_ids if oid in set(residual_df["outcome_id"])
+    ]
+
+    outcome_groups = getattr(meta, "outcome_groups_at_fit", None) or []
+    outcome_group_treatments = (
+        getattr(meta, "outcome_group_treatments_at_fit", None) or []
+    )
+    groups_by_id = {g.group_id: g for g in outcome_groups}
+    group_options = reporting_group_options(
+        outcome_ids, outcome_groups, outcome_group_treatments
+    )
+
+    # 7.1 controls
+    c1, c2 = st.columns(2)
+    if len(markets) > 1:
+        selected_market = c1.selectbox(
+            "Market", markets, key="residual_explorer_market"
+        )
+    else:
+        selected_market = markets[0]
+        c1.caption(f"Market: {selected_market}")
+
+    view_options: dict = {}
+    for oid in outcome_ids:
+        view_options[
+            f"Individual outcome · {_residual_outcome_label(oid, outcome_labels)}"
+        ] = (
+            "outcome",
+            oid,
+        )
+    for group_id, label in group_options:
+        view_options[f"Outcome group · {label}"] = ("group", group_id)
+    view_label = c2.selectbox(
+        "Outcome / view", list(view_options), key="residual_explorer_view"
+    )
+    view_kind, view_key = view_options[view_label]
+
+    market_df = residual_df[residual_df["market"] == selected_market].copy()
+
+    if view_kind == "outcome":
+        view_df = market_df[market_df["outcome_id"] == view_key].sort_values("date")
+        has_interval = (
+            "expected_mean_lower" in view_df.columns
+            and view_df["expected_mean_lower"].notna().any()
+        )
+    else:
+        view_df = _residual_group_view(market_df, groups_by_id[view_key], view_key)
+        has_interval = False
+        if view_df is None:
+            st.info("No rows available for this outcome group in this market.")
+            return
+        st.caption(
+            "Outcome-group total: actual and predicted are summed across the "
+            "group's declared additive member outcomes (compatible units "
+            "only, per the group's own reporting definition). The "
+            "expected-mean credible interval is not shown for group totals - "
+            "independently summing per-outcome interval bounds would not "
+            "represent a valid joint interval."
+        )
+
+    if view_df.empty:
+        st.info("No residual-series rows available for this selection.")
+        return
+
+    comparison_choices = [
+        oid for oid in outcome_ids if not (view_kind == "outcome" and oid == view_key)
+    ]
+    comparison_ids = st.multiselect(
+        "Compare with other outcomes (optional - overlays residuals only, "
+        "no totals are formed)",
+        comparison_choices,
+        default=[],
+        format_func=lambda oid: _residual_outcome_label(oid, outcome_labels),
+        key="residual_explorer_compare",
+    )
+
+    # 7.2 actual vs modelled chart
+    st.plotly_chart(
+        create_actual_vs_fitted_chart(
+            view_df["date"].to_numpy(),
+            view_df["actual"].to_numpy(dtype=float),
+            view_df["predicted"].to_numpy(dtype=float),
+            lower_values=(
+                view_df["expected_mean_lower"].to_numpy(dtype=float)
+                if has_interval
+                else None
+            ),
+            upper_values=(
+                view_df["expected_mean_upper"].to_numpy(dtype=float)
+                if has_interval
+                else None
+            ),
+            title=f"Actual vs modelled · {selected_market} · {view_label}",
+        ),
+        width="stretch",
+    )
+    if has_interval:
+        st.caption(
+            f"Shaded band is the {view_df['expected_mean_credible_mass'].iloc[0]:.0%} "
+            "credible interval for the fitted expected mean - not a "
+            "posterior predictive interval for a simulated outcome draw."
+        )
+
+    # 7.3 residual chart
+    st.markdown("##### Residuals by week")
+    st.caption(
+        "residual = actual - predicted. **Positive** = the model "
+        "under-predicted that week; **negative** = the model over-predicted."
+    )
+    abs_threshold = (
+        view_df["abs_residual"].quantile(0.9)
+        if len(view_df) > 1
+        else view_df["abs_residual"].max()
+    )
+    highlight_mask = (view_df["abs_residual"] >= abs_threshold).to_numpy()
+    st.plotly_chart(
+        create_residual_bar_chart(
+            view_df["date"].to_numpy(),
+            view_df["residual"].to_numpy(dtype=float),
+            highlight_mask=highlight_mask,
+            title=f"Residuals · {selected_market} · {view_label} (diamonds mark the largest misses)",
+        ),
+        width="stretch",
+    )
+
+    if comparison_ids:
+        base_label = view_label
+        base_series = view_df[["date", "residual"]].assign(series=base_label)
+        compare_df = market_df[market_df["outcome_id"].isin(comparison_ids)].copy()
+        compare_df["series"] = compare_df["outcome_id"].map(
+            lambda oid: (
+                f"Individual outcome · {_residual_outcome_label(oid, outcome_labels)}"
+            )
+        )
+        overlay_long = pd.concat(
+            [base_series, compare_df[["date", "residual", "series"]]],
+            ignore_index=True,
+        )
+        overlay_wide = (
+            overlay_long.pivot_table(index="date", columns="series", values="residual")
+            .reset_index()
+            .sort_values("date")
+        )
+        st.plotly_chart(
+            create_time_series_chart(
+                overlay_wide,
+                "date",
+                [c for c in overlay_wide.columns if c != "date"],
+                title="Residual comparison across outcomes",
+            ),
+            width="stretch",
+        )
+
+    # 7.4 biggest misses table
+    st.markdown("##### Biggest misses")
+    st.caption(
+        "Which weeks did the model get most wrong? Ranked by absolute "
+        "residual by default; every row is available, not only a fixed "
+        "top 10."
+    )
+    sort_choice = st.radio(
+        "Sort",
+        ["Largest absolute residual", "Most under-predicted", "Most over-predicted"],
+        horizontal=True,
+        key="residual_explorer_sort",
+    )
+    table_df = view_df[
+        [
+            "date",
+            "actual",
+            "predicted",
+            "residual",
+            "abs_residual",
+            "abs_residual_rank_pct",
+        ]
+    ].copy()
+    table_df.insert(1, "outcome", view_label)
+    if sort_choice == "Largest absolute residual":
+        table_df = table_df.sort_values("abs_residual", ascending=False)
+    elif sort_choice == "Most under-predicted":
+        table_df = table_df.sort_values("residual", ascending=False)
+    else:
+        table_df = table_df.sort_values("residual", ascending=True)
+    st.dataframe(
+        table_df.reset_index(drop=True),
+        width="stretch",
+        column_config=dataframe_column_config(table_df),
+    )
+
+    # 7.5 shared residual weeks
+    shared_evidence = payload.get("shared_residual_evidence") or {}
+    st.markdown("##### Shared residual weeks")
+    st.caption(
+        "Weeks where two or more outcomes were simultaneously among their "
+        "own largest absolute residuals in this market - a co-occurrence "
+        "pattern, not a causal claim. Several outcomes being under- or "
+        "over-predicted in the same week may indicate a common demand "
+        "factor, event, source change, or missing context worth "
+        "investigating; this view does not identify which, and nothing "
+        "here is added to the model automatically."
+    )
+    shared_weeks = [
+        w
+        for w in (shared_evidence.get("shared_extreme_weeks") or [])
+        if w.get("market") == selected_market
+    ]
+    if not shared_weeks:
+        st.info("No shared extreme-residual weeks found for this market.")
+    else:
+        shared_df = pd.DataFrame(
+            [
+                {
+                    "date": w["date"],
+                    "outcomes": ", ".join(
+                        _residual_outcome_label(oid, outcome_labels)
+                        for oid in w["outcomes"]
+                    ),
+                    "same_sign": w["all_same_sign"],
+                }
+                for w in shared_weeks
+            ]
+        ).sort_values("date")
+        st.dataframe(
+            shared_df, width="stretch", column_config=dataframe_column_config(shared_df)
+        )
+    pairwise = [
+        p
+        for p in (shared_evidence.get("pairwise_correlation") or [])
+        if p.get("market") == selected_market
+    ]
+    if pairwise:
+        pairwise_df = pd.DataFrame(
+            [
+                {
+                    "outcome_a": _residual_outcome_label(
+                        p["outcome_a"], outcome_labels
+                    ),
+                    "outcome_b": _residual_outcome_label(
+                        p["outcome_b"], outcome_labels
+                    ),
+                    "residual_correlation": p["residual_correlation"],
+                }
+                for p in pairwise
+            ]
+        )
+        st.dataframe(
+            pairwise_df,
+            width="stretch",
+            column_config=dataframe_column_config(pairwise_df),
+        )
+
+
 st.markdown("### Full diagnostic detail")
 st.caption(
     "Detail behind the summary above, grouped by evidence domain - not "
@@ -618,6 +936,33 @@ if scorecard:
             )
         elif residual_section is not None and residual_section.status == "failed":
             st.error(f"Residual temporal diagnostics failed: {residual_section.error}")
+
+        st.markdown("---")
+        st.markdown("#### Residuals over time (Residual Explorer)")
+        st.caption(
+            "One row per market x week x outcome, read directly from the "
+            "canonical residual-series evidence above - never recomputed "
+            "on this page. This is additive to the aggregate residual "
+            "temporal evidence above; it never replaces it."
+        )
+        residual_series_section = (
+            diag_artefact.residual_series if diag_artefact else None
+        )
+        if (
+            residual_series_section is None
+            or residual_series_section.status == "not_computed"
+        ):
+            st.info(
+                residual_series_section.error
+                if residual_series_section is not None and residual_series_section.error
+                else "Not computed. Click 'Compute scorecard' above."
+            )
+        elif residual_series_section.status == "failed":
+            st.error(f"Residual series failed: {residual_series_section.error}")
+        else:
+            _render_residual_explorer(
+                residual_series_section.payload, meta, residual_outcome_labels
+            )
 
     with tab_ppc:
         st.caption(
