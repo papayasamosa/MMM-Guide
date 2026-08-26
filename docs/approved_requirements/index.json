@@ -1115,6 +1115,31 @@
         "ancestry_mmm/tests/test_uk_production_fit_runner.py::test_control_scaling_scope_blocks_an_unapproved_control_name",
         "ancestry_mmm/tests/test_uk_production_fit_runner.py::test_control_scaling_scope_blocks_nonempty_outcome_controls"
       ]
+    },
+    {
+      "requirement_id": "REQ-HIERARCHY-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-HIERARCHY-001.md",
+      "affected_modules": [
+        "ancestry_mmm/core/hierarchical_model.py",
+        "docs/approved_requirements/REQ-HIERARCHY-001.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_hierarchical_model.py::TestSharedPoolingScaleHierarchyChallenger::test_creates_a_scalar_sigma_pool_global_not_the_per_channel_vector",
+        "ancestry_mmm/tests/test_hierarchical_model.py::TestSharedPoolingScaleHierarchyChallenger::test_default_and_pooled_beta_reference_configs_are_unaffected",
+        "ancestry_mmm/tests/test_hierarchical_model.py::TestSharedPoolingScaleHierarchyChallenger::test_log_beta_and_beta_retain_outcome_and_channel_dims",
+        "ancestry_mmm/tests/test_hierarchical_model.py::TestSharedPoolingScaleHierarchyChallenger::test_shared_pooling_scale_draws_are_finite",
+        "ancestry_mmm/tests/test_hierarchical_model.py::TestSharedPoolingScaleHierarchyChallenger::test_shared_pooling_scale_takes_precedence_over_pooled_beta_reference",
+        "ancestry_mmm/tests/test_hierarchical_model.py::TestSharedPoolingScaleHierarchyChallenger::test_transform_config_fingerprint_distinguishes_h2_from_the_current_candidate"
+      ]
     }
   ]
 }
