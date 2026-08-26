@@ -457,6 +457,71 @@ class TestSharedResidualEvidence:
         assert set(week["outcomes"]) == {"A", "B"}
         assert week["all_same_sign"] is True
 
+    def test_correlation_and_shared_weeks_never_cross_a_market_boundary(self):
+        """A model frame can carry more than one market even when
+        model_type="shared" (the fixture two-market tests elsewhere in this
+        file exercise exactly that). Correlating or ranking one market's
+        weeks against a different market's weeks on the same calendar date
+        would compare unrelated series."""
+        dates = pd.date_range("2024-01-01", periods=10, freq="W")
+        # UK: A and B perfectly correlated. US: A and B perfectly
+        # anti-correlated. If markets were pooled, the true per-market
+        # signals would be diluted/contaminated.
+        uk = pd.concat(
+            [
+                pd.DataFrame(
+                    {
+                        "market": "UK",
+                        "date": dates,
+                        "outcome_id": "A",
+                        "residual": np.linspace(-5, 5, 10),
+                    }
+                ),
+                pd.DataFrame(
+                    {
+                        "market": "UK",
+                        "date": dates,
+                        "outcome_id": "B",
+                        "residual": np.linspace(-5, 5, 10),
+                    }
+                ),
+            ],
+            ignore_index=True,
+        )
+        us = pd.concat(
+            [
+                pd.DataFrame(
+                    {
+                        "market": "US",
+                        "date": dates,
+                        "outcome_id": "A",
+                        "residual": np.linspace(-5, 5, 10),
+                    }
+                ),
+                pd.DataFrame(
+                    {
+                        "market": "US",
+                        "date": dates,
+                        "outcome_id": "B",
+                        "residual": np.linspace(5, -5, 10),
+                    }
+                ),
+            ],
+            ignore_index=True,
+        )
+        residual_df = pd.concat([uk, us], ignore_index=True)
+        result = shared_residual_evidence(residual_df)
+        pairwise = {
+            (p["market"], p["outcome_a"], p["outcome_b"]): p["residual_correlation"]
+            for p in result["pairwise_correlation"]
+        }
+        assert pairwise[("UK", "A", "B")] == pytest.approx(1.0)
+        assert pairwise[("US", "A", "B")] == pytest.approx(-1.0)
+
+        # Every shared-extreme-week row must carry only one market's outcomes.
+        for week in result["shared_extreme_weeks"]:
+            assert week["market"] in {"UK", "US"}
+
     def test_no_causal_claim_in_payload_keys(self):
         # Guardrail: the evidence structure itself must never carry a
         # causal/explanatory field name - WP2.11 item 7.5 explicitly

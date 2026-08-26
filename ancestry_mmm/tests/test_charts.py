@@ -8,7 +8,7 @@ needed.
 import numpy as np
 import pandas as pd
 
-from ancestry_mmm.utils import THEME_COLORS
+from ancestry_mmm.utils import CHART_COLORS, THEME_COLORS
 from ancestry_mmm.components.charts import (
     create_time_series_chart,
     create_bar_chart_with_ci,
@@ -19,6 +19,8 @@ from ancestry_mmm.components.charts import (
     create_response_curve_with_band,
     create_annotated_response_curve,
     create_waterfall_chart,
+    create_actual_vs_fitted_chart,
+    create_residual_bar_chart,
 )
 
 
@@ -286,3 +288,77 @@ def test_waterfall_chart_marks_every_category_relative_except_the_last():
     assert len(fig.data) == 1
     waterfall = fig.data[0]
     assert waterfall.measure == ("relative", "relative", "relative", "total")
+
+
+def test_actual_vs_fitted_chart_without_band_has_two_traces():
+    x = np.array([0, 1, 2])
+    actual = np.array([10.0, 12.0, 9.0])
+    predicted = np.array([9.5, 11.5, 9.5])
+    fig = create_actual_vs_fitted_chart(x, actual, predicted)
+    assert len(fig.data) == 2
+    names = [trace.name for trace in fig.data]
+    assert "Fitted (posterior mean)" in names
+    assert "Actual" in names
+    fitted_trace = next(t for t in fig.data if t.name == "Fitted (posterior mean)")
+    actual_trace = next(t for t in fig.data if t.name == "Actual")
+    assert np.array_equal(fitted_trace.y, predicted)
+    assert np.array_equal(actual_trace.y, actual)
+
+
+def test_actual_vs_fitted_chart_with_band_adds_a_third_trace():
+    x = np.array([0, 1, 2])
+    actual = np.array([10.0, 12.0, 9.0])
+    predicted = np.array([9.5, 11.5, 9.5])
+    lower = np.array([8.0, 10.0, 8.0])
+    upper = np.array([11.0, 13.0, 11.0])
+    fig = create_actual_vs_fitted_chart(
+        x, actual, predicted, lower_values=lower, upper_values=upper
+    )
+    assert len(fig.data) == 3
+    band_trace = fig.data[0]
+    assert band_trace.name == "Expected-mean credible interval"
+    assert np.array_equal(band_trace.x, np.concatenate([x, x[::-1]]))
+    assert np.array_equal(band_trace.y, np.concatenate([upper, lower[::-1]]))
+
+
+def test_residual_bar_chart_colors_positive_and_negative_bars_differently():
+    x = np.array([0, 1, 2])
+    residuals = np.array([5.0, -3.0, 0.0])
+    fig = create_residual_bar_chart(x, residuals)
+    bar_trace = fig.data[0]
+    assert bar_trace.type == "bar"
+    assert np.array_equal(bar_trace.y, residuals)
+    assert bar_trace.marker.color[0] == CHART_COLORS["success"]
+    assert bar_trace.marker.color[1] == CHART_COLORS["error"]
+    # Zero is treated as non-negative (the >= 0 branch), same colour as the
+    # positive bar.
+    assert bar_trace.marker.color[2] == CHART_COLORS["success"]
+
+
+def test_residual_bar_chart_highlight_mask_adds_a_marker_trace():
+    x = np.array([0, 1, 2, 3])
+    residuals = np.array([1.0, -8.0, 0.5, -0.2])
+    highlight_mask = np.array([False, True, False, False])
+    fig = create_residual_bar_chart(x, residuals, highlight_mask=highlight_mask)
+    assert len(fig.data) == 2
+    marker_trace = fig.data[1]
+    assert marker_trace.mode == "markers"
+    assert marker_trace.marker.symbol == "diamond-open"
+    assert list(marker_trace.x) == [1]
+    assert list(marker_trace.y) == [-8.0]
+
+
+def test_residual_bar_chart_no_highlight_trace_when_mask_all_false():
+    x = np.array([0, 1])
+    residuals = np.array([1.0, -1.0])
+    fig = create_residual_bar_chart(
+        x, residuals, highlight_mask=np.array([False, False])
+    )
+    assert len(fig.data) == 1
+
+
+def test_residual_bar_chart_draws_a_zero_line():
+    x = np.array([0, 1])
+    residuals = np.array([1.0, -1.0])
+    fig = create_residual_bar_chart(x, residuals)
+    assert any(shape.y0 == 0 and shape.y1 == 0 for shape in fig.layout.shapes)

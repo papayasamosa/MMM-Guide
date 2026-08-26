@@ -457,6 +457,135 @@ def create_annotated_response_curve(
     return fig
 
 
+def create_actual_vs_fitted_chart(
+    x_values: np.ndarray,
+    actual_values: np.ndarray,
+    predicted_values: np.ndarray,
+    lower_values: Optional[np.ndarray] = None,
+    upper_values: Optional[np.ndarray] = None,
+    title: Optional[str] = None,
+    height: int = 360,
+) -> go.Figure:
+    """WP2.11 Residual Explorer (7.2): weekly actual vs posterior-mean
+    fitted outcome, with an optional shaded credible-interval band around
+    the fitted line. ``lower_values``/``upper_values`` are an interval for
+    the *fitted expected mean* (`trace.posterior["mu"]`'s own quantiles),
+    never a posterior-predictive interval - the caller is responsible for
+    only passing genuine expected-mean bounds here."""
+    fig = go.Figure()
+
+    has_band = lower_values is not None and upper_values is not None
+    if has_band:
+        fig.add_trace(
+            go.Scatter(
+                x=np.concatenate([x_values, x_values[::-1]]),
+                y=np.concatenate([upper_values, lower_values[::-1]]),
+                fill="toself",
+                fillcolor="rgba(99, 179, 138, 0.2)",
+                line=dict(color="rgba(0,0,0,0)"),
+                hoverinfo="skip",
+                name="Expected-mean credible interval",
+                showlegend=True,
+            )
+        )
+
+    fig.add_trace(
+        go.Scatter(
+            x=x_values,
+            y=predicted_values,
+            mode="lines",
+            line=dict(color=CHART_COLORS["primary"], width=2),
+            name="Fitted (posterior mean)",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x_values,
+            y=actual_values,
+            mode="lines+markers",
+            line=dict(color=THEME_COLORS["text_secondary"], width=1.5, dash="dot"),
+            marker=dict(size=5),
+            name="Actual",
+        )
+    )
+
+    fig.update_layout(
+        template="plotly_white",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        title=title,
+        xaxis_title="Week",
+        yaxis_title="Outcome",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        height=height,
+    )
+
+    _apply_chart_theme(fig)
+    return fig
+
+
+def create_residual_bar_chart(
+    x_values: np.ndarray,
+    residual_values: np.ndarray,
+    highlight_mask: Optional[np.ndarray] = None,
+    title: Optional[str] = None,
+    height: int = 300,
+) -> go.Figure:
+    """WP2.11 Residual Explorer (7.3): weekly residuals (``actual -
+    predicted``) as bars around a zero line - a positive bar means the
+    model under-predicted that week, a negative bar means it over-
+    predicted. ``highlight_mask`` marks the biggest-miss weeks with a
+    diamond marker (a shape, not only a colour, per this app's
+    never-colour-alone convention) rather than a second colour alone."""
+    fig = go.Figure()
+    colors = [
+        CHART_COLORS["success"] if v >= 0 else CHART_COLORS["error"]
+        for v in residual_values
+    ]
+    fig.add_trace(
+        go.Bar(
+            x=x_values,
+            y=residual_values,
+            marker_color=colors,
+            name="Residual",
+            hovertemplate="%{x}<br>Residual: %{y:.2f}<extra></extra>",
+        )
+    )
+    if highlight_mask is not None and np.any(highlight_mask):
+        highlight_mask = np.asarray(highlight_mask, dtype=bool)
+        fig.add_trace(
+            go.Scatter(
+                x=np.asarray(x_values)[highlight_mask],
+                y=np.asarray(residual_values)[highlight_mask],
+                mode="markers",
+                marker=dict(
+                    symbol="diamond-open",
+                    size=12,
+                    color=THEME_COLORS["text_primary"],
+                    line=dict(width=2),
+                ),
+                name="Biggest misses",
+                hoverinfo="skip",
+            )
+        )
+    fig.add_hline(y=0, line=dict(color=THEME_COLORS["border_subtle"], width=1))
+
+    fig.update_layout(
+        template="plotly_white",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        title=title,
+        xaxis_title="Week",
+        yaxis_title="Residual (actual - predicted)",
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        height=height,
+    )
+
+    _apply_chart_theme(fig)
+    return fig
+
+
 def create_waterfall_chart(
     categories: List[str],
     values: List[float],
