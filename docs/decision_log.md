@@ -7425,3 +7425,67 @@ remain untracked and unpushed.
 **Owner:** Marketing Data Science / Model Governance.
 **Status:** Evidence recorded; no candidate selected (decision remains
 open for the human owners).
+
+---
+
+**Date:** 2026-08-26
+**Decision:** Publish `docs/wp2_11_hierarchy_decision_package_20260826.md`,
+completing WP2.11's evidence-gathering for the current-hierarchy/H1/H2/
+Overall-challenger question. No production hierarchy change is made or
+proposed as approved. Convergence/geometry evidence (current: 13 FH / 46
+DNA divergences; H1: 0 FH / 35 DNA; H2: 98 FH / 369 DNA; Overall: 0/0)
+shows H1 as the more numerically well-behaved segment-preserving
+challenger and H2 as clearly worse on both convergence and its own
+diagnostic purpose (H2's `uk_dna_performance_display` z-offset evidence
+shows similar-signed, similar-magnitude deviations across both DNA
+outcomes, not the genuine divergence H2 was built to test for). Also
+records that an attempted `RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY`
+fold-refit backtest for the current hierarchy was terminated after a
+targeted probe found (a) several channels with as few as 2 of 72 non-zero
+weeks in fold 1's training slice and (b) real NUTS geometry (tree depth
+8-9, a step size frozen at 0.00946, ~396 gradient evaluations/draw)
+consistent with a strained posterior on that fold - both properties of
+the fold-construction/data layer, not of any hierarchy candidate, and not
+treated as evidence for or against any candidate given the current UK
+activity data is separately under review for suspected source-to-model
+mapping issues.
+**Reason:** WP2.11 explicitly requires completing the evidence package
+without choosing a production default in code, and explicitly prohibits
+selecting a hierarchy on convergence/in-sample evidence alone absent
+out-of-sample backtest evidence - none of which exists yet for any
+candidate.
+**Alternatives considered:** Selecting H1 as the new production default
+on the strength of its convergence evidence alone (rejected - WP2.11's
+own instruction and the missing out-of-sample evidence explicitly
+forbid this); continuing the terminated fold-refit backtest to
+completion regardless of the fold-1 findings (rejected - the analyst
+explicitly directed terminating it once fold 1 showed inadequate
+variable support or pathological geometry, pending a separate source-data
+review); deriving a numeric sparse-channel support threshold from the
+fold-1 finding to fix the backtest (rejected - the analyst explicitly
+prohibited deriving a threshold from data currently under review).
+**Impact:** New `docs/wp2_11_hierarchy_decision_package_20260826.md`.
+New reusable diagnostics/instrumentation, not analytical-semantics
+changes: `core.fold_data_support` (per-fold, per-variable data-support
+report; `ready`/`review_recommended`/`blocked` framework present but
+never self-categorised - every field of `SupportThresholds` defaults to
+`None`), `core.fit_progress` (rate-limited, always-flushed sampler
+progress/geometry reporter reading `core.models.fit_model`'s new
+optional `stats_callback`), `core.source_model_reconciliation`
+(raw-source-vs-canonical-frame per-variable comparison), and a new
+optional `on_progress_line` parameter threaded through
+`application.fold_refit_service.fit_fold_with_real_model`/
+`run_leakage_safe_fold_refit`/`run_leakage_safe_fold_refit_from_sources`
+(default `None`, byte-for-byte unchanged behaviour for every existing
+caller) - built directly in response to this backtest run itself
+providing no visibility for over six hours before being probed and
+terminated. No change to any hierarchy's production eligibility, no
+change to `.mypy-baseline-count` (still 243), no change to
+`docs/approved_requirements/index.json`.
+**Owner:** Analyst (WP2.11 items 3/5/9), implemented autonomously; data
+review and the eventual hierarchy-default decision remain with Marketing
+Data Science / Model Governance.
+**Status:** Evidence package published; production hierarchy default
+unchanged; hierarchy-default decision remains open pending the current
+UK activity-data review, a completed fold-refit backtest, and the
+item-3 per-candidate comparison table.

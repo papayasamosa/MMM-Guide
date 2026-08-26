@@ -271,6 +271,7 @@ def fit_model(
     chains: int = 4,
     target_accept: float = 0.9,
     progress_callback: Optional[Callable[[int, int], None]] = None,
+    stats_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     random_seed: int = 42,
     cores: Optional[int] = None,
 ) -> az.InferenceData:
@@ -284,13 +285,18 @@ def fit_model(
         chains: Number of MCMC chains
         target_accept: Target acceptance rate for NUTS
         progress_callback: Optional callback function for progress updates
+        stats_callback: Optional callback receiving one dict per draw with live
+            NUTS sampler geometry - see below.
         random_seed: Random seed for reproducibility
         cores: Number of parallel processes; pass 1 when using `progress_callback`
-            from a single-process host like Streamlit - PyMC's callback runs inside
-            each chain's own process with multiprocessing, so a shared Python object
-            mutated by the callback (e.g. a plain dict) is only visible to the caller
-            when everything runs in-process (cores=1). Defaults to PyMC's own choice
-            (one process per chain) when not given.
+            or `stats_callback` from a single-process host like Streamlit - PyMC's
+            callback runs inside each chain's own process with multiprocessing, so
+            a shared Python object mutated by the callback (e.g. a plain dict) is
+            only visible to the caller when everything runs in-process (cores=1).
+            A callback that only prints/logs (never mutates shared state) remains
+            visible regardless of `cores`, since child processes share the parent's
+            stdout. Defaults to PyMC's own choice (one process per chain) when not
+            given.
 
     Returns:
         ArviZ InferenceData object containing the trace
@@ -300,13 +306,43 @@ def fit_model(
     progress bar is disabled - so a caller (e.g. a Streamlit page) can drive its own
     progress indicator instead. Long-running sampling must not silently block the
     UI with no feedback.
+
+    If `stats_callback` is given, it's called after every draw with a dict:
+    `{"chain", "draw_idx", "tuning", "completed", "total", "diverging",
+    "tree_depth", "tree_size", "step_size", "reached_max_treedepth"}` - the raw
+    per-draw NUTS geometry PyMC's own step method already computes (see
+    `pymc.step_methods.hmc.nuts.NUTS`'s documented stats), never a second,
+    independently-derived approximation of it. Giving either callback disables
+    the console progress bar exactly like `progress_callback` alone does today -
+    a long-running fit (e.g. a fold-refit backtest calling this once per fold)
+    must never leave a caller with no visibility into whether it is still making
+    progress or stuck, for potentially hours, with nothing to look at.
     """
     total_steps = (draws + tune) * chains
+    any_callback = progress_callback is not None or stats_callback is not None
 
     def _callback(trace, draw):
+        completed = draw.chain * (draws + tune) + len(trace)
         if progress_callback is not None:
-            completed = draw.chain * (draws + tune) + len(trace)
             progress_callback(completed, total_steps)
+        if stats_callback is not None:
+            step_stats = draw.stats[0] if draw.stats else {}
+            stats_callback(
+                {
+                    "chain": draw.chain,
+                    "draw_idx": draw.draw_idx,
+                    "tuning": draw.tuning,
+                    "completed": completed,
+                    "total": total_steps,
+                    "diverging": bool(step_stats.get("diverging", False)),
+                    "tree_depth": step_stats.get("depth"),
+                    "tree_size": step_stats.get("tree_size"),
+                    "step_size": step_stats.get("step_size"),
+                    "reached_max_treedepth": bool(
+                        step_stats.get("reached_max_treedepth", False)
+                    ),
+                }
+            )
 
     with model:
         trace = pm.sample(
@@ -317,8 +353,8 @@ def fit_model(
             target_accept=target_accept,
             random_seed=random_seed,
             return_inferencedata=True,
-            progressbar=(progress_callback is None),
-            callback=_callback if progress_callback is not None else None,
+            progressbar=not any_callback,
+            callback=_callback if any_callback else None,
         )
 
     return trace
