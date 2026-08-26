@@ -18,6 +18,7 @@ required there.
 """
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from ancestry_mmm.core.hierarchical_model import (
@@ -543,6 +544,186 @@ class TestSingleChannelSingleMarketSurvivesPmDraw:
         ):
             assert field_expr in source_a, f"Model A missing: {field_expr}"
             assert field_expr in source_c, f"Model C missing: {field_expr}"
+
+
+class TestSharedPoolingScaleHierarchyChallenger:
+    """WP2.11 item 2 (`docs/approved_requirements/REQ-HIERARCHY-001.md`):
+    the diagnostic-only H2 hierarchy challenger -
+    `prior_config["shared_pooling_scale"]=True` - one shared scalar
+    `sigma_pool_global` across every channel instead of the per-channel
+    `sigma_pool[channel]` vector. Uses real `pm.Model`/`pm.draw` (not
+    `pm.sample`) for the same reason `TestSingleChannelSingleMarketSurvives
+    PmDraw` does - the RV shapes/names this proves cannot be checked
+    without actually building the graph."""
+
+    @staticmethod
+    def _two_outcome_frame():
+        return {
+            "markets": ["UK"],
+            "market_idx": np.array([0, 0, 0]),
+            "market_bounds": [(0, 3)],
+            "channels": ["TV", "Radio"],
+            "dna_channel_idx": [],
+            "outcome_ids": ["fh_new", "fh_winback"],
+            "X_media": np.array([[100.0, 50.0], [200.0, 60.0], [150.0, 55.0]]),
+            "Y": np.array([[10.0, 5.0], [12.0, 6.0], [11.0, 5.5]]),
+            "promo": np.zeros((3, 1)),
+            "X_controls": np.zeros((3, 0)),
+            "control_names": [],
+            "fourier": np.zeros((3, 2)),
+            "trend": np.array([1.0, 1.1, 1.05]),
+            "unpooled_markets": [],
+        }
+
+    @staticmethod
+    def _spec():
+        from ancestry_mmm.core.schema import ModelSpec
+
+        return ModelSpec(
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa", "Winback": "fh_winback_gsa"},
+            channels=["TV", "Radio"],
+        )
+
+    def test_creates_a_scalar_sigma_pool_global_not_the_per_channel_vector(self):
+        from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+
+        model, _meta = build_fh_hierarchical_model(
+            self._two_outcome_frame(),
+            self._spec(),
+            prior_config={"shared_pooling_scale": True},
+        )
+
+        assert "sigma_pool_global" in model.named_vars
+        assert "sigma_pool" not in model.named_vars
+        sigma_pool_global_shape = model.named_vars["sigma_pool_global"].type.shape
+        assert sigma_pool_global_shape == (), sigma_pool_global_shape
+
+    def test_default_and_pooled_beta_reference_configs_are_unaffected(self):
+        """The new gate must not change any existing gate's own variable
+        shape/name - `sigma_pool` stays the per-channel vector everywhere
+        `shared_pooling_scale` is not explicitly set."""
+        import pymc as pm
+
+        from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+
+        default_model, _ = build_fh_hierarchical_model(
+            self._two_outcome_frame(), self._spec()
+        )
+        assert "sigma_pool" in default_model.named_vars
+        assert "sigma_pool_global" not in default_model.named_vars
+        with default_model:
+            sigma_pool_draw = pm.draw(
+                default_model.named_vars["sigma_pool"], draws=1, random_seed=0
+            )
+        assert np.asarray(sigma_pool_draw).shape == (2,)
+
+        pooled_model, _ = build_fh_hierarchical_model(
+            self._two_outcome_frame(),
+            self._spec(),
+            prior_config={"pooled_beta_reference": True},
+        )
+        assert "sigma_pool" in pooled_model.named_vars
+        assert "sigma_pool_global" not in pooled_model.named_vars
+
+    def test_log_beta_and_beta_retain_outcome_and_channel_dims(self):
+        """Downstream replay (`core.predict`/`core.attribution`) reads
+        `beta`/`log_beta` by name and dims only - H2 must not change that
+        shape even though it changes how the values are generated."""
+        import pymc as pm
+
+        from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+
+        model, _meta = build_fh_hierarchical_model(
+            self._two_outcome_frame(),
+            self._spec(),
+            prior_config={"shared_pooling_scale": True},
+        )
+        with model:
+            log_beta_draw, beta_draw = pm.draw(
+                [model.named_vars["log_beta"], model.named_vars["beta"]],
+                draws=1,
+                random_seed=0,
+            )
+        assert np.asarray(log_beta_draw).shape == (2, 2)
+        assert np.asarray(beta_draw).shape == (2, 2)
+
+    def test_shared_pooling_scale_draws_are_finite(self):
+        import pymc as pm
+
+        from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+
+        model, _meta = build_fh_hierarchical_model(
+            self._two_outcome_frame(),
+            self._spec(),
+            prior_config={"shared_pooling_scale": True},
+        )
+        with model:
+            sigma_pool_global, beta = pm.draw(
+                [model.named_vars["sigma_pool_global"], model.named_vars["beta"]],
+                draws=3,
+                random_seed=0,
+            )
+        assert np.isfinite(sigma_pool_global).all()
+        assert np.asarray(sigma_pool_global).shape == (3,)
+        assert np.isfinite(beta).all()
+
+    def test_shared_pooling_scale_takes_precedence_over_pooled_beta_reference(self):
+        """Both flags set is not a supported combination this diagnostic
+        was designed for - `shared_pooling_scale` deliberately wins
+        (checked first) rather than raising, so a caller who sets both by
+        mistake gets a real, inspectable model instead of a crash; this
+        test documents that precedence explicitly rather than leaving it
+        implicit."""
+        from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+
+        model, _meta = build_fh_hierarchical_model(
+            self._two_outcome_frame(),
+            self._spec(),
+            prior_config={"shared_pooling_scale": True, "pooled_beta_reference": True},
+        )
+        assert "sigma_pool_global" in model.named_vars
+        assert "sigma_pool" not in model.named_vars
+
+    def test_transform_config_fingerprint_distinguishes_h2_from_the_current_candidate(
+        self,
+    ):
+        """REQ-HIERARCHY-001 requires H2 to be distinguishable from the
+        current per-channel candidate by fingerprint - `transform_config_
+        fingerprint` is a straight hash of the whole `prior_config` dict
+        (`core.prefit_identifiability._json_fingerprint`), so the mere
+        presence of a new key already guarantees this without any new
+        fingerprinting mechanism."""
+        from ancestry_mmm.core.prefit_identifiability import build_prefit_fingerprints
+
+        base_config = {"control_sigma": 0.20, "enable_control_scaling": True}
+        h2_config = {**base_config, "shared_pooling_scale": True}
+        df = pd.DataFrame(
+            {
+                "date": pd.date_range("2024-01-01", periods=3, freq="W"),
+                "market": ["UK"] * 3,
+                "TV": [100.0, 200.0, 150.0],
+            }
+        )
+        common_kwargs = dict(
+            channels=["TV"],
+            date_col="date",
+            market_col="market",
+            target_start=None,
+            target_end=None,
+        )
+        base_fingerprints = build_prefit_fingerprints(
+            df, transform_config=base_config, **common_kwargs
+        )
+        h2_fingerprints = build_prefit_fingerprints(
+            df, transform_config=h2_config, **common_kwargs
+        )
+        assert (
+            base_fingerprints["transform_config_fingerprint"]
+            != h2_fingerprints["transform_config_fingerprint"]
+        )
 
 
 class TestCandidateASearchIntegration:

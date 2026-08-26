@@ -278,6 +278,136 @@ def residual_temporal_diagnostics(
     return pd.DataFrame(rows)
 
 
+def residual_series(
+    frame: Dict,
+    meta: FHModelMeta,
+    params: FHPosteriorParams,
+    trace: Optional[az.InferenceData] = None,
+    credible_mass: float = 0.9,
+) -> pd.DataFrame:
+    """WP2.11 item 6: the canonical per-`market x date x outcome_id` residual
+    evidence the Residual Explorer (`pages/06_Diagnostics.py`) and any
+    export read - one row per fitted observation, not an aggregate
+    statistic. `residual = actual - predicted`: **positive** means the
+    model under-predicted that week, **negative** means it over-predicted.
+
+    Computed within each market's own chronological `frame["market_bounds"]`
+    slice (the same market-safety convention `residual_temporal_
+    diagnostics` above already uses) so rank/percentile are never computed
+    across a market boundary.
+
+    If `trace` is supplied and has a `mu` posterior variable
+    (`dims=("chain","draw","obs","outcome")`), also retains `expected_
+    mean_lower`/`expected_mean_upper`/`expected_mean_credible_mass` - a
+    credible interval for the *fitted expected mean* (`trace.posterior
+    ["mu"]`'s own posterior quantiles), never a posterior-predictive
+    interval for a simulated outcome draw (which this function does not
+    compute) - the column names say "expected_mean", not "predictive" or
+    "ppc", specifically so this distinction cannot be lost downstream.
+    """
+    mu = predict_mu(frame, meta, params)
+    Y = frame["Y"]
+    markets = frame["markets"]
+    market_bounds = frame["market_bounds"]
+    dates = frame.get("dates")
+    outcome_ids = list(meta.outcome_ids)
+
+    mu_lower = mu_upper = None
+    if trace is not None and "mu" in getattr(trace, "posterior", {}):
+        lower_q, upper_q = (1 - credible_mass) / 2, 1 - (1 - credible_mass) / 2
+        mu_posterior = trace.posterior["mu"]
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=RuntimeWarning)
+            mu_lower = mu_posterior.quantile(lower_q, dim=("chain", "draw")).values
+            mu_upper = mu_posterior.quantile(upper_q, dim=("chain", "draw")).values
+
+    rows: List[Dict[str, Any]] = []
+    for m_i, market in enumerate(markets):
+        start, end = market_bounds[m_i]
+        for i, oid in enumerate(outcome_ids):
+            actual = np.asarray(Y[start:end, i], dtype=float)
+            predicted = np.asarray(mu[start:end, i], dtype=float)
+            residual = actual - predicted
+            abs_residual = np.abs(residual)
+            residual_rank_pct = pd.Series(residual).rank(pct=True).to_numpy()
+            abs_residual_rank_pct = pd.Series(abs_residual).rank(pct=True).to_numpy()
+            for j in range(end - start):
+                row: Dict[str, Any] = {
+                    "market": market,
+                    "date": dates[start + j] if dates is not None else start + j,
+                    "outcome_id": oid,
+                    "actual": float(actual[j]),
+                    "predicted": float(predicted[j]),
+                    "residual": float(residual[j]),
+                    "abs_residual": float(abs_residual[j]),
+                    "residual_rank_pct": float(residual_rank_pct[j]),
+                    "abs_residual_rank_pct": float(abs_residual_rank_pct[j]),
+                }
+                if mu_lower is not None and mu_upper is not None:
+                    row["expected_mean_lower"] = float(mu_lower[start + j, i])
+                    row["expected_mean_upper"] = float(mu_upper[start + j, i])
+                    row["expected_mean_credible_mass"] = credible_mass
+                rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def shared_residual_evidence(
+    residual_df: pd.DataFrame, top_fraction: float = 0.1
+) -> Dict[str, Any]:
+    """WP2.11 item 6.3: cross-outcome shared-residual evidence for outcomes
+    on the same market/weekly grid (i.e. every outcome in `residual_df` -
+    they already share `frame["dates"]` by construction, since one model
+    fits them jointly). Diagnostic only - no pass/fail threshold, no
+    causal claim: pairwise residual correlation, and which weeks land in
+    more than one outcome's own largest-`|residual|` decile (`top_
+    fraction`, default 10%) at the same time, with sign agreement.
+    """
+    if residual_df.empty:
+        return {"pairwise_correlation": [], "shared_extreme_weeks": []}
+
+    pivot = residual_df.pivot_table(
+        index=["market", "date"], columns="outcome_id", values="residual"
+    )
+    outcome_ids = list(pivot.columns)
+
+    pairwise: List[Dict[str, Any]] = []
+    for a_idx, oid_a in enumerate(outcome_ids):
+        for oid_b in outcome_ids[a_idx + 1 :]:
+            a, b = pivot[oid_a].to_numpy(), pivot[oid_b].to_numpy()
+            valid = np.isfinite(a) & np.isfinite(b)
+            correlation = (
+                float(np.corrcoef(a[valid], b[valid])[0, 1])
+                if valid.sum() >= 2 and np.std(a[valid]) > 0 and np.std(b[valid]) > 0
+                else None
+            )
+            pairwise.append(
+                {
+                    "outcome_a": oid_a,
+                    "outcome_b": oid_b,
+                    "residual_correlation": correlation,
+                }
+            )
+
+    n_top = max(1, int(round(len(pivot) * top_fraction)))
+    top_sets = {oid: set(pivot[oid].abs().nlargest(n_top).index) for oid in outcome_ids}
+    shared_weeks: List[Dict[str, Any]] = []
+    for key in pivot.index:
+        members = [oid for oid in outcome_ids if key in top_sets[oid]]
+        if len(members) < 2:
+            continue
+        signs = {oid: (1 if pivot.loc[key, oid] > 0 else -1) for oid in members}
+        shared_weeks.append(
+            {
+                "market": key[0],
+                "date": key[1],
+                "outcomes": members,
+                "signs": signs,
+                "all_same_sign": len(set(signs.values())) == 1,
+            }
+        )
+    return {"pairwise_correlation": pairwise, "shared_extreme_weeks": shared_weeks}
+
+
 def _residual_autocorrelation_stats(residuals: np.ndarray) -> Tuple[float, float]:
     """Lag-1 autocorrelation coefficient and Durbin-Watson statistic for a
     single residual series, in chronological order. `nan` for either value

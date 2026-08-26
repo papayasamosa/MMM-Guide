@@ -892,9 +892,42 @@ def build_fh_hierarchical_model(
             sigma=prior_config.get("channel_effect_sigma", 0.5),
             dims="channel",
         )
+        shared_pooling_scale = bool(prior_config.get("shared_pooling_scale", False))
         pooled_beta_reference = bool(prior_config.get("pooled_beta_reference", False))
         pooling_scale = prior_config.get("pooling_sigma_prior", 0.3)
-        if pooled_beta_reference:
+        if shared_pooling_scale:
+            # WP2.11 H2 (docs/approved_requirements/REQ-HIERARCHY-001.md):
+            # diagnostic-only hierarchy challenger - one shared scalar
+            # pooling scale across every channel, rather than estimating
+            # 18-19 separate per-channel `sigma_pool[c]` variance
+            # parameters from only 2-3 outcome groups each (WP2.10 found
+            # nearly all of those sitting at their HalfNormal(0.3) prior
+            # mean, essentially uninformed by data). A distinctly-named
+            # `sigma_pool_global` (dims=(), a bare scalar - never
+            # `sigma_pool`, which always means the per-channel vector
+            # elsewhere in this codebase) so no persisted trace, replay,
+            # diagnostic, or attribution consumer can misinterpret one
+            # hierarchy for the other; `prior_config`'s own presence of
+            # this key already changes `transform_config_fingerprint`
+            # (a straight hash of the whole `prior_config` dict), so no
+            # separate fingerprint mechanism is needed to distinguish H2
+            # from the current per-channel candidate. `HalfNormal(0.3)` -
+            # the same scale the current per-channel hierarchy already
+            # uses - is retained here as experimental continuity, not a
+            # newly optimised prior (REQ-HIERARCHY-001 explicitly does not
+            # approve a broader prior search). Mutually exclusive with
+            # `pooled_beta_reference`/`pooling_sigma_prior_distribution`.
+            sigma_pool_global = pm.HalfNormal("sigma_pool_global", sigma=pooling_scale)
+            z_offset = pm.Normal("z_offset", mu=0, sigma=1, dims=("outcome", "channel"))
+            log_beta = pm.Deterministic(
+                "log_beta",
+                mu_channel[None, :] + sigma_pool_global * z_offset,
+                dims=("outcome", "channel"),
+            )
+            beta = pm.Deterministic(
+                "beta", pt.exp(log_beta), dims=("outcome", "channel")
+            )
+        elif pooled_beta_reference:
             sigma_pool = pm.Deterministic(
                 "sigma_pool",
                 pt.zeros(n_channels),
@@ -920,14 +953,19 @@ def build_fh_hierarchical_model(
                 sigma=pooling_scale,
                 dims="channel",
             )
-        if not pooled_beta_reference:
-            z_offset = pm.Normal("z_offset", mu=0, sigma=1, dims=("outcome", "channel"))
-        log_beta = pm.Deterministic(
-            "log_beta",
-            mu_channel[None, :] + sigma_pool[None, :] * z_offset,
-            dims=("outcome", "channel"),
-        )
-        beta = pm.Deterministic("beta", pt.exp(log_beta), dims=("outcome", "channel"))
+        if not shared_pooling_scale:
+            if not pooled_beta_reference:
+                z_offset = pm.Normal(
+                    "z_offset", mu=0, sigma=1, dims=("outcome", "channel")
+                )
+            log_beta = pm.Deterministic(
+                "log_beta",
+                mu_channel[None, :] + sigma_pool[None, :] * z_offset,
+                dims=("outcome", "channel"),
+            )
+            beta = pm.Deterministic(
+                "beta", pt.exp(log_beta), dims=("outcome", "channel")
+            )
 
         # -----------------------------------------------------------------
         # Pathway-driven channel contributions (PR G1 - core.pathways.

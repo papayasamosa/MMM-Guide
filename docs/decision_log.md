@@ -4,6 +4,16 @@ Format: Date, Decision, Reason, Alternatives considered, Impact, Owner, Status.
 
 ---
 
+**Date:** 2026-08-26
+**Decision:** Approved `REQ-HIERARCHY-001` (`docs/approved_requirements/REQ-HIERARCHY-001.md`): a diagnostic-only "H2" hierarchy challenger for the current UK Model A candidate - `prior_config["shared_pooling_scale"]=True` in `core.hierarchical_model.build_fh_hierarchical_model`, replacing the 18-19 separate per-channel `sigma_pool[channel]` variance parameters with one shared scalar `sigma_pool_global` (named distinctly, never reusing `sigma_pool`) while leaving `z_offset[o, c]` free per `(outcome, channel)` cell. Gated off by default; every existing caller is unaffected.
+**Reason:** WP2.10 found nearly every channel's `sigma_pool[channel]` sitting at its `HalfNormal(0.3)` prior mean - essentially uninformed, since each is estimated from only 2-3 outcome groups - while the WP2.10 Overall challengers (removing the hierarchy entirely) converge cleanly but fit worse and lose `uk_dna_performance_display`'s genuine segment heterogeneity. A single shared pooling scale can borrow information across every channel's deviations simultaneously while still permitting per-`(outcome, channel)` heterogeneity where the likelihood supports it - a middle ground between the current per-channel hierarchy and complete removal, not yet tested.
+**Alternatives considered:** reusing the existing `sigma_pool`/`pooled_beta_reference` gate with a reshaped variable (rejected - the analyst's own instruction explicitly prohibits silently reusing that name with a changed shape, since it risks misinterpretation by persisted traces/replay/diagnostics/attribution); searching for an optimised prior scale for `sigma_pool_global` (rejected - retained `HalfNormal(0.3)`, the current hierarchy's own scale, as experimental continuity per the analyst's explicit instruction not to conduct a broad prior search); a channel-specific exception preserving `uk_dna_performance_display`'s heterogeneity by construction (rejected - the analyst explicitly directed letting H2's likelihood determine this, not assuming it).
+**Impact:** `ancestry_mmm/core/hierarchical_model.py` gains one new gated branch (additive; the default/`pooled_beta_reference`/lognormal branches are byte-for-byte unchanged). No production default changes. H2's fit evidence is reported in `docs/wp2_11_hierarchy_decision_package_20260826.md` alongside the current hierarchy, H1, and the WP2.10 Overall challengers; a further, separate analyst decision is required before any hierarchy becomes the production default.
+**Owner:** Analyst (WP2.11 decision 3), implemented autonomously per the WP2.11 instruction.
+**Status:** Approved and implemented as a diagnostic-only gate.
+
+---
+
 **Date:** 2026-08-25
 **Decision:** WP2.8 (staged Model A convergence escalation) is blocked
 before its first stage. The analyst directed running the repository's

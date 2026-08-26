@@ -58,3 +58,4 @@ Coding agents must not independently interpret or reconcile the external Ancestr
 - `REQ-SCCURVE-*` — structural intervention curve provenance and planning-eligibility boundary
 - `REQ-EVENT-*` — governed named-event occurrence, family, response-definition, and future-replay contracts
 - `REQ-CONTROL-*` — model-control representation and coefficient-prior calibration for a specific candidate (never a universal default)
+- `REQ-HIERARCHY-*` — outcome-level partial-pooling hierarchy structure for a specific candidate, including gated diagnostic-only challenger forms (never a production default by implication)

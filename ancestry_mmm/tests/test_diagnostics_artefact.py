@@ -340,8 +340,8 @@ class TestDiagnosticsVersionAuthority:
     able to silently disagree with each other."""
 
     def test_current_version_constants_are_consistent(self):
-        assert CURRENT_DIAGNOSTICS_VERSION == "8.0.0"
-        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 8
+        assert CURRENT_DIAGNOSTICS_VERSION == "9.0.0"
+        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 9
 
     def test_default_diagnostics_result_uses_current_version(self):
         result = DiagnosticsResult(
@@ -931,17 +931,15 @@ class TestSchemaV5ToV6Compatibility:
 
 class TestSchemaV6FreshArtefact:
     def test_current_defaults_are_schema_v6(self):
-        # Work Package 2 (canonical Diagnostics evidence integration,
-        # `Media-Mix-Lab: Coding LLM Next Steps After PR #286`) bumped the
-        # schema to v8 (posterior_predictive_metric_distributions,
-        # historical_validation, structural_stability,
-        # graphical_identification, latent_state_identification,
-        # experiment_calibration sections) - this test's name is kept as
-        # historical continuity with the v6 introduction, but its
-        # assertion must track the live constants, same as every other
-        # version-authority test in this file.
-        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 8
-        assert CURRENT_DIAGNOSTICS_VERSION.startswith("8.")
+        # WP2.11 (segment-hierarchy remediation, fold-refit repair, and
+        # Residual Explorer) bumped the schema to v9 (residual_series -
+        # canonical per-market x date x outcome_id residual evidence for
+        # the Residual Explorer) - this test's name is kept as historical
+        # continuity with the v6 introduction, but its assertion must
+        # track the live constants, same as every other version-authority
+        # test in this file.
+        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 9
+        assert CURRENT_DIAGNOSTICS_VERSION.startswith("9.")
 
     def test_freshly_constructed_artefact_has_not_computed_market_channel_capability(
         self,
@@ -2091,15 +2089,25 @@ class TestSchemaV8Migration:
         trace, frame, meta = _minimal_trace_frame_meta()
         diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
         artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
-        future_dict = {**artefact.to_dict(), "schema_version": 9}
+        # 9 became a supported schema version in WP2.11 (residual_series) -
+        # this test's job is to prove genuinely-unsupported future versions
+        # are rejected, so it must always target one past the current max.
+        future_dict = {
+            **artefact.to_dict(),
+            "schema_version": CURRENT_DIAGNOSTICS_SCHEMA_VERSION + 1,
+        }
         with pytest.raises(ValueError, match="Unsupported schema_version"):
             DiagnosticsArtefact.from_dict(future_dict)
 
 
 class TestSchemaV8FreshArtefact:
     def test_current_defaults_are_schema_v8(self):
-        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 8
-        assert CURRENT_DIAGNOSTICS_VERSION == "8.0.0"
+        # WP2.11 bumped the schema to v9 (residual_series) - this test's
+        # name is kept as historical continuity with the v8 introduction,
+        # but its assertion must track the live constants, same as every
+        # other version-authority test in this file.
+        assert CURRENT_DIAGNOSTICS_SCHEMA_VERSION == 9
+        assert CURRENT_DIAGNOSTICS_VERSION == "9.0.0"
 
     def test_freshly_constructed_artefact_has_not_computed_new_sections(self):
         artefact = DiagnosticsArtefact()
@@ -2816,3 +2824,94 @@ class TestSchemaV8StalenessAndReadiness:
             model_identity_fingerprint="model-fp",
             diagnostic_artefact_fingerprint=updated_artefact.fingerprint(),
         )
+
+
+# =========================================================================
+# WP2.11 (segment-hierarchy remediation, fold-refit repair, and Residual
+# Explorer): schema v9 - residual_series (the canonical per-market x date
+# x outcome_id residual evidence backing the Residual Explorer).
+# =========================================================================
+
+
+class TestResidualSeriesSection:
+    def test_computes_one_row_per_market_date_outcome(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        result = DiagnosticsService().evaluate(diag_input)
+
+        section = result.diagnostics_artefact.residual_series
+        assert section.status == "computed", section.error
+        rows = section.payload["rows"]
+        assert len(rows) == len(frame["Y"]) * len(meta.outcome_ids)
+        row = rows[0]
+        for key in (
+            "market",
+            "date",
+            "outcome_id",
+            "actual",
+            "predicted",
+            "residual",
+            "abs_residual",
+            "residual_rank_pct",
+            "abs_residual_rank_pct",
+        ):
+            assert key in row
+        # `mu` is present in the minimal trace fixture, so the expected-
+        # mean credible interval columns must also be populated - never a
+        # posterior-predictive interval, per WP2.11 item 6's explicit
+        # constraint.
+        assert "expected_mean_lower" in row
+        assert "expected_mean_upper" in row
+        assert "expected_mean_credible_mass" in row
+
+    def test_includes_shared_residual_evidence(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        result = DiagnosticsService().evaluate(diag_input)
+
+        section = result.diagnostics_artefact.residual_series
+        assert section.status == "computed", section.error
+        assert "shared_residual_evidence" in section.payload
+        evidence = section.payload["shared_residual_evidence"]
+        assert "pairwise_correlation" in evidence
+        assert "shared_extreme_weeks" in evidence
+
+    def test_residual_series_section_round_trips_and_is_fingerprinted(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+
+        restored = DiagnosticsArtefact.from_dict(artefact.to_dict())
+        assert restored.residual_series.status == "computed"
+        assert restored.fingerprint() == artefact.fingerprint()
+
+        import dataclasses as dc
+
+        mutated = dc.replace(
+            artefact,
+            residual_series=DiagnosticSection(status="computed", payload={"rows": []}),
+        )
+        assert mutated.fingerprint() != artefact.fingerprint()
+
+    def test_schema_v8_artefact_upgrades_residual_series_to_not_computed(self):
+        trace, frame, meta = _minimal_trace_frame_meta()
+        diag_input = DiagnosticsInput(trace=trace, frame=frame, meta=meta)
+        artefact = DiagnosticsService().evaluate(diag_input).diagnostics_artefact
+        v8_dict = {**artefact.to_dict(), "schema_version": 8}
+        del v8_dict["residual_series"]
+
+        restored = DiagnosticsArtefact.from_dict(v8_dict)
+        assert restored.schema_version == 8
+        assert restored.residual_series.status == "not_computed"
+        assert "schema v9" in restored.residual_series.error
+
+    def test_market_specific_fit_computes_the_section(self):
+        trace, frame, meta = _minimal_market_specific_trace_frame_meta()
+        diag_input = DiagnosticsInput(
+            trace=trace, frame=frame, meta=meta, model_type="market_specific"
+        )
+        result = DiagnosticsService().evaluate(diag_input)
+
+        section = result.diagnostics_artefact.residual_series
+        assert section.status == "computed", section.error
+        assert len(section.payload["rows"]) > 0

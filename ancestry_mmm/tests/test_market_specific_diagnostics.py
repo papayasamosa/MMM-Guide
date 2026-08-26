@@ -13,6 +13,7 @@ from ancestry_mmm.core.market_specific_diagnostics import (
     compute_scorecard_market_specific,
     curve_plausibility_checks_market_specific,
     in_sample_fit_market_specific,
+    residual_series_market_specific,
     residual_temporal_diagnostics_market_specific,
 )
 from ancestry_mmm.core.market_specific_predict import (
@@ -268,6 +269,47 @@ class TestResidualTemporalDiagnosticsMarketSpecificMarketSafety:
         assert len(result) == len(MARKETS) * len(OUTCOME_IDS)
         assert set(result["market"]) == set(MARKETS)
         assert set(result["outcome_id"]) == set(OUTCOME_IDS)
+
+
+class TestResidualSeriesMarketSpecific:
+    """WP2.11 item 6: the Model C equivalent of `residual_series` - one
+    row per (market, date, outcome_id), never an aggregate statistic."""
+
+    def test_returns_one_row_per_market_date_outcome(self, meta, params, frame):
+        result = residual_series_market_specific(frame, meta, params)
+        assert len(result) == N_OBS * len(OUTCOME_IDS)
+        assert set(result["market"]) == set(MARKETS)
+        assert set(result["outcome_id"]) == set(OUTCOME_IDS)
+        for key in (
+            "actual",
+            "predicted",
+            "residual",
+            "abs_residual",
+            "residual_rank_pct",
+            "abs_residual_rank_pct",
+        ):
+            assert key in result.columns
+
+    def test_residual_sign_convention_is_actual_minus_predicted(
+        self, meta, params, frame
+    ):
+        baseline_mu = predict_mu_market_specific(frame, meta, params)
+        offset = 4.0
+        frame = dict(frame, Y=baseline_mu + offset)
+        result = residual_series_market_specific(frame, meta, params)
+        assert np.allclose(result["residual"].to_numpy(), offset)
+
+    def test_no_trace_supplied_omits_expected_mean_columns(self, meta, params, frame):
+        result = residual_series_market_specific(frame, meta, params, trace=None)
+        assert "expected_mean_lower" not in result.columns
+        assert "expected_mean_upper" not in result.columns
+
+    def test_trace_with_mu_adds_expected_mean_columns(self, meta, params, frame, trace):
+        result = residual_series_market_specific(frame, meta, params, trace=trace)
+        assert "expected_mean_lower" in result.columns
+        assert "expected_mean_upper" in result.columns
+        assert (result["expected_mean_credible_mass"] == 0.9).all()
+        assert (result["expected_mean_lower"] <= result["expected_mean_upper"]).all()
 
 
 class TestComputeScorecardMarketSpecific:
