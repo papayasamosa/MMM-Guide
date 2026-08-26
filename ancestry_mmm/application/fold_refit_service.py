@@ -83,7 +83,7 @@ docstring's "part 2" reference in `docs/decision_log.md`):
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
@@ -95,6 +95,7 @@ from ancestry_mmm.application.model_fit_service import (
     build_model_for_spec,
 )
 from ancestry_mmm.core.activities import ActivityDefinition
+from ancestry_mmm.core.causal_graph import CausalGraph
 from ancestry_mmm.core.coverage import SourceVersion, VariableCoverageMatrix
 from ancestry_mmm.core.frequency_alignment import (
     alignment_specs_from_coverage_matrix,
@@ -111,6 +112,7 @@ from ancestry_mmm.core.official_preparation import (
     build_official_capability_report,
     prepare_canonical_native_frame,
 )
+from ancestry_mmm.core.net_billthrough import NetBillthroughCompletenessMetadata
 from ancestry_mmm.core.outcomes import OutcomeDefinition
 from ancestry_mmm.core.predict import (
     FHPosteriorParams,
@@ -226,6 +228,36 @@ class FoldRefitOutcome:
     snapshot: FoldParameterSnapshot
 
 
+def _fold_local_net_billthrough_metadata(
+    metadata: Any, df: pd.DataFrame, spec: ModelSpec
+) -> Any:
+    """`NetBillthroughCompletenessMetadata.model_start_week`/
+    `model_end_week` must exactly bound the frame being validated
+    (`core.net_billthrough.validate_supplied_net_billthrough`: "coverage
+    must exactly match the configured model window"). A caller's
+    `net_billthrough_metadata` describes the *full* candidate's window;
+    each fold's train/test slice covers a different, shorter window, so
+    the full-candidate metadata can never validate a fold's frame as-is.
+    Every other field (`data_as_of_date`, `latest_complete_net_
+    billthrough_week`, `maturity_rule_description`, `source_owner`,
+    `metric_key`, `date_basis`, `unit`, `aggregation_type`) is genuinely
+    fold-independent and is carried through unchanged - only the window
+    bounds are re-derived from this fold's own slice."""
+    if metadata is None:
+        return None
+    resolved = (
+        metadata
+        if isinstance(metadata, NetBillthroughCompletenessMetadata)
+        else NetBillthroughCompletenessMetadata.from_dict(metadata)
+    )
+    dates = pd.to_datetime(df[spec.date_col])
+    return replace(
+        resolved,
+        model_start_week=dates.min().strftime("%Y-%m-%d"),
+        model_end_week=dates.max().strftime("%Y-%m-%d"),
+    )
+
+
 def fit_fold_with_real_model(
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
@@ -234,6 +266,13 @@ def fit_fold_with_real_model(
     fold_id: str,
     model_type: str = MODEL_TYPE_SHARED,
     dna_lag_weeks: int = 4,
+    outcomes: Optional[Sequence[OutcomeDefinition]] = None,
+    dna_outcome_id: Optional[str] = None,
+    direct_dna_outcome_ids: Optional[Sequence[str]] = None,
+    causal_graph: Optional[CausalGraph] = None,
+    media_outcome_pathways: Optional[Sequence[Any]] = None,
+    activity_definitions: Optional[Sequence[Any]] = None,
+    net_billthrough_metadata: Any = None,
     prior_config: Any = None,
     draws: int = 500,
     tune: int = 500,
@@ -251,6 +290,26 @@ def fit_fold_with_real_model(
     reimplemented, routed through `application.model_fit_service` (the
     governed dispatch point) instead of calling the builders directly.
 
+    `outcomes`/`dna_outcome_id`/`direct_dna_outcome_ids`/`causal_graph`/
+    `media_outcome_pathways`/`net_billthrough_metadata` (WP2.11 item 4)
+    all default to `None`, which preserves this function's exact
+    pre-existing behaviour: `prepare_fh_modeling_frame` falls back to its
+    own legacy `segment_outcomes`-derived catalogue, and `dna_outcome_id`
+    resolves to `spec.fh_dna_cross_sell_outcome_id` exactly as before. A
+    caller holding the real governed `OutcomeDefinition` catalogue for the
+    candidate being backtested (its real `outcome_id`s, DNA routing, and
+    pathway catalogue - not a second, re-derived approximation of them)
+    should pass all of them explicitly so each fold is fit with the same
+    fit-relevant outcome semantics as the actual candidate, not a
+    legacy/incompatible stand-in (WP2.10 found `fit_fold_with_real_model`
+    silently reconstructing `fh_new`/`fh_dna cross-sell`/`fh_winback`-style
+    legacy ids instead of the real governed NBT outcome_ids in exactly
+    this way). When any NBT-metric outcome is present in the resolved
+    catalogue, `core.hierarchical_model.build_fh_hierarchical_model`'s own
+    completeness gate requires real `net_billthrough_metadata` - passing
+    `None` for it while passing real NBT outcomes will fail closed with a
+    clear validation error, not silently skip the check.
+
     `posterior_draw_subsample` mirrors `core.uncertainty.sample_draw_
     indices`'s own documented approximation: re-running the parameter
     extraction once per sampled `(chain, draw)` pair is exact for that
@@ -258,7 +317,31 @@ def fit_fold_with_real_model(
     `core.uncertainty` already makes for per-draw scenario/curve
     uncertainty.
     """
-    train_frame = prepare_fh_modeling_frame(train_df, spec)
+    resolved_dna_outcome_id = (
+        dna_outcome_id
+        if dna_outcome_id is not None
+        else spec.fh_dna_cross_sell_outcome_id
+    )
+    resolved_outcomes = list(outcomes) if outcomes is not None else None
+    resolved_direct_dna_outcome_ids = (
+        list(direct_dna_outcome_ids) if direct_dna_outcome_ids is not None else None
+    )
+    resolved_media_outcome_pathways = (
+        list(media_outcome_pathways) if media_outcome_pathways is not None else None
+    )
+    resolved_activity_definitions = (
+        list(activity_definitions) if activity_definitions is not None else None
+    )
+    train_frame = prepare_fh_modeling_frame(
+        train_df,
+        spec,
+        outcomes=resolved_outcomes,
+        media_outcome_pathways=resolved_media_outcome_pathways,
+        activity_definitions=resolved_activity_definitions,
+        net_billthrough_metadata=_fold_local_net_billthrough_metadata(
+            net_billthrough_metadata, train_df, spec
+        ),
+    )
     is_market_specific = (
         model_type == MODEL_TYPE_MARKET_SPECIFIC and len(train_frame["markets"]) >= 2
     )
@@ -271,7 +354,9 @@ def fit_fold_with_real_model(
         model_spec=spec,
         model_type=resolved_model_type,
         dna_lag_weeks=dna_lag_weeks,
-        dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
+        dna_outcome_id=resolved_dna_outcome_id,
+        direct_dna_outcome_ids=resolved_direct_dna_outcome_ids,
+        causal_graph=causal_graph,
         prior_config=prior_config,
     )
     trace = fit_model(
@@ -284,7 +369,16 @@ def fit_fold_with_real_model(
         random_seed=random_seed,
     )
 
-    test_frame = prepare_fh_modeling_frame(test_df, spec)
+    test_frame = prepare_fh_modeling_frame(
+        test_df,
+        spec,
+        outcomes=resolved_outcomes,
+        media_outcome_pathways=resolved_media_outcome_pathways,
+        activity_definitions=resolved_activity_definitions,
+        net_billthrough_metadata=_fold_local_net_billthrough_metadata(
+            net_billthrough_metadata, test_df, spec
+        ),
+    )
     if is_market_specific:
         market_specific_point_params = extract_market_specific_posterior_params(
             trace, fit_result.meta
@@ -393,6 +487,13 @@ def run_leakage_safe_fold_refit(
     n_folds: int = 3,
     min_train_frac: float = 0.6,
     dna_lag_weeks: int = 4,
+    outcomes: Optional[Sequence[OutcomeDefinition]] = None,
+    dna_outcome_id: Optional[str] = None,
+    direct_dna_outcome_ids: Optional[Sequence[str]] = None,
+    causal_graph: Optional[CausalGraph] = None,
+    media_outcome_pathways: Optional[Sequence[Any]] = None,
+    activity_definitions: Optional[Sequence[Any]] = None,
+    net_billthrough_metadata: Any = None,
     prior_config: Any = None,
     draws: int = 500,
     tune: int = 500,
@@ -411,6 +512,14 @@ def run_leakage_safe_fold_refit(
     exactly once via `fit_fold_with_real_model` - producing both the
     R²/MAPE evidence and a genuine `FoldParameterSnapshot` from the same
     fit, never two divergent fits for the same fold.
+
+    `outcomes`/`dna_outcome_id`/`direct_dna_outcome_ids`/`causal_graph`/
+    `media_outcome_pathways`/`activity_definitions`/`net_billthrough_
+    metadata` (WP2.11 item 4) all default to `None`, preserving this
+    function's exact pre-existing behaviour for every caller that does
+    not pass them - see `fit_fold_with_real_model`'s docstring for what
+    each one does and why a caller backtesting the real governed
+    candidate (rather than an ad hoc/test spec) should supply them.
     """
     folds = build_expanding_window_folds(
         df, spec.date_col, n_folds=n_folds, min_train_frac=min_train_frac
@@ -456,6 +565,13 @@ def run_leakage_safe_fold_refit(
             fold_id=fold.fold_id,
             model_type=model_type,
             dna_lag_weeks=dna_lag_weeks,
+            outcomes=outcomes,
+            dna_outcome_id=dna_outcome_id,
+            direct_dna_outcome_ids=direct_dna_outcome_ids,
+            causal_graph=causal_graph,
+            media_outcome_pathways=media_outcome_pathways,
+            activity_definitions=activity_definitions,
+            net_billthrough_metadata=net_billthrough_metadata,
             prior_config=prior_config,
             draws=draws,
             tune=tune,
@@ -498,6 +614,11 @@ def run_leakage_safe_fold_refit_from_sources(
     activity_definitions: Sequence[ActivityDefinition | Mapping[str, Any]] = (),
     search_objects: Sequence[SearchObjectDefinition | Mapping[str, Any]] = (),
     pipeline_steps: Sequence[Mapping[str, Any]] = (),
+    dna_outcome_id: Optional[str] = None,
+    direct_dna_outcome_ids: Optional[Sequence[str]] = None,
+    causal_graph: Optional[CausalGraph] = None,
+    media_outcome_pathways: Optional[Sequence[Any]] = None,
+    net_billthrough_metadata: Any = None,
     model_type: str = MODEL_TYPE_SHARED,
     n_folds: int = 3,
     min_train_frac: float = 0.6,
@@ -578,6 +699,21 @@ def run_leakage_safe_fold_refit_from_sources(
     resolved_source_versions = tuple(
         item if isinstance(item, SourceVersion) else SourceVersion.from_dict(item)
         for item in source_versions
+    )
+    # WP2.11 item 4: the real governed OutcomeDefinition catalogue this
+    # function already receives for capability/consumed-variable
+    # resolution below was never actually forwarded into the per-fold
+    # `fit_fold_with_real_model` call - each fold silently refit against
+    # `prepare_fh_modeling_frame`'s legacy `segment_outcomes`-derived
+    # fallback catalogue instead (different outcome_ids, different
+    # metric/unit semantics, no NBT completeness gate). Normalised once
+    # here and passed through below so every fold fits the exact same
+    # outcome identity as the real candidate this function was told about.
+    resolved_outcomes = tuple(
+        item
+        if isinstance(item, OutcomeDefinition)
+        else OutcomeDefinition.from_dict(item)
+        for item in outcomes
     )
 
     capability_report = build_official_capability_report(
@@ -707,6 +843,13 @@ def run_leakage_safe_fold_refit_from_sources(
             fold_id=fold.fold_id,
             model_type=model_type,
             dna_lag_weeks=dna_lag_weeks,
+            outcomes=resolved_outcomes,
+            dna_outcome_id=dna_outcome_id,
+            direct_dna_outcome_ids=direct_dna_outcome_ids,
+            causal_graph=causal_graph,
+            media_outcome_pathways=media_outcome_pathways,
+            activity_definitions=activity_definitions,
+            net_billthrough_metadata=net_billthrough_metadata,
             prior_config=prior_config,
             draws=draws,
             tune=tune,
