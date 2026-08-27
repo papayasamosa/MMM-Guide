@@ -7642,3 +7642,90 @@ statistical/causal/business semantics changed; no real Ancestry data or
 expensive MCMC added to blocking CI.
 **Owner:** Platform engineering, implemented autonomously.
 **Status:** Implemented.
+
+---
+
+**Date:** 2026-08-27
+**Decision:** Implement Work Package 3 (`Media-Mix-Lab Coding LLM Next
+Steps 2026-08-27`): repository coherence and maintainability cleanup.
+Two parts, both behaviour-preserving:
+
+1. Reduced `.mypy-baseline-count` from 243 to 225 via two straightforward,
+   documented fixes: `core.curve_artifact._joined`'s parameter type
+   corrected from `object` to `Iterable[Any]` and `_iter_artifact_dirs`'s
+   return type corrected from `List[Path]` to `Iterator[Path]` (it already
+   used `yield` - the annotation, not the runtime behaviour, was wrong);
+   and two `**dict`-into-dataclass deserialisation splats
+   (`core.curve_artifact.CurveArtifactMetadata.from_dict`, `core.
+   outcome_approval.OutcomeApproval.from_dict`) fixed via a documented
+   `cast()` rather than a runtime behaviour change - each dataclass's own
+   `__post_init__` remains the actual validation boundary. `core.
+   canonical_curves.py` (124 of the remaining 225 errors, scattered across
+   ~55 distinct lines with no single root cause) and `core.outcome_
+   approval.matches_scope(**scope)`'s kwarg-splat (would need a signature
+   change) were investigated and deliberately left alone - not
+   "straightforward," per this package's own instruction not to undertake
+   an unrelated broad typing rewrite.
+2. Moved `DiagnosticSection`/`DiagnosticsArtefact`/`DiagnosticsInput`/
+   `DiagnosticsResult`/`CURRENT_DIAGNOSTICS_SCHEMA_VERSION`/`CURRENT_
+   DIAGNOSTICS_VERSION` out of `application.diagnostics_service` into a
+   new `core.diagnostics_artefact` module (Phase 1 of new `docs/wp3_
+   diagnostics_coupling_refactor_plan.md`) - pure-data schema/
+   serialisation code with no PyMC/Streamlit dependency, architecturally
+   misplaced in `application` per root `AGENTS.md`'s own layering rule.
+   `application.diagnostics_service` re-exports every moved name
+   unchanged (verified: `is` identity, not a copy) so every existing
+   caller's import resolves to the exact same class object. The plan
+   document also assesses `pages/06_Diagnostics.py` (2,476 lines, 24
+   direct `core`/`application` imports) and `DiagnosticsService.
+   evaluate()` (~730 lines in one method) and lays out Phase 2
+   (characterisation tests first, then splitting `evaluate()`) and Phase
+   3 (reducing the page's direct imports) as separate, larger, riskier
+   work explicitly not attempted now - Graphify MCP was unavailable this
+   session (its launcher refuses to start given this machine's ambient
+   `UV_TOOL_BIN_DIR`), so the coupling assessment used direct source/
+   import-graph inspection instead.
+
+**Reason:** WP3's own brief authorises reducing mypy debt where a touched
+module's defects are straightforward, and extracting cohesive Diagnostics
+logic where a *safe small* refactor is available - explicitly permitting
+a scoped plan instead of a refactor where the safe version would still be
+large. `DiagnosticsArtefact`'s extraction met the "safe" bar (pure data,
+130+ existing characterisation tests, no circular-import risk since every
+one of its type dependencies is already `core`-only); `evaluate()`'s
+~730-line body and the page's 24-import surface did not (comparatively
+uneven test coverage, real UI/orchestration risk, no human review
+checkpoint before merge in this autonomous workflow).
+
+**Alternatives considered:** Fixing every `canonical_curves.py` mypy error
+in this pass (rejected - 124 errors with no concentrated root cause is
+exactly the "unrelated broad typing rewrite" this package's brief
+prohibits, in a financially/mathematically sensitive module this package
+did not otherwise touch); changing `outcome_approval.matches_scope`'s
+signature to resolve its kwarg-splat error (rejected - a real API change
+to governance-sensitive approval-matching code, out of proportion to a
+typing cleanup); attempting the full Diagnostics-page de-coupling in one
+PR (rejected - see "Why a plan instead of a refactor" in the plan
+document itself: real risk of silently corrupting a fingerprint chain or
+approval decision with no human checkpoint before merge).
+
+**Impact:** `.mypy-baseline-count` (243 -> 225), `ancestry_mmm/core/
+curve_artifact.py` (two annotation fixes, one `cast()`), `ancestry_mmm/
+core/outcome_approval.py` (narrowing fix, one `cast()`), new
+`ancestry_mmm/core/diagnostics_artefact.py` (~980 lines, moved from
+`application/diagnostics_service.py`), `ancestry_mmm/application/
+diagnostics_service.py` (reduced from 2,186 to ~1,300 lines via the move
+plus a re-export block), new `docs/wp3_diagnostics_coupling_refactor_
+plan.md`. No `docs/approved_requirements/` change; no statistical,
+causal, or business semantics changed anywhere. Verified: `mypy ancestry_
+mmm/core`/`mypy ancestry_mmm/application` both clean at or under
+baseline; Ruff check/format clean on every touched file; 672 tests across
+`test_diagnostics_artefact.py` and every real consumer (curve service,
+three Project/Curve-Bank AppTests, persistence, project service, market-
+channel-capability gate, predictive density, prior predictive, validation-
+service artefact identity, and the four Diagnostics-page AppTest suites)
+pass unmodified; class-identity check (`is`, not equality) confirms the
+re-export is not a copy.
+**Owner:** Platform engineering, implemented autonomously.
+**Status:** Implemented (mypy reduction, Phase 1 extraction, refactor
+plan). Phase 2 and Phase 3 of the plan remain open, explicitly deferred.

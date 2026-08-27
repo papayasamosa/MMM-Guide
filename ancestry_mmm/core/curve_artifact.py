@@ -32,7 +32,7 @@ import json
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Mapping, Sequence, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Mapping, Sequence, Tuple, cast
 
 import pandas as pd
 
@@ -354,7 +354,14 @@ class CurveArtifactMetadata:
                 payload[key] = value
             else:
                 extra[key] = value
-        return cls(**payload, extra=extra)
+        # `payload` is necessarily untyped (deserialised from an arbitrary
+        # caller-supplied mapping) - `__post_init__` below is the actual
+        # runtime validation boundary for the fields it checks (mapping
+        # shape/JSON-safety, non-blank identifiers, exact schema version),
+        # so this cast documents that trust rather than asserting a static
+        # guarantee mypy cannot verify from `Dict[str, object]` alone. No
+        # runtime behaviour change.
+        return cls(**cast(Dict[str, Any], payload), extra=extra)
 
 
 def governed_context_fields(metadata: CurveArtifactMetadata) -> Dict[str, object]:
@@ -369,11 +376,25 @@ def governed_context_fields(metadata: CurveArtifactMetadata) -> Dict[str, object
     """
     outcome = metadata.outcome_definition_snapshot or {}
     approval = metadata.outcome_approval_snapshot or {}
-    cost_currency_rows = (metadata.cost_currency_snapshot or {}).get("rows") or []
-    support_rows = (metadata.support_snapshot or {}).get("rows") or []
-    pathway_rows = (metadata.pathway_governance_snapshot or {}).get("rows") or []
+    # Snapshot fields are declared Mapping[str, object] (arbitrary JSON-like
+    # payload) - each `"rows"` entry is, by this artifact's own construction
+    # contract (`_build_artifact_metadata`), always a sequence of row
+    # mappings when present. The cast documents that contract for mypy;
+    # it changes no runtime behaviour.
+    cost_currency_rows = cast(
+        Sequence[Mapping[str, object]],
+        (metadata.cost_currency_snapshot or {}).get("rows") or [],
+    )
+    support_rows = cast(
+        Sequence[Mapping[str, object]],
+        (metadata.support_snapshot or {}).get("rows") or [],
+    )
+    pathway_rows = cast(
+        Sequence[Mapping[str, object]],
+        (metadata.pathway_governance_snapshot or {}).get("rows") or [],
+    )
 
-    def _joined(values: object) -> "str | None":
+    def _joined(values: Iterable[Any]) -> "str | None":
         unique = sorted({v for v in values if v})
         return ", ".join(unique) if unique else None
 
@@ -867,7 +888,7 @@ def _has_any_artifact_file(directory: Path) -> bool:
     )
 
 
-def _iter_artifact_dirs(directory: Path) -> List[Path]:
+def _iter_artifact_dirs(directory: Path) -> Iterator[Path]:
     """Yield artifact directories: the store root when it is itself an
     artifact (or partial artifact), plus every immediate subdirectory
     containing any canonical artifact file — even a partial set — so a
