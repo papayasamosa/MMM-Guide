@@ -143,11 +143,16 @@ class TestGovernedFXOverlayReconciled:
                 f"Section 20 item {item_number}"
             )
 
-    def test_addendum_source_file_exists_and_is_untouched_by_this_package(self):
+    def test_addendum_source_file_untouched_when_present(self):
         """This work package reconciles the addendum's architecture into
         repository authority; it must not edit the addendum itself, which
-        remains the upstream source document."""
-        assert ADDENDUM_PATH.exists()
+        remains the upstream source document. `docs/PRD` is local-only
+        traceability material - untracked, `.git/info/exclude`-protected,
+        and never available in CI (see `test_structural_causal_authority_
+        reconciliation.py`'s identical precedent) - so this is skipped
+        entirely when absent, which is the expected CI state."""
+        if not ADDENDUM_PATH.exists():
+            return  # expected in CI; nothing to check
         text = ADDENDUM_PATH.read_text()
         assert "Proposed requirements and technical design" in text
         assert "subject to Finance confirmation" in text
