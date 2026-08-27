@@ -1,12 +1,24 @@
 """Source-to-model reconciliation diagnostics (2026-08-26 analyst
 follow-up to WP2.11): for one activity/variable, compare its raw per-source
 series against its canonical/mapped (post-join, post-governed-window)
-series and report first/last date, row count, non-zero weeks, missing
-weeks, and total value at each stage - so an unexpected loss (an activity
+series and report first/last date, row count, non-zero rows, missing
+rows, and total value at each stage - so an unexpected loss (an activity
 that exists upstream but disappears, or whose total materially changes,
 downstream) is visible directly, rather than only showing up later as an
 unexplained sparse-support finding at fold-fit time
 (`core.fold_data_support`).
+
+`n_nonzero_rows`/`n_missing` count *rows of the supplied frame*, not
+calendar weeks - deliberately, not by oversight (2026-08-27 WP1 contract
+fix, renamed from the original `n_nonzero_weeks`/an implicit weeks
+assumption). A raw source frame may carry a cadence other than one row
+per week (daily, monthly, or another native frequency); this module makes
+no assumption about a frame's cadence and performs no frequency
+conversion - a caller wanting a week-denominated count must supply an
+already-weekly-cadence frame (as this module's own canonical-stage input
+always is) or convert before calling. Inventing a row-to-week conversion
+here would be exactly the kind of transformation rule this module's own
+docstring below says it must not invent.
 
 This module is a diagnostic *report*, not a new join/mapping mechanism: it
 never re-derives or re-joins anything `data.pipeline.
@@ -45,7 +57,7 @@ class StageValueSummary:
 
     present: bool
     n_rows: Optional[int] = None
-    n_nonzero_weeks: Optional[int] = None
+    n_nonzero_rows: Optional[int] = None
     n_missing: Optional[int] = None
     first_active_date: Optional[str] = None
     last_active_date: Optional[str] = None
@@ -55,7 +67,7 @@ class StageValueSummary:
         return {
             "present": self.present,
             "n_rows": self.n_rows,
-            "n_nonzero_weeks": self.n_nonzero_weeks,
+            "n_nonzero_rows": self.n_nonzero_rows,
             "n_missing": self.n_missing,
             "first_active_date": self.first_active_date,
             "last_active_date": self.last_active_date,
@@ -120,7 +132,7 @@ def _summarize_stage(
     return StageValueSummary(
         present=True,
         n_rows=n_rows,
-        n_nonzero_weeks=n_nonzero,
+        n_nonzero_rows=n_nonzero,
         n_missing=n_missing,
         first_active_date=first_active,
         last_active_date=last_active,
@@ -151,8 +163,8 @@ def reconcile_variable(
     if (
         raw_summary.present
         and canonical_summary.present
-        and (raw_summary.n_nonzero_weeks or 0) > 0
-        and (canonical_summary.n_nonzero_weeks or 0) == 0
+        and (raw_summary.n_nonzero_rows or 0) > 0
+        and (canonical_summary.n_nonzero_rows or 0) == 0
     ):
         disappeared_downstream = True
 

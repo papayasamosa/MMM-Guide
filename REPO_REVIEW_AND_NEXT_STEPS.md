@@ -465,6 +465,31 @@ The current implementation includes:
   since WP2.11 items 2/6 above raised it 241 -> 243); no
   `docs/approved_requirements/index.json` change from this specific
   package (`REQ-HIERARCHY-001` was already indexed by WP2.11 items 2/6).
+- Operational data-reconciliation and fold-preflight tooling (Work
+  Package 1, 2026-08-27, following up on WP2.11): `core.source_model_
+  reconciliation`'s `n_nonzero_weeks` field is renamed `n_nonzero_rows`
+  (it always counted rows, not calendar weeks - unsafe for a raw source
+  with a non-weekly native cadence; no conversion rule is added).
+  `scripts/run_uk_wp2_11_prepared_frame_backtest.py` now actually passes
+  `on_progress_line` to `run_leakage_safe_fold_refit` (previously unwired
+  despite the parameter existing since WP2.11), printing every line with
+  an explicit flush and appending it to a per-run log file under
+  `--output-dir`. New `core.preflight_reconciliation_report` (`build_
+  model_preflight_report`/`format_preflight_table`) assembles `core.
+  source_model_reconciliation` plus `core.fold_data_support` evidence for
+  exactly the variables a candidate consumes, using the identical
+  expanding-window fold slicing the real fold-refit backtest itself uses
+  - no PyMC model is built and no sampling occurs. A new standalone entry
+  point (`scripts/run_uk_source_model_preflight.py`) and a new
+  `--preflight-only` mode on the WP2.11 backtest script both use it;
+  `scripts/run_uk_production_fit.py`'s `run()` gained an additive
+  `sources_callback` parameter (default `None`) exposing the raw
+  per-source-domain frames a preflight caller needs, mirroring the
+  existing `frame_callback` extension-point pattern. Per-fold checkpoint/
+  resume support was considered and explicitly not built - documented as
+  a deferred service-contract decision in the backtest script's own
+  docstring, not guessed at. No production statistical/priors/validation
+  methodology changed; no `.mypy-baseline-count` change (still 243).
 
 ## Known bounded gaps
 

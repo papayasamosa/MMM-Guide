@@ -23,6 +23,42 @@ screen. Threads through the exact same `outcomes`/`dna_outcome_id`/
 `activity_definitions`/`net_billthrough_metadata` the real production fit
 uses (`scripts/run_uk_production_fit.py`'s own `run()`), all captured from
 the same governed frame - never a second, divergent construction.
+
+WP1 (2026-08-27) fix: this runner previously never passed
+`on_progress_line` to `run_leakage_safe_fold_refit`, so a real run left a
+caller with no visibility during sampling - the exact "silent for 6+
+hours" failure mode `core.fold_data_support`/`core.fit_progress` were
+built to fix (see the item-5 incident note above), still reproducible
+through this specific entry point despite those modules already existing.
+Every progress line is now both printed with an explicit flush (`core.
+fit_progress`'s own convention - never relies on the process's own
+buffering mode) and appended to a per-run, per-`prior-config-mode` log
+file under `--output-dir` (also explicitly flushed after every write), so
+progress remains inspectable even if the terminal session is lost.
+
+Per-fold checkpoint/resume (considered, not implemented, WP1 2026-08-27):
+adding safe resume-from-last-completed-fold support was considered for
+this runner but not built. `run_leakage_safe_fold_refit` currently
+returns one aggregate `LeakageSafeFoldRefitResult` only after every fold
+completes - there is no existing per-fold persistence boundary to resume
+from without changing that function's own return/streaming contract, and
+doing so is a genuine service-contract decision (what a partial run
+persists, how a resumed run re-validates that a persisted fold's inputs
+still match the current candidate/frame, whether a changed prior_config
+invalidates prior folds) rather than a mechanical addition. Deferred
+pending that decision rather than guessed at here; the new `--preflight-
+only` mode and live progress logging above at least let an operator judge
+*before* starting whether a run is likely to complete without needing to
+resume it.
+
+WP1 (2026-08-27) `--preflight-only`: runs `core.source_model_
+reconciliation` and `core.fold_data_support` (via `core.preflight_
+reconciliation_report`) for the same captured frame/spec/raw-sources this
+runner already builds, then exits before calling `run_leakage_safe_fold_
+refit` at all - no PyMC model is built, no sampling occurs. Lets a
+candidate be checked in seconds instead of discovering sparse support or a
+broken source mapping only after a real run has been sitting silent for
+hours (the item-5 incident above).
 """
 
 from __future__ import annotations
@@ -40,6 +76,10 @@ if __package__ in {None, ""}:
 
 from ancestry_mmm.application.fold_refit_service import (  # noqa: E402
     run_leakage_safe_fold_refit,
+)
+from ancestry_mmm.core.preflight_reconciliation_report import (  # noqa: E402
+    build_model_preflight_report,
+    format_preflight_table,
 )
 
 DEFAULT_OUTPUT_DIR = Path(
@@ -74,6 +114,23 @@ def _write_json(path: Path, payload: Any) -> None:
     )
 
 
+def _make_progress_reporter(log_path: Path) -> Any:
+    """Return an `on_progress_line` callable that both prints (flushed) and
+    appends to `log_path` (also flushed after every line), so a fold-refit
+    run's progress is inspectable live and durably even if the terminal
+    session that started it is lost - the exact gap the item-5 incident
+    (module docstring above) found."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_file = log_path.open("a", encoding="utf-8")
+
+    def _report(line: str) -> None:
+        print(line, flush=True)
+        log_file.write(line + "\n")
+        log_file.flush()
+
+    return _report
+
+
 def main(argv: list[str] | None = None) -> int:
     gov = _load_module(
         "uk_prefit_governance", REPO_ROOT / "scripts" / "run_uk_prefit_governance.py"
@@ -91,6 +148,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--prior-config-mode", choices=PRIOR_CONFIG_MODES, default="current"
     )
+    parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help=(
+            "Run source-to-model reconciliation and per-fold data-support "
+            "diagnostics only, then exit - no PyMC model is built and no "
+            "sampling occurs. Use before a real run to check candidate "
+            "health in seconds instead of hours."
+        ),
+    )
     args = parser.parse_args(argv)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -101,9 +168,13 @@ def main(argv: list[str] | None = None) -> int:
         prior_config["shared_pooling_scale"] = True
 
     captured: dict[str, tuple[dict[str, Any], Any]] = {}
+    captured_sources: dict[str, Any] = {}
 
     def _capture(model_name: str, frame: dict[str, Any], spec: Any) -> None:
         captured[model_name] = (frame, spec)
+
+    def _capture_sources(sources: dict[str, Any]) -> None:
+        captured_sources["sources"] = sources
 
     runner.run(
         pack_dir=args.pack_dir,
@@ -119,7 +190,36 @@ def main(argv: list[str] | None = None) -> int:
         governed_end=args.governed_end,
         prior_config=prior_config,
         frame_callback=_capture,
+        sources_callback=_capture_sources,
     )
+
+    if args.preflight_only:
+        raw_sources = captured_sources.get("sources") or {}
+        for model_name, (frame, spec) in captured.items():
+            df = frame["df"]
+            outcome_columns = [o.source_column for o in frame["outcomes"]]
+            report = build_model_preflight_report(
+                model_name,
+                df,
+                spec.date_col,
+                channels=spec.channels,
+                control_cols=spec.control_cols,
+                outcome_columns=outcome_columns,
+                raw_sources=raw_sources,
+                n_folds=args.n_folds,
+            )
+            table = format_preflight_table(report)
+            print(table)
+            _write_json(
+                args.output_dir
+                / f"wp2_11_prepared_frame_backtest_{args.prior_config_mode}_{model_name}_preflight.json",
+                report.to_dict(),
+            )
+            (
+                args.output_dir
+                / f"wp2_11_prepared_frame_backtest_{args.prior_config_mode}_{model_name}_preflight.txt"
+            ).write_text(table, encoding="utf-8")
+        return 0
 
     pack = runner._load_pack(args.pack_dir)
 
@@ -145,6 +245,11 @@ def main(argv: list[str] | None = None) -> int:
             f"fold-refit backtest ({args.n_folds} folds) with the real "
             f"governed outcome catalogue ({len(frame['outcomes'])} outcomes)..."
         )
+        progress_log_path = (
+            args.output_dir
+            / f"wp2_11_prepared_frame_backtest_{args.prior_config_mode}_{model_name}_progress.log"
+        )
+        on_progress_line = _make_progress_reporter(progress_log_path)
         result = run_leakage_safe_fold_refit(
             df,
             spec,
@@ -159,6 +264,7 @@ def main(argv: list[str] | None = None) -> int:
             media_outcome_pathways=frame.get("media_outcome_pathways"),
             activity_definitions=frame.get("activity_definitions"),
             net_billthrough_metadata=frame.get("net_billthrough_metadata"),
+            on_progress_line=on_progress_line,
         )
         payload = {
             "model_name": model_name,

@@ -976,6 +976,7 @@ def run(
     governed_end: str = COMMON_WINDOW_END,
     prior_config: Mapping[str, Any] | None = None,
     frame_callback: Callable[[str, dict[str, Any], ModelSpec], None] | None = None,
+    sources_callback: Callable[[dict[str, pd.DataFrame]], None] | None = None,
 ) -> dict[str, Any]:
     """Run the governed UK official-preparation and (optionally) production
     fit pipeline.
@@ -989,6 +990,16 @@ def run(
     outcome resolution, or frame preparation. It never changes what this
     function returns or does; the default (``None``) is a no-op, fully
     backward compatible.
+
+    ``sources_callback`` (WP1, 2026-08-27), when supplied, is invoked once
+    with the same raw per-source-domain frame dict (`standard_outcomes`/
+    `standard_activity`/`standard_context`) passed to `prepare_canonical_
+    native_frame` below - before the governed join/window that produces
+    `target`. A read-only observation hook, exactly like `frame_callback`,
+    for a caller (e.g. `scripts/run_uk_source_model_preflight.py`) that
+    needs the true raw-source stage for `core.source_model_reconciliation`
+    without re-deriving source adoption itself. Default `None` is a no-op;
+    every existing caller is unaffected.
     """
     prior_config = dict(prior_config or {})
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1012,6 +1023,8 @@ def run(
         raise FitGateError(
             "No adopted source tables are available for official preparation."
         )
+    if sources_callback is not None:
+        sources_callback(sources)
 
     context_audit = _prepare_context_audit(
         pack.adoption.context_data,
