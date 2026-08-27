@@ -84,4 +84,4 @@ alone with no support.
 - A reproducible project report (Markdown + HTML, `core.report`) covering objective, data,
   model, diagnostics, curve bank, scenarios, known limitations and a decision-log pointer, built
   from the project's actual current state and available at any point in the workflow -
-  Project Export & Recovery.
+  Export & Recovery.

@@ -25,7 +25,7 @@
   transformation builds a net-bill-through cohort from sign-up/billing events, and no classifier
   determines whether a DNA kit purchase was self-activated, gifted-activated, or unactivated. An
   analyst can capture an `OutcomeDefinition` against one of these metric keys today only by mapping it
-  to a column they've built by hand (e.g. via the Transform Pipeline page) - this schema does not
+  to a column they've built by hand (e.g. via the Prepare Data page) - this schema does not
   create the underlying data.
 - **An unactivated DNA kit is not definitively a gift.** This is the single most important caveat in
   the DNA purchase-type roadmap: `unactivated` must remain its own atomic category
@@ -90,7 +90,7 @@
   recording them, and revisit once real-data model comparison results exist
   (`docs/model_validation.md`).
 - `market_data_quality_status` is a coarse, pre-model, observation-count-only heuristic, still the
-  only thing shown on the Market Descriptors page's market cards. It is not the same thing as the
+  only thing shown on the Market Context page's market cards. It is not the same thing as the
   evidence-tier classification above and must not be presented to users as if it were - see the
   explicit warning in `docs/market_hierarchy.md` section 4.
 
@@ -152,7 +152,7 @@
   optimised plan, Family History GSAs and DNA kits kept separate - never blended into one number)
   instead, which is well-defined even at fixed total spend; see `docs/decision_log.md`.
 - Media-unit planning mode converts to/from spend using one average historical cost-per-unit per
-  channel (same simplification as Results & Curve Bank's response-unit curve) - not a
+  channel (same simplification as Results & Response Curves' response-unit curve) - not a
   spend-level-varying relationship. `SpendConstraint` (locked cells, floors, bounded movement) still
   operates in spend terms only; there's no dedicated "locked media units" constraint type.
 - CPA/inflation are not first-class optimiser objectives - "minimise CPA," "maintain response/
@@ -204,7 +204,7 @@
   Diagnostics page's UI, since a real per-channel refit is too slow for an interactive click; only the
   three no-refit signals (correlation matrix, condition number, posterior coefficient stability) are
   shown there.
-- Model-comparison bookkeeping (`core.model_comparison`, Compare Models page) predates PR G1 and covers
+- Model-comparison bookkeeping (`core.model_comparison`, Model Comparison page) predates PR G1 and covers
   comparing already-fitted Model A/B/C candidates' scorecards; it is a separate concern from
   `core.identification_diagnostics`' single-model weak-identification signals, not merged into one
   module.
