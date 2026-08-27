@@ -560,9 +560,12 @@ state contract), `REQ-SCEN-001` (sequential scenario evaluation contract),
 (response horizon and terminal reporting contract), `REQ-ENGINE-001`
 (approved primary production MMM engine), `REQ-LEAK-001` (leakage-safe
 historical validation folds), `REQ-STAB-001` (structural stability across
-folds), `REQ-PPD-001` (posterior predictive metric distributions), and
+folds), `REQ-PPD-001` (posterior predictive metric distributions),
 `REQ-PREFIT-001` (mandatory pre-fit gate for official production
-submission) are approved, indexed requirement records with substantive
+submission), `REQ-CONTROL-001` (standardised category-demand control
+prior for the current UK Model A candidate), and `REQ-HIERARCHY-001`
+(gated H2 diagnostic hierarchy challenger for the current UK Model A
+candidate) are approved, indexed requirement records with substantive
 implementation.
 None is a gap requiring a new decision record — each has an explicit,
 narrower capability boundary documented in its own record:
@@ -794,3 +797,30 @@ narrower capability boundary documented in its own record:
   values — they can only ever relax a run to `review_recommended`, never
   fabricate a `blocked` or a false `ready`, but the exact numbers are not
   themselves approved authority).
+- `REQ-CONTROL-001` (`docs/approved_requirements/REQ-CONTROL-001.md`,
+  approved 2026-08-25): scoped to the current UK Model A candidate's two
+  named continuous category-demand controls
+  (`fh_category_demand_google_trends`, `dna_category_demand_google_trends`)
+  only — standardisation (`core.control_scaling.fit_control_scaling`'s
+  existing `mean_sd` method) plus a `Normal(0, 0.20)` coefficient prior on
+  the standardised scale, implemented as `APPROVED_UK_MODEL_A_PRIOR_
+  CONFIG` and defaulted in `scripts/run_uk_production_fit.py`. Does not
+  change the candidate's `historical_test`/`non_production` status, and is
+  not a universal control-prior default for any other channel or model.
+- `REQ-HIERARCHY-001` (`docs/approved_requirements/REQ-HIERARCHY-001.md`,
+  approved 2026-08-26): authorises a gated, default-off **H2** diagnostic
+  hierarchy challenger for the current UK Model A candidate only
+  (`prior_config["shared_pooling_scale"]=True` in `core.hierarchical_
+  model.build_fh_hierarchical_model` — one scalar `sigma_pool_global`
+  replacing the production per-channel `sigma_pool[channel]` vector,
+  `z_offset[o, c]` unchanged). Explicitly diagnostic-only: does not
+  approve replacing the production hierarchy, does not certify H2, and
+  requires a further, separate analyst decision before any production
+  use. `docs/wp2_11_hierarchy_decision_package_20260826.md` records the
+  gathered convergence/geometry evidence (H1 the more numerically
+  well-behaved segment-preserving challenger; H2 worse on both products
+  and not supportive as a segment-preserving alternative) and finds it
+  not yet sufficient for a production-default decision — no out-of-sample
+  fold-refit-backtest evidence exists for any candidate, and the current
+  UK activity data is separately under review for suspected
+  source-to-model mapping issues.

@@ -329,7 +329,8 @@ The current implementation includes:
   `Media-Mix-Lab: Coding LLM Next Steps After PR #286`,
   `application/fold_refit_service.py`,
   `application/diagnostics_service.py`, `pages/06_Diagnostics.py`,
-  `DiagnosticsArtefact` schema v8): real per-fold PyMC re-fits behind
+  `DiagnosticsArtefact` schema v8 at the time - now schema v9, see the
+  WP2.11 bullet below): real per-fold PyMC re-fits behind
   leakage-safe historical validation, with a deeper point-in-time
   source-reconstruction path (`run_leakage_safe_fold_refit_from_sources`
   - fold-local `prepare_canonical_native_frame`/`assess_official_
@@ -381,6 +382,89 @@ The current implementation includes:
   computation. No calibration mechanism exists or is implied; the
   calibrated-vs-uncalibrated comparison half of the Diagnostics section
   remains empty, and no model-fitting module reads the registry.
+- Real UK Model A pre-fit-to-posterior remediation and hierarchy evidence
+  (WP2.5-WP2.11, PRs #307-#321; all against the governed
+  `window_role=historical_test_common_window`/`use_mode=historical_test_
+  non_production` 2023-01-01 to 2025-04-06 candidate, no change to
+  historical-test/non-production status): WP2.5 exposed prior-predictive
+  component decomposition (`eta_trend`/`eta_season`/`eta_market`/
+  `eta_promo`/`eta_controls` as named `pm.Deterministic` terms) and found
+  raw controls dominating the linear predictor; WP2.6 produced the
+  `control_sigma` sensitivity evidence; WP2.7 approved and implemented
+  **`REQ-CONTROL-001`** (`docs/approved_requirements/REQ-CONTROL-001.md`):
+  the two named continuous category-demand controls
+  (`fh_category_demand_google_trends`, `dna_category_demand_google_trends`)
+  must be standardised with coefficient prior `Normal(0, 0.20)`
+  (`APPROVED_UK_MODEL_A_PRIOR_CONFIG`, now `scripts/run_uk_production_fit.
+  py`'s default) - scoped to this candidate only, not a universal default.
+  WP2.8 found neither the "4-chain geometry screen" nor "medium run"
+  convergence-ladder stage ever had a governed sampler configuration
+  anywhere in the repository; the analyst declined to invent one, keeping
+  `REQ-PREFIT-001`'s existing short-screen-then-full-posterior workflow
+  authoritative, then ran the real governed full Model A posterior
+  (convergence, identification, fit, seasonality). WP2.9 fixed pre-fit
+  fingerprints that were binding to `sha256("null")` instead of the real
+  candidate/frame, added divergence-localisation/fit/temporal/
+  identification/product-level evidence scripts (including PSIS-LOO/WAIC),
+  and found `target_accept=0.95` (vs. the governed 0.90) reduces FH
+  divergences 70 -> 13 uniformly but only reduces DNA's 53 -> 46
+  non-uniformly - a split, not a universal, result - recorded in a
+  certification decision package. WP2.10 diagnosed the outcome-level
+  hierarchy (`sigma_pool[channel]`) as weakly identified - sitting at its
+  `HalfNormal(0.3)` prior mean for nearly every channel, estimated from
+  only 2-3 outcome groups each - evaluated single-outcome "Overall"
+  robustness-comparator challengers (zero divergences but not
+  segment-preserving), and audited CPA/ROI. WP2.11 repaired the fold-refit
+  outcome-catalogue propagation defect (real folds were silently using a
+  legacy `fh_new`/`fh_dna_cross_sell`/`fh_winback` catalogue instead of the
+  candidate's real governed NBT outcomes), added the gated **H2** diagnostic
+  hierarchy challenger under **`REQ-HIERARCHY-001`**
+  (`docs/approved_requirements/REQ-HIERARCHY-001.md`,
+  `prior_config["shared_pooling_scale"]=True`, one scalar
+  `sigma_pool_global` replacing per-channel `sigma_pool[channel]`;
+  diagnostic-only, not eligible for production-default consideration
+  without a further analyst decision), added the Residual Explorer to
+  `pages/06_Diagnostics.py`'s "In-sample fit & error metrics" tab (reading
+  only the canonical `residual_series`/`shared_residual_evidence` evidence
+  - `DiagnosticsArtefact` **schema v9**, `CURRENT_DIAGNOSTICS_SCHEMA_
+  VERSION = 9` in `application/diagnostics_service.py`; a pre-v9 artefact's
+  `residual_series` section loads as `not_computed`, never fabricated), and
+  added a parameterised prepared-frame fold-refit backtest script
+  (`scripts/run_uk_wp2_11_prepared_frame_backtest.py`,
+  `--prior-config-mode current|h1_complete_pooling|h2_shared_pooling_
+  scale`) plus reusable per-fold instrumentation built after that backtest
+  ran silent for 6+ hours before a targeted probe found it: `core.
+  fold_data_support` (per-fold, per-variable data-support report;
+  `ready`/`review_recommended`/`blocked` framework present but never
+  self-categorised - every `SupportThresholds` field defaults to `None`),
+  `core.fit_progress` (rate-limited, always-flushed sampler progress/
+  geometry reporter reading `core.models.fit_model`'s new optional
+  `stats_callback`), and `core.source_model_reconciliation` (per-variable
+  raw-source-vs-canonical-frame comparison: presence, row count, non-zero
+  observations, active date range, downstream disappearance, percentage
+  total change - deliberately no invented pass/fail threshold), all wired
+  through a new optional `on_progress_line` parameter on
+  `application.fold_refit_service` (default `None`, byte-for-byte
+  unchanged behaviour for every existing caller). WP2.11 closes with
+  `docs/wp2_11_hierarchy_decision_package_20260826.md`: full-posterior
+  convergence evidence (current: 13 FH / 46 DNA divergences; H1: 0 FH / 35
+  DNA; H2: 98 FH / 369 DNA; Overall robustness comparator: 0/0) shows H1 as
+  the more numerically well-behaved segment-preserving challenger and H2 as
+  clearly worse on both convergence and its own diagnostic purpose - but
+  **no production hierarchy change is made or proposed as approved**, and
+  the evidence is explicitly recorded as insufficient for a production
+  decision: no out-of-sample fold-refit-backtest evidence exists for any
+  candidate (the attempted `RECONSTRUCTION_TIER_COVERAGE_METADATA_ONLY` run
+  was terminated after fold 1 - the smallest, earliest 72-week expanding
+  window - showed several channels with as few as 2 non-zero weeks and
+  real-NUTS geometry consistent with a strained posterior), and the current
+  UK activity data is, as of 2026-08-26, under separate analyst review for
+  suspected source-to-model mapping issues that this package explicitly
+  does not treat as evidence for or against any hierarchy candidate. No
+  `.mypy-baseline-count` change from this package (still 243, unchanged
+  since WP2.11 items 2/6 above raised it 241 -> 243); no
+  `docs/approved_requirements/index.json` change from this specific
+  package (`REQ-HIERARCHY-001` was already indexed by WP2.11 items 2/6).
 
 ## Known bounded gaps
 
@@ -474,14 +558,17 @@ business or modelling definitions:
   continues to report an unsupported request exactly as before. Moderated
   pathways and residual-interaction engine support remain decision-bound
   or unsupported, independent of Candidate A.
-- The full-core mypy debt ceiling is now 241 errors (Work Package 4 closed
-  the single largest repeated pattern - 34 occurrences of a
-  `FHModelMeta.pathway_masks` Optional-narrowing gap now fixed via
-  `FHModelMeta.resolved_pathway_masks`; Work Package 5 fixed
+- The full-core mypy debt ceiling is `.mypy-baseline-count` = 243 (Work
+  Package 4 of an earlier round closed the single largest repeated pattern
+  - 34 occurrences of a `FHModelMeta.pathway_masks` Optional-narrowing gap
+  now fixed via `FHModelMeta.resolved_pathway_masks`; Work Package 5 fixed
   `core.transformations.hill_function`'s parameter typing - `K`/`S` accept
   `Union[float, np.ndarray]`, matching how every multi-channel caller
-  already invokes it - retiring 4 further pre-existing errors); it is a
-  ceiling, not a target. CI must fail if the measured count increases.
+  already invokes it - retiring 4 further pre-existing errors, taking the
+  ceiling to 241; WP2.11 items 2/6 (H2 hierarchy challenger and Residual
+  Explorer, PR #318) then raised it 241 -> 243 for its own new code); it is
+  a ceiling, not a target - unchanged at 243 through WP2.11's later items.
+  CI must fail if the measured count increases.
 - The Scenario Planner *page*'s manual tab (`pages/08_Scenario_
   Planner.py`, WP5 part 2 of `...Post PR262`; parts 3-4, 2026-08-18) now
   offers a sequential-weekly method choice alongside the existing
