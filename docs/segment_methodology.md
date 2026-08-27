@@ -31,7 +31,7 @@ toward zero by default and
 only pulled away from zero where the data supports it, with an additional decision-time lag
 (`dna_lag_weeks`) beyond normal adstock carryover. This is deliberately explicit rather than folded
 into the channel's regular coefficient, so the halo effect is visible and auditable on its own
-(Results & Curve Bank page, "DNA halo strength by segment").
+(Results & Response Curves page, "DNA halo strength by segment").
 
 ## Segment response today vs. under the market-specific redesign
 

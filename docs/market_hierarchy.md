@@ -49,7 +49,7 @@ on what "enough periods" means). Used directly by the curve bank (`docs/curve_ba
 every Model C curve's `curve_status` at save time - not asserted by the user, and never overridden
 to make a curve look more locally-estimated than its own posterior supports.
 
-**The Market Descriptors page's market cards still show only the coarse, pre-model
+**The Market Context page's market cards still show only the coarse, pre-model
 observation-count heuristic** (`core.market_config.market_data_quality_status`), computed before any
 model exists, so it necessarily can't reflect posterior uncertainty. It is explicitly not the same
 thing as the tiers above and must never be presented as a curve-status label - the curve bank is
@@ -72,7 +72,7 @@ market maturity, category penetration, historical acquisition volume, media cost
 product price, competitive intensity, language group, region, product availability, channel
 availability.
 
-In Phase 1 these are stored and displayed only (Market Descriptors page). A later phase may let them
+In Phase 1 these are stored and displayed only (Market Context page). A later phase may let them
 explain market-level curve parameters, e.g.:
 
 ```

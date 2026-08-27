@@ -55,9 +55,9 @@ frame-preparation and model-building path (`data.preprocessor.prepare_fh_modelin
 `core.hierarchical_model.build_fh_hierarchical_model`, `core.market_specific_model.
 build_fh_market_specific_model`) takes an explicit outcome catalogue (`outcomes=`, a
 `List[OutcomeDefinition]`) as its structural input, not `spec.segment_outcomes` directly. DNA-product
-outcomes are **opt-in**: mapping one on Structure: Segments & Markets does not, by itself,
+outcomes are **opt-in**: mapping one on Model Structure does not, by itself,
 retroactively change any existing fit, but the next time the modelling frame is prepared on Model
-Configuration, `core.outcomes.dna_kit_outcome_columns` feeds the mapped DNA outcome_id(s) into
+Setup, `core.outcomes.dna_kit_outcome_columns` feeds the mapped DNA outcome_id(s) into
 
 ## Definition, eligibility, and approval (G2A.7)
 
@@ -237,9 +237,9 @@ mixing a combined outcome with split ones in the same catalogue, and every place
 displayed shows `segment = "Combined"` plainly rather than pretending it's one of the two specific
 segments.
 
-## Data capture: Structure: Segments & Markets
+## Data capture: Model Structure
 
-The "DNA outcomes (optional)" section on the Structure page lets an analyst map either the split
+The "DNA outcomes (optional)" section on the Model Structure page lets an analyst map either the split
 columns or a combined column, with a per-outcome value weight. On save, the page builds the full
 catalogue (`fh_outcomes_from_spec(...) + dna_outcomes_from_columns(...)`), validates it
 (`validate_outcome_definitions`), and stores it in session state - then renders it back as an outcome
@@ -486,8 +486,8 @@ when the caller says so, never inferred.
 (`BLOCKING_DRIFT_STATUSES`: `"Changed since fit"`, `"Removed since fit"`) or informational (`"New
 since fit"`, `"Excluded from next fit"` - a not-yet-fit addition or a deliberate exclusion isn't a
 staleness problem). `components.ui.render_drift_status` is now wired into all seven pages the
-instruction document named: Structure, Model Configuration, Model Training, Diagnostics, Results &
-Curve Bank and Project Export show it informationally (an `st.info`/`st.warning` plus an expander with
+instruction document named: Model Structure, Model Setup, Fit Model, Model Diagnostics, Results &
+Response Curves and Export & Recovery show it informationally (an `st.info`/`st.warning` plus an expander with
 the full field-by-field diff); **Scenario Planner blocks** (`st.stop()`) when blocking drift is
 present, even with an approved, fingerprint-matching trace still in memory - planning against a
 catalogue that no longer matches what was actually fit is never allowed, regardless of approval state.
@@ -498,7 +498,7 @@ catalogue that no longer matches what was actually fit is never allowed, regardl
 left blank - what a re-save matches on to update in place rather than duplicate), `product`,
 `affected_outcome_ids`, `market`, and `transformation_version`. `promotion_events_to_transform_steps`/
 `transform_steps_to_promotion_events` convert an event list to/from `data.pipeline.TransformStep(op=
-"promotion_event", ...)` entries in the same `pipeline_steps` list the Transform Pipeline page's
+"promotion_event", ...)` entries in the same `pipeline_steps` list the Prepare Data page's
 manual transforms use - deliberately excluded from that page's operation dropdown, since a
 `promotion_event` step is only ever produced from a structured `PromotionEvent`, never hand-built.
 `apply_step`'s `"promotion_event"` branch replays one event's contribution additively onto its

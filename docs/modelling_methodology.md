@@ -87,12 +87,12 @@ Requires at least 2 markets - partial pooling across a single market is meaningl
 Curve bank storage, Shapley attribution (`core.market_specific_attribution`, market-aware - each
 row uses its own market's `beta`/`hill_K` rather than Model A's shared curve), and Scenario Planner
 are all available for Model C. Market-specific curves can be reviewed via a dedicated curve viewer
-(Results & Curve Bank) using `core.market_specific_predict.generate_market_channel_curve`, with an
+(Results & Response Curves) using `core.market_specific_predict.generate_market_channel_curve`, with an
 optional per-draw posterior uncertainty band (`core.uncertainty`).
 
 ## Priors
 
-Current priors (`utils/config.py::DEFAULT_FH_PRIORS`, editable on Model Configuration) are the
+Current priors (`utils/config.py::DEFAULT_FH_PRIORS`, editable on Model Setup) are the
 starting point for the shared, channel-level components in both Model A and Model C. Model C adds
 market-level hyperpriors on top: `market_K_sigma_prior`, `market_beta_sigma_prior` (both
 `HalfNormal`, default scale 0.3).

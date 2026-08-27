@@ -23,19 +23,20 @@ uv sync
 uv run streamlit run ancestry_mmm/app.py
 ```
 
-Opens at `http://localhost:8501`. From there: **Data Upload** → click "Load synthetic demo
+Opens at `http://localhost:8501`. From there: **Data Sources** → click "Load synthetic demo
 sources" for a working UK/Australia/Canada dataset with no setup required, then work through the
-sidebar in order (Transform Pipeline → Data Coverage → Structure → Causal Graph → Channel & Media
-Units → Market Descriptors → Model Configuration → Model Training → Compare Models → Diagnostics →
-Results & Curve Bank → Official Curve Generation → Scenario Planner → Project Export & Recovery).
-Data Coverage is optional for exploratory work - review each variable's missingness/coverage state and
-build a versioned coverage matrix there (REQ-COVERAGE-001). Official preparation uses the governed
-canonical-weekly path, an outer union of source periods, and a fit-consumed-variable capability gate;
-unsupported or unresolved consumed coverage blocks the official frame rather than being silently filled.
+sidebar in order (Prepare Data → Coverage & Gaps → Activity Mapping → Model Structure → Causal
+Graph → Market Context → Model Setup → Fit Model → Model Comparison → Model Diagnostics →
+Results & Response Curves → Planning Curves → Scenario Planner → Export & Recovery).
+Coverage & Gaps is optional for exploratory work - review each variable's missingness/coverage
+state and build a versioned coverage matrix there (REQ-COVERAGE-001). Official preparation uses
+the governed canonical-weekly path, an outer union of source periods, and a fit-consumed-variable
+capability gate; unsupported or unresolved consumed coverage blocks the official frame rather than
+being silently filled.
 Causal Graph is optional - build and
 approve a variable-level causal graph there and it becomes the sole authoritative structural input
-to model compilation (REQ-GRAPH-001); skip it and Model Training falls back to the
-`MediaOutcomePathway` catalogue configured on Structure exactly as before.
+to model compilation (REQ-GRAPH-001); skip it and Fit Model falls back to the
+`MediaOutcomePathway` catalogue configured on Model Structure exactly as before.
 
 Requires Python 3.11 or 3.12 (see [Deployment](#deployment) below for why there's an upper bound).
 
@@ -59,7 +60,7 @@ Requires Python 3.11 or 3.12 (see [Deployment](#deployment) below for why there'
   observation count and posterior uncertainty, so a market with too little data to trust isn't
   presented as if it had a precisely estimated curve.
 - **Media units and CPA** (`ancestry_mmm/core/media_units.py`): optional per-(market, channel)
-  spend-to-physical-delivery mapping (Channel & Media Units page), average/marginal CPA at every
+  spend-to-physical-delivery mapping (Activity Mapping page), average/marginal CPA at every
   curve point, response-unit curves, and media cost inflation tracking - an assumed future cost
   is always an explicit, visible input, never applied silently.
 - **Data pipeline** (`ancestry_mmm/data/pipeline.py`): multi-source upload (media/outcomes/
@@ -68,7 +69,7 @@ Requires Python 3.11 or 3.12 (see [Deployment](#deployment) below for why there'
   low-variance channels, collinearity, and sparse segments/markets before fitting.
 - **Variable coverage and official preparation** (`ancestry_mmm/core/coverage.py`,
   `ancestry_mmm/core/official_preparation.py`, `ancestry_mmm/core/market_data_capability.py`,
-  Data Coverage page): an eight-state missingness vocabulary (`observed_zero`/`missing_expected`/
+  Coverage & Gaps page): an eight-state missingness vocabulary (`observed_zero`/`missing_expected`/
   `not_applicable`/`unavailable_source`/`suppressed`/`estimated`/`modelled`/`unknown` - never
   collapsed into a nullable flag), a versioned, portable variable coverage matrix built per
   market/product/segment before fitting, immutable source-version capture on upload (checksum,
@@ -107,7 +108,7 @@ Requires Python 3.11 or 3.12 (see [Deployment](#deployment) below for why there'
   log with an agree/diverge flag (Model A only). A `CurveBankEntry` is a fitted parameter snapshot,
   not an official evaluated response curve: official evaluated response curves use the canonical
   posterior-draw path through `application/curve_service.py` and are persisted as official curve
-  artefacts (Official Curve Generation page) - a second, curve-bank-only path is never presented as
+  artefacts (Planning Curves page) - a second, curve-bank-only path is never presented as
   official.
 - **Attribution** (`ancestry_mmm/core/attribution.py`, `ancestry_mmm/core/market_specific_attribution.py`):
   Shapley-decomposed segment and total-FH contributions (order-independent, sums exactly to the
@@ -138,7 +139,7 @@ Requires Python 3.11 or 3.12 (see [Deployment](#deployment) below for why there'
   integration remain steady-state monthly only; sequential-weekly optimisation is a separate,
   not-yet-implemented work package (see `docs/approved_requirements/` for the roadmap).
   A Candidate A capacity-constrained Search engine capability (`core/search_capacity.py`,
-  `REQ-SEARCH-002`) is now wired into Model Training's fit path (`application/model_fit_service.py`,
+  `REQ-SEARCH-002`) is now wired into Fit Model's fit path (`application/model_fit_service.py`,
   `core.hierarchical_model.build_fh_hierarchical_model(..., search_candidate_a=...)`), reusing
   that builder's own multi-channel adstock/Hill/market machinery - governed by the project's
   approved causal graph, never a UI toggle - and into a dedicated "Candidate A Search" Diagnostics
@@ -183,7 +184,7 @@ search itself) is not yet implemented, and remains steady-state monthly only. Ex
 conversion for non-native-cadence sources **is now built** for the
 governed method catalogue (`docs/mixed_frequency_alignment_wp1.md`); it remains deliberately
 narrow and does not resolve `FR-MOD-015` ragged-predictor mathematics. A Candidate A Search
-mediation/capacity engine capability (`core/search_capacity.py`) is now wired into Model Training's
+mediation/capacity engine capability (`core/search_capacity.py`) is now wired into Fit Model's
 fit path and into a dedicated Diagnostics tab, but not yet into Results, official curves, or the
 Scenario Planner - see the Scenario Planner section above and `REPO_REVIEW_AND_NEXT_STEPS.md`.
 
@@ -239,7 +240,7 @@ and `runtime.txt` both pin Python to `>=3.11,<3.13` - pymc/pytensor have no rele
 Python 3.13+ yet, so hosts that default to the newest available interpreter will otherwise fail
 dependency resolution.
 
-Model Training runs real PyMC/NUTS MCMC sampling, which is memory- and CPU-intensive - expect it
+Fit Model runs real PyMC/NUTS MCMC sampling, which is memory- and CPU-intensive - expect it
 to be slow (or to hit resource limits) on free-tier hosting.
 
 ## Archived: earlier codebases

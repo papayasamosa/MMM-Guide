@@ -68,7 +68,7 @@ to every entry that save produces. Legacy entries (pre-dating fingerprint-bound 
 import and display fine, marked `legacy_approval = True`; entries from before this per-curve
 redesign import and display fine too, marked `legacy_format = True`.
 
-The curve bank history table on Results & Curve Bank filters by market, channel, segment, and curve
+The curve bank history table on Results & Response Curves filters by market, channel, segment, and curve
 status - the rest of the planned filter set (model run, currency, unit type) is available as
 columns today; dedicated filter widgets for them are a small follow-up, not a structural gap.
 
@@ -85,17 +85,17 @@ rescaling, not an independently fitted curve) plus `unit_type`, `currency`, and 
 
 **Only built for market-specific (Model C) saves.** A shared (Model A) curve has no single market to
 attribute a cost-per-unit relationship to - cost-per-unit is inherently a market-level fact even
-though the curve itself is shared - so Results & Curve Bank still shows a Model A curve's
+though the curve itself is shared - so Results & Response Curves still shows a Model A curve's
 media-unit context for a chosen reference market, but doesn't persist it to the curve bank
 (`docs/decision_log.md`).
 
-The curve bank history table on Results & Curve Bank filters by market, channel, segment, and curve
+The curve bank history table on Results & Response Curves filters by market, channel, segment, and curve
 status - `input_type`, `currency`, `unit_type`, and `cost_per_unit` are all available as columns
 today; dedicated filter widgets for `input_type` are a small follow-up, not a structural gap.
 
 ## What's built toward this so far
 
-Phase 1 added `core.market_config` and the Channel & Media Units / Market Descriptors pages to
+Phase 1 added `core.market_config` and the Activity Mapping / Market Context pages to
 capture the market/currency/media-unit context this redesign attaches to each curve record. Phase 2
 added the market-specific model itself (`core.market_specific_model`, "Model C"). Phase 3a redesigned
 the curve bank to per-curve records and added evidence-tier classification (`core.evidence_tiers`).

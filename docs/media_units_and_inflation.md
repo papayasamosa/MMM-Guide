@@ -1,7 +1,7 @@
 # Media Units and Inflation
 
 Design record for spend-vs-delivery modelling and media cost inflation. Phase 1 built the data
-capture (`core.market_config.ChannelMediaUnitConfig`, Channel & Media Units page); Phase 3b built the
+capture (`core.market_config.ChannelMediaUnitConfig`, Activity Mapping page); Phase 3b built the
 calculations against it (`core.media_units`); Phase 3c wired those calculations into the Scenario
 Planner (`docs/scenario_planner.md`).
 
@@ -84,7 +84,7 @@ Named, scope-explicit columns replace the bare `avg_cpa`/`marginal_cpa` wherever
 the sign-up/DNA-kit equivalents) - a curve-bank CPA is inherently channel-specific (one curve, one
 channel), so its scope is `"channel_incremental"`. `core.optimization.evaluate_scenario` gained
 `whole_plan_cost_per_fh_gsa`/`_fh_signup`/`_dna_kit` - a scenario's CPA divides that scenario's total
-spend across every channel, so its scope is `"whole_plan"`. Results & Curve Bank captions its CPA
+spend across every channel, so its scope is `"whole_plan"`. Results & Response Curves captions its CPA
 section "channel-incremental"; Scenario Planner captions its CPA metrics "whole-plan" and relabels them
 "Whole-plan avg CPA (...)" rather than a bare "Avg CPA". The legacy unscoped `avg_cpa`/`fh_signup_avg_cpa`/
 `dna_avg_cpa` column names are kept as aliases for backward compatibility, but the scope-explicit names

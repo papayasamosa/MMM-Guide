@@ -46,9 +46,9 @@ planned spend, **current media units, planned media units, cost-per-unit assumpt
 maximum spend, locked spend, total budget, objective.
 
 - **Spend or media-unit mode:** the spend plan editor can display/accept physical media units
-  instead of currency for any channel with a media-unit mapping (Channel & Media Units) and a valid
+  instead of currency for any channel with a media-unit mapping (Activity Mapping) and a valid
   historical cost-per-unit - built on `core.media_units`'s conversion functions, the same average-
-  historical-cost-per-unit simplification Results & Curve Bank's response-unit curve uses. The plan
+  historical-cost-per-unit simplification Results & Response Curves' response-unit curve uses. The plan
   is always stored in spend terms internally; media-unit mode only changes what the editor
   displays/accepts, with the cost-per-unit assumption in use always shown, never applied silently.
   Channels without a mapping stay in spend terms regardless of mode.
@@ -96,8 +96,8 @@ silently applies a future inflation assumption** - both are always visible in th
 
 ## What's built toward this so far
 
-Phase 1 added the Channel & Media Units page (optional per-channel spend/media-unit mapping) and
-Market Descriptors page (currency, context). Phase 2 added the market-specific model. Phase 3b added
+Phase 1 added the Activity Mapping page (optional per-channel spend/media-unit mapping) and
+Market Context page (currency, context). Phase 2 added the market-specific model. Phase 3b added
 `core.media_units`'s CPA/media-unit/inflation calculations. Phase 3c (this work) wired all of it
 into the planner itself: market-type dispatch in `core.optimization`, the media-unit planning mode,
 the evidence-tier panel, and the blended-CPA outputs described above.

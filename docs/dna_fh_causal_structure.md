@@ -193,7 +193,7 @@ for why this is not yet implemented.
   responses are checked to land on disjoint weeks, and `dna_outcome_id`'s response at each of those
   weeks is checked to exactly equal the corresponding single-pathway outcome_id's).
 - `core.attribution.total_fh_contribution` takes an `outcome_ids` parameter specifically for this:
-  pages that build a "total FH GSA" view (Results & Curve Bank, Project Export) pass
+  pages that build a "total FH GSA" view (Results & Response Curves, Export & Recovery) pass
   `core.outcomes.fh_gsa_outcome_ids(meta)` - PR E.1 replaced the earlier "every outcome_id that isn't a
   DNA-product outcome" filter (which would have silently folded a distinct FH sign-up outcome into the
   same total as the GSA outcome) with an explicit `product=Family History, metric=GSA` selector, so a
