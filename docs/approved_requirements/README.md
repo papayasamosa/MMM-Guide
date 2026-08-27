@@ -59,3 +59,4 @@ Coding agents must not independently interpret or reconcile the external Ancestr
 - `REQ-EVENT-*` — governed named-event occurrence, family, response-definition, and future-replay contracts
 - `REQ-CONTROL-*` — model-control representation and coefficient-prior calibration for a specific candidate (never a universal default)
 - `REQ-HIERARCHY-*` — outcome-level partial-pooling hierarchy structure for a specific candidate, including gated diagnostic-only challenger forms (never a production default by implication)
+- `REQ-FX-*` — governed FX translation architecture: currency-concept separation, canonical monetary record, immutable rate-set governance, conversion-method vocabulary, provider-adapter pattern, future-assumption/scenario-optimisation translation, and reporting/year-on-year decomposition (Finance-owned operational choices — provider, rate set, default method, rounding — remain separately deferred)

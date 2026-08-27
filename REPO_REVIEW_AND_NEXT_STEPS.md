@@ -545,6 +545,28 @@ The current implementation includes:
   since Graphify MCP was unavailable this session to trace the page/
   service/persistence dependency graph the usual way (its launcher
   refuses to start given this machine's ambient `UV_TOOL_BIN_DIR`).
+- Governed FX authority reconciliation (Work Package 7, first half,
+  2026-08-27): new `REQ-FX-001` through `REQ-FX-006`
+  (`docs/approved_requirements/`) reconcile `Ancestry_MMM_Governed_FX_
+  Translation_Requirements_Addendum.md`'s *architecture* into repository
+  authority - currency-concept separation and the canonical monetary
+  record (001), immutable versioned FX-rate/rate-set governance and
+  cross-rate derivation (002), the closed historical conversion-method
+  vocabulary (003), the provider-adapter pattern and ingestion governance
+  (004), future FX assumptions and scenario/optimisation translation
+  (005), and reporting/year-on-year FX decomposition (006). Each is a
+  target-state contract only, zero implementation. New `docs/wp7_
+  governed_fx_finance_decision_package.md` collects every Finance-owned
+  operational choice the addendum's own Section 20 leaves open (whether
+  USD is the group reporting currency, provider selection, default
+  conversion method, rounding precision, hedged-contract handling, and
+  more) in one place, so a future implementation pass has a single
+  document to work from. No provider, rate set, or default method is
+  selected or hard-coded anywhere. New `ancestry_mmm/tests/test_governed_
+  fx_authority_reconciliation.py` (13 tests) guards the reconciliation
+  against drift. The optional Search granularity/Paid Search intent/SEO
+  visibility overlay (the other half of Work Package 7) remains a
+  separate, not-yet-started pass.
 
 ## Known bounded gaps
 

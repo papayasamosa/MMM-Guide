@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "generated_at": "2026-08-26",
+  "generated_at": "2026-08-27",
   "requirements": [
     {
       "requirement_id": "REQ-AUTH-001",
@@ -103,7 +103,7 @@
         "ancestry_mmm/core/outcome_approval.py",
         "scripts/run_uk_production_fit.py",
         "docs/decision_log.md"
-        ],
+      ],
       "required_tests": [
         "ancestry_mmm/tests/test_common_window_runner.py::test_historical_test_scope_is_explicitly_non_production",
         "ancestry_mmm/tests/test_outcomes.py::TestOutcomeDefinitionRoundTrip::test_explicit_nbt_migration_changes_ids_but_preserves_source_columns",
@@ -1139,6 +1139,126 @@
         "ancestry_mmm/tests/test_hierarchical_model.py::TestSharedPoolingScaleHierarchyChallenger::test_shared_pooling_scale_draws_are_finite",
         "ancestry_mmm/tests/test_hierarchical_model.py::TestSharedPoolingScaleHierarchyChallenger::test_shared_pooling_scale_takes_precedence_over_pooled_beta_reference",
         "ancestry_mmm/tests/test_hierarchical_model.py::TestSharedPoolingScaleHierarchyChallenger::test_transform_config_fingerprint_distinguishes_h2_from_the_current_candidate"
+      ]
+    },
+    {
+      "requirement_id": "REQ-FX-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-FX-001.md",
+      "affected_modules": [
+        "docs/wp7_governed_fx_finance_decision_package.md",
+        "docs/approved_requirements/REQ-FX-001.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_governed_fx_authority_reconciliation.py::TestGovernedFXOverlayReconciled::test_req_fx_001_indexed_and_classified_incomplete"
+      ]
+    },
+    {
+      "requirement_id": "REQ-FX-002",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-FX-002.md",
+      "affected_modules": [
+        "docs/wp7_governed_fx_finance_decision_package.md",
+        "docs/approved_requirements/REQ-FX-002.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_governed_fx_authority_reconciliation.py::TestGovernedFXOverlayReconciled::test_req_fx_002_indexed_and_classified_incomplete"
+      ]
+    },
+    {
+      "requirement_id": "REQ-FX-003",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-FX-003.md",
+      "affected_modules": [
+        "docs/wp7_governed_fx_finance_decision_package.md",
+        "docs/approved_requirements/REQ-FX-003.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_governed_fx_authority_reconciliation.py::TestGovernedFXOverlayReconciled::test_req_fx_003_indexed_and_classified_incomplete"
+      ]
+    },
+    {
+      "requirement_id": "REQ-FX-004",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-FX-004.md",
+      "affected_modules": [
+        "docs/wp7_governed_fx_finance_decision_package.md",
+        "docs/approved_requirements/REQ-FX-004.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_governed_fx_authority_reconciliation.py::TestGovernedFXOverlayReconciled::test_req_fx_004_indexed_and_classified_incomplete"
+      ]
+    },
+    {
+      "requirement_id": "REQ-FX-005",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-FX-005.md",
+      "affected_modules": [
+        "docs/wp7_governed_fx_finance_decision_package.md",
+        "docs/approved_requirements/REQ-FX-005.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_governed_fx_authority_reconciliation.py::TestGovernedFXOverlayReconciled::test_req_fx_005_indexed_and_classified_incomplete"
+      ]
+    },
+    {
+      "requirement_id": "REQ-FX-006",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-FX-006.md",
+      "affected_modules": [
+        "docs/wp7_governed_fx_finance_decision_package.md",
+        "docs/approved_requirements/REQ-FX-006.md",
+        "docs/approved_requirements/index.json"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_governed_fx_authority_reconciliation.py::TestGovernedFXOverlayReconciled::test_req_fx_006_indexed_and_classified_incomplete"
       ]
     }
   ]

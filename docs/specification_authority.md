@@ -500,7 +500,7 @@ Each row below is one of two distinct states, not to be conflated:
 
 | Capability | State | Notes |
 |---|---|---|
-| Governed FX (`REQ-FX-001`–`REQ-FX-006`) | No approved requirement/decision yet | No indexed record exists. |
+| Governed FX architecture (`REQ-FX-001`, `REQ-FX-002`, `REQ-FX-003`, `REQ-FX-004`, `REQ-FX-005`, `REQ-FX-006`) | Requirement exists but capability incomplete | Approved 2026-08-27 (Work Package 7). Target-state architecture contracts only, reconciling `Ancestry_MMM_Governed_FX_Translation_Requirements_Addendum.md`'s data model and governance mechanics (currency-concept separation, canonical monetary record, immutable rate-set/cross-rate governance, conversion-method vocabulary, provider-adapter pattern, future-assumption/scenario-optimisation translation, reporting/year-on-year decomposition) into repository authority - blocked pending `docs/wp7_governed_fx_finance_decision_package.md`, which found the addendum's own Section 20 explicitly reserves every concrete operational/business choice (whether USD is the group currency, provider selection, default conversion method, rounding precision, hedged-contract handling, and more) as Finance-owned and unresolved. Zero implementation yet. |
 | Sequential / weekly planning (`REQ-STATE-001`, `REQ-SCEN-001`–`004`) | Requirement exists but capability incomplete | The first four records are approved and indexed (WP0, PR #261) - see "Approved requirement records already implemented" below for what each has delivered. `application/scenario_service.py` (WP5) and the manual-plan tab of `pages/08_Scenario_Planner.py` (WP5 part 2: short/long horizon, method labelling; WP5 part 3, 2026-08-18: terminal carryover and opt-in posterior uncertainty; WP5 part 4, 2026-08-18: save/export and staleness) now consume the contract for manual (non-optimised) evaluation. `REQ-SCEN-004` (Work Package 6, 2026-08-18) reconciles sequential-weekly *optimisation* into repository authority but is explicitly blocked pending `docs/wp6_sequential_optimisation_decision_package.md` - the sequential kernel's per-call cost is structurally incompatible with SLSQP's finite-difference search loop, and no objective-definition decision (which incremental-outcome quantity the optimiser would maximise) has been made; neither is decided by this coding pass. A browser-level journey test for the manual sequential path also remains unimplemented. |
 | Starting state and terminal state | Requirement exists but capability incomplete | Bundled with sequential/weekly planning above - see that row and `REQ-STATE-001`/`REQ-SCEN-003`. |
 | Future-assumption bundles (`REQ-FUTURE-001`) | Requirement exists but capability incomplete | Approved 2026-08-18 (Work Package 9). Target-state contract only, reconciling the bundle-schema, materiality-grading, and external-forecaster-integration gap into repository authority - blocked pending `docs/wp9_future_assumption_bundle_decision_package.md`. Zero implementation yet; `core.planning.future_context` continues to serve one plan window's per-control contract unchanged. |
@@ -563,10 +563,11 @@ historical validation folds), `REQ-STAB-001` (structural stability across
 folds), `REQ-PPD-001` (posterior predictive metric distributions),
 `REQ-PREFIT-001` (mandatory pre-fit gate for official production
 submission), `REQ-CONTROL-001` (standardised category-demand control
-prior for the current UK Model A candidate), and `REQ-HIERARCHY-001`
+prior for the current UK Model A candidate), `REQ-HIERARCHY-001`
 (gated H2 diagnostic hierarchy challenger for the current UK Model A
-candidate) are approved, indexed requirement records with substantive
-implementation.
+candidate), and `REQ-FX-001` through `REQ-FX-006` (governed FX
+translation architecture) are approved, indexed requirement records with
+substantive implementation.
 None is a gap requiring a new decision record — each has an explicit,
 narrower capability boundary documented in its own record:
 
@@ -824,3 +825,20 @@ narrower capability boundary documented in its own record:
   fold-refit-backtest evidence exists for any candidate, and the current
   UK activity data is separately under review for suspected
   source-to-model mapping issues.
+- `REQ-FX-001` through `REQ-FX-006` (`docs/approved_requirements/
+  REQ-FX-001.md` through `REQ-FX-006.md`, approved 2026-08-27): reconcile
+  `Ancestry_MMM_Governed_FX_Translation_Requirements_Addendum.md`'s
+  *architecture* — currency-concept separation and the canonical
+  monetary record (`REQ-FX-001`), immutable versioned FX-rate/rate-set
+  governance and cross-rate derivation (`REQ-FX-002`), the closed
+  historical conversion-method vocabulary (`REQ-FX-003`), the
+  provider-adapter pattern and ingestion governance (`REQ-FX-004`),
+  future FX assumptions and scenario/optimisation translation
+  (`REQ-FX-005`), and reporting/year-on-year FX decomposition
+  (`REQ-FX-006`) — into repository authority. Each is a target-state
+  contract only, with zero implementation. None approves a Finance-owned
+  operational choice (whether USD is the group currency, provider
+  selection, default conversion method, rounding precision, hedged-
+  contract handling, and the addendum's own Section 20 items in full) —
+  `docs/wp7_governed_fx_finance_decision_package.md` collects every one
+  of those open questions in one place for a future Finance decision.
