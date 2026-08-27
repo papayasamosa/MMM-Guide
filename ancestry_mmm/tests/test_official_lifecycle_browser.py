@@ -619,6 +619,10 @@ def test_diagnostics_wp2_evidence_sections_render_in_browser(
         timeout=30_000
     )
 
+    # UI-WP5: these five sections live under the collapsed-by-default
+    # "Specialised evidence" area - each heading is its own st.expander
+    # label (always visible), but its body content is hidden until opened.
+    # Click each open so the deeper content assertions below can see it.
     for heading in (
         "Posterior predictive metric distributions",
         "Historical validation & structural stability",
@@ -626,9 +630,9 @@ def test_diagnostics_wp2_evidence_sections_render_in_browser(
         "Latent-state scale/location identification",
         "Experiment & calibration evidence",
     ):
-        expect(page.get_by_text(heading, exact=True).first).to_be_visible(
-            timeout=30_000
-        )
+        heading_locator = page.get_by_text(heading, exact=True).first
+        expect(heading_locator).to_be_visible(timeout=30_000)
+        heading_locator.click()
 
     # REQ-IDENT-001 requirement 1's mandated disclaimer text must reach the
     # rendered page, not only exist in Python source.

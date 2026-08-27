@@ -325,3 +325,53 @@ def test_degenerate_convergence_evidence_never_crashes_the_page():
     )
     text = _all_markdown_text(at)
     assert "Fail" in text  # converged=False for a failed convergence check
+
+
+# ---------------------------------------------------------------------------
+# UI-WP5: specialised evidence is grouped under one clearly labelled,
+# collapsed-by-default area, while the primary review flow (top-line summary
+# -> domain rail -> primary concern -> full diagnostic detail tabs ->
+# validation readiness -> approval) remains plain, unwrapped page content.
+# ---------------------------------------------------------------------------
+
+
+def test_specialised_evidence_sections_are_collapsed_expanders():
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    at.run()
+    assert not at.exception, f"page raised on initial load: {at.exception}"
+
+    markdown_texts = [m.value or "" for m in at.markdown]
+    assert any("Specialised evidence" in text for text in markdown_texts)
+
+    expander_labels = {e.label for e in at.expander}
+    for title in (
+        "Prior predictive check",
+        "Predictive density (PSIS-LOO / WAIC)",
+        "Out-of-sample accuracy (expanding-window backtest)",
+        "Funnel-coherence diagnostics",
+        "Posterior predictive metric distributions",
+        "Historical validation & structural stability",
+        "Estimand-specific graphical identification",
+        "Latent-state scale/location identification",
+        "Experiment & calibration evidence",
+    ):
+        assert title in expander_labels, title
+
+
+def test_validation_readiness_and_approval_remain_unwrapped_and_prominent():
+    """The primary decision (readiness, then approval) must never itself be
+    collapsed behind an expander alongside the specialised evidence - only
+    the secondary/optional sections after it are."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    at.run()
+    assert not at.exception, f"page raised on initial load: {at.exception}"
+
+    markdown_texts = [m.value or "" for m in at.markdown]
+    assert any(text.strip() == "### Validation readiness" for text in markdown_texts)
+    assert any(text.strip() == "### Model approval" for text in markdown_texts)
+
+    expander_labels = {e.label for e in at.expander}
+    assert "Validation readiness" not in expander_labels
+    assert "Model approval" not in expander_labels
