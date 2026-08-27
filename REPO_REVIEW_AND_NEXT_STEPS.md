@@ -519,6 +519,32 @@ The current implementation includes:
   Phase 3 (reducing `pages/06_Diagnostics.py`'s direct imports) as
   separate, larger, not-yet-started work - deliberately not attempted in
   the same pass as Phase 1, per this package's own risk assessment.
+- Sequential Scenario Planner browser-lifecycle coverage (Work Package 6,
+  2026-08-27): closed the previously-disclosed browser-level coverage gap
+  for manual sequential-weekly planning - mechanical test coverage only,
+  no sequential optimisation implemented (`REQ-SCEN-004` remains blocked
+  pending `docs/wp6_sequential_optimisation_decision_package.md`, per its
+  own explicit scope). New `test_sequential_scenario_planner_manual_
+  evaluation_in_browser` in `ancestry_mmm/tests/test_official_lifecycle_
+  browser.py`, reusing that module's existing module-scoped Streamlit-
+  server/bundle-import fixtures - real browser method selection
+  ("Sequential weekly"), the fail-closed acknowledgement gate (asserted
+  both that the info message renders and that no result renders before
+  every required checkbox is checked), a valid synthetic plan, successful
+  evaluation, weekly/monthly incremental tables, short/long response
+  horizons, terminal carryover, save, and zero unexpected console errors -
+  verified against a real running app with the same deterministic bundle
+  `test_official_lifecycle_journey_in_browser` already uses. Two prior
+  approved-requirement records already reconciled (`REQ-SCEN-001`-`003`,
+  `REQ-STATE-001`) supply this path's actual implementation; no new
+  requirement or statistical/causal semantics introduced here. Constrained
+  and unconstrained optimisation remain on their existing steady-state-
+  only implementation, untouched. Manually verified live via the
+  Playwright MCP browser tools against a real local server (D-drive
+  fixture/artefact isolation) before being encoded into the pytest suite,
+  since Graphify MCP was unavailable this session to trace the page/
+  service/persistence dependency graph the usual way (its launcher
+  refuses to start given this machine's ambient `UV_TOOL_BIN_DIR`).
 
 ## Known bounded gaps
 
@@ -642,9 +668,17 @@ business or modelling definitions:
   (opt-in) posterior uncertainty for it, and can save/export a sequential
   scenario (appended to the same `scenarios` list a steady-state scenario
   is - see Delivered foundation above for what it wires together). A real
-  browser-lifecycle (Playwright) test for the sequential path remains not
-  yet implemented - only Streamlit `AppTest` coverage exists for it. Both
-  optimiser tabs (constrained and unconstrained-benchmark) and `core.
+  browser-lifecycle (Playwright) test for the manual sequential path is now
+  implemented (Work Package 6, 2026-08-27 -
+  `test_sequential_scenario_planner_manual_evaluation_in_browser` in
+  `ancestry_mmm/tests/test_official_lifecycle_browser.py`, part of the
+  required `Browser lifecycle journey` CI job) - method selection, the
+  fail-closed acknowledgement gate, weekly/monthly results, short/long
+  response horizons, terminal carryover, and save all verified against a
+  real running app; Streamlit `AppTest` coverage
+  (`test_scenario_planner_apptest.py`) remains the finer-grained coverage
+  underneath it. Both optimiser tabs (constrained and unconstrained-
+  benchmark) and `core.
   optimization`'s objective still only offer the steady-state monthly
   approximation - a sequential-weekly method choice is not yet exposed
   there. Work Package 6 (2026-08-18) reconciled this into a formal
@@ -660,9 +694,9 @@ business or modelling definitions:
   been made about which incremental-outcome quantity (short-horizon,
   long-horizon, or a combination) would even become the optimised
   scalar. Blocked pending review of that package - not a modelling or
-  core-engineering gap resolvable by more coding. A real browser-
-  lifecycle (Playwright) test for the manual sequential path also
-  remains not yet implemented.
+  core-engineering gap resolvable by more coding (sequential-weekly
+  *optimisation* remains unimplemented; the manual sequential path's
+  real browser-lifecycle test is now implemented - see above).
 - Chronos-2 or another future exogenous forecasting integration is not yet
   implemented. Work Package 9 (2026-08-18) reconciled the broader governed
   future-assumption-bundle gap into a formal requirement (`REQ-FUTURE-001`)
