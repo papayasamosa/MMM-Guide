@@ -42,8 +42,8 @@ class TestSparseActivity:
         values = [0.0] * 70 + [500.0, 800.0]
         raw = pd.DataFrame({"date": _dates(n), "uk_influencer": values})
         diag = reconcile_variable("uk_influencer", raw, raw.copy(), "date")
-        assert diag.raw.n_nonzero_weeks == 2
-        assert diag.canonical.n_nonzero_weeks == 2
+        assert diag.raw.n_nonzero_rows == 2
+        assert diag.canonical.n_nonzero_rows == 2
         # No pass/fail judgement - this module never invents a threshold.
         assert not diag.disappeared_downstream
 
@@ -56,7 +56,7 @@ class TestLateLaunchingActivity:
         diag = reconcile_variable("new_channel", raw, raw.copy(), "date")
         dates = _dates(n)
         assert diag.raw.first_active_date == str(dates.iloc[20].date())
-        assert diag.raw.n_nonzero_weeks == 10
+        assert diag.raw.n_nonzero_rows == 10
 
 
 class TestMissingVersusTrueZero:
@@ -66,7 +66,7 @@ class TestMissingVersusTrueZero:
         raw = pd.DataFrame({"date": _dates(n), "chan": raw_values})
         diag = reconcile_variable("chan", raw, raw.copy(), "date")
         assert diag.raw.n_missing == 2
-        assert diag.raw.n_nonzero_weeks == 6
+        assert diag.raw.n_nonzero_rows == 6
         assert diag.raw.n_rows == 10
 
     def test_a_variable_that_goes_from_real_values_to_all_missing_is_flagged(self):

@@ -7489,3 +7489,88 @@ Data Science / Model Governance.
 unchanged; hierarchy-default decision remains open pending the current
 UK activity-data review, a completed fold-refit backtest, and the
 item-3 per-candidate comparison table.
+
+---
+
+**Date:** 2026-08-27
+**Decision:** Implement Work Package 1 (`Media-Mix-Lab Coding LLM Next
+Steps 2026-08-27`): make the WP2.11 data-reconciliation and fold-preflight
+diagnostics operational, so the item-5 "silent for 6+ hours" incident
+cannot recur through the same entry points. Four changes, all additive or
+purely corrective - no analytical semantics, priors, or validation
+methodology changed:
+
+1. `core.source_model_reconciliation`'s `n_nonzero_weeks` field (raw and
+   canonical `StageValueSummary`) is renamed to `n_nonzero_rows` - it was
+   always a row count, not a calendar-week count, and the label was
+   unsafe for a raw source with a cadence other than one row per week.
+   No transformation/conversion rule is added; the module still makes no
+   assumption about a supplied frame's cadence.
+2. `scripts/run_uk_wp2_11_prepared_frame_backtest.py` now passes
+   `on_progress_line` to `run_leakage_safe_fold_refit` (previously never
+   wired despite the parameter existing since WP2.11 itself), with every
+   line both printed with an explicit flush and appended to a per-run log
+   file under `--output-dir` - progress is now inspectable live and
+   durably.
+3. New `core.preflight_reconciliation_report` (`build_model_preflight_
+   report`/`format_preflight_table`): assembles `core.source_model_
+   reconciliation` and `core.fold_data_support` evidence for exactly the
+   variables a candidate consumes, using the identical expanding-window
+   fold slicing `run_leakage_safe_fold_refit` itself uses
+   (`train_df = df[dates <= fold.train_end]`) - no PyMC model is built, no
+   sampling occurs. Invents no threshold or verdict.
+4. New standalone entry point `scripts/run_uk_source_model_preflight.py`,
+   and a new `--preflight-only` mode on the WP2.11 backtest script itself,
+   both built on (3). `scripts/run_uk_production_fit.py`'s `run()` gained
+   an additive `sources_callback` parameter (default `None`, every
+   existing caller unaffected) exposing the raw per-source-domain frames
+   (`standard_outcomes`/`standard_activity`/`standard_context`) a preflight
+   caller needs for the "raw" reconciliation stage, mirroring the existing
+   `frame_callback` extension-point pattern exactly.
+
+Per-fold checkpoint/resume support was considered and explicitly not
+built - `run_leakage_safe_fold_refit` has no existing per-fold persistence
+boundary to resume from, and adding one is a genuine service-contract
+decision (what a partial run persists, how a resumed run re-validates a
+persisted fold's inputs against the current candidate, whether a changed
+`prior_config` invalidates prior folds), not a mechanical addition.
+Documented as a deferred item in the backtest script's own docstring
+rather than guessed at.
+
+**Reason:** WP1's own brief requires making the already-built WP2.11
+diagnostics (`core.fold_data_support`, `core.fit_progress`, `core.
+source_model_reconciliation`) actually operational before another
+expensive backtest is attempted, and explicitly prohibits inventing a
+support threshold from the current UK activity data (still under separate
+review as of 2026-08-26/27).
+
+**Alternatives considered:** Leaving `n_nonzero_weeks` named as-is and
+only fixing the docstring (rejected - the field name itself, not just its
+documentation, is what a downstream caller reads and could
+misinterpret); building the preflight assembly logic directly inside the
+two scripts rather than a shared `core` module (rejected - the standalone
+preflight script and the backtest script's `--preflight-only` mode would
+then duplicate the fold-slicing/reconciliation-assembly logic, risking
+exactly the kind of "two divergent constructions" this repository's own
+conventions already warn against elsewhere, e.g. `REQ-LEAK-001`'s
+"never two divergent fits for one fold"); adding real per-fold
+checkpoint/resume now (rejected - see above, a genuine unresolved
+service-contract decision, not mechanical).
+
+**Impact:** `ancestry_mmm/core/source_model_reconciliation.py` (field
+rename), `ancestry_mmm/core/preflight_reconciliation_report.py` (new),
+`ancestry_mmm/tests/test_source_model_reconciliation.py` (updated for the
+rename), `ancestry_mmm/tests/test_preflight_reconciliation_report.py`
+(new, 8 synthetic-only tests), `scripts/run_uk_production_fit.py`
+(additive `sources_callback` parameter), `scripts/run_uk_wp2_11_prepared_
+frame_backtest.py` (`on_progress_line` wiring, `--preflight-only` mode,
+checkpoint/resume deferral note), `scripts/run_uk_source_model_
+preflight.py` (new). No `ancestry_mmm/application`/`ancestry_mmm/pages`
+code changed. No change to `.mypy-baseline-count` (still 243, verified
+locally against `ancestry_mmm/core`). All outputs write to
+`D:\Ancestry-MMM\test-artifacts\` only; no real Ancestry data used in
+tests.
+**Owner:** Platform engineering, implemented autonomously.
+**Status:** Implemented. The current UK activity-data review and the
+WP2.11 hierarchy-default decision remain open and unaffected by this
+package.
