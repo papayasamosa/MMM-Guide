@@ -490,6 +490,35 @@ The current implementation includes:
   a deferred service-contract decision in the backtest script's own
   docstring, not guessed at. No production statistical/priors/validation
   methodology changed; no `.mypy-baseline-count` change (still 243).
+- Repository coherence and maintainability cleanup (Work Package 3,
+  2026-08-27): reduced `.mypy-baseline-count` from 243 to 225 via two
+  straightforward, behaviour-preserving fixes (see the mypy bullet below
+  for detail) and moved `DiagnosticSection`/`DiagnosticsArtefact`/
+  `DiagnosticsInput`/`DiagnosticsResult`/`CURRENT_DIAGNOSTICS_SCHEMA_
+  VERSION`/`CURRENT_DIAGNOSTICS_VERSION` out of `application.diagnostics_
+  service` (2,186 lines) into a new `core.diagnostics_artefact` module -
+  Phase 1 of `docs/wp3_diagnostics_coupling_refactor_plan.md`, the first
+  concrete step against root `AGENTS.md`'s "core for analytical logic;
+  application services for orchestration" rule this file and `pages/06_
+  Diagnostics.py` (2,476 lines, 24 direct `core`/`application` imports)
+  have long violated. Pure move-and-re-export: `application.diagnostics_
+  service` re-exports every moved name unchanged (`DiagnosticsArtefact is
+  application.diagnostics_service.DiagnosticsArtefact` verified true, not
+  a copy), so every existing caller's import continues to resolve to the
+  exact same class object. No field, serialisation order, fingerprint
+  computation, or schema-migration behaviour changed. Verified by the
+  full existing `test_diagnostics_artefact.py` suite (145 tests) plus
+  every consumer test file (`curve_service`, `curve_bank`/`official_curve_
+  generation`/`project_export` AppTests, `persistence`, `project_service`,
+  `market_channel_capability_gate`, `predictive_density`,
+  `prior_predictive`, `validation_service_artefact_identity`, and the four
+  Diagnostics-page AppTest suites) - 672 tests total, all passing
+  unmodified. The plan document also lays out Phase 2 (characterisation
+  tests first, then splitting `DiagnosticsService.evaluate()`'s ~730-line
+  body into one `_compute_<section>()` helper per evidence section) and
+  Phase 3 (reducing `pages/06_Diagnostics.py`'s direct imports) as
+  separate, larger, not-yet-started work - deliberately not attempted in
+  the same pass as Phase 1, per this package's own risk assessment.
 
 ## Known bounded gaps
 
@@ -583,7 +612,7 @@ business or modelling definitions:
   continues to report an unsupported request exactly as before. Moderated
   pathways and residual-interaction engine support remain decision-bound
   or unsupported, independent of Candidate A.
-- The full-core mypy debt ceiling is `.mypy-baseline-count` = 243 (Work
+- The full-core mypy debt ceiling is `.mypy-baseline-count` = 225 (Work
   Package 4 of an earlier round closed the single largest repeated pattern
   - 34 occurrences of a `FHModelMeta.pathway_masks` Optional-narrowing gap
   now fixed via `FHModelMeta.resolved_pathway_masks`; Work Package 5 fixed
@@ -591,8 +620,20 @@ business or modelling definitions:
   `Union[float, np.ndarray]`, matching how every multi-channel caller
   already invokes it - retiring 4 further pre-existing errors, taking the
   ceiling to 241; WP2.11 items 2/6 (H2 hierarchy challenger and Residual
-  Explorer, PR #318) then raised it 241 -> 243 for its own new code); it is
-  a ceiling, not a target - unchanged at 243 through WP2.11's later items.
+  Explorer, PR #318) then raised it 241 -> 243 for its own new code; WP3
+  (2026-08-27) fixed two further straightforward, behaviour-preserving
+  patterns - `core.curve_artifact`'s `_joined`/`_iter_artifact_dirs`
+  annotations and two `**dict`-into-dataclass deserialisation splats
+  (`core.curve_artifact.CurveArtifactMetadata.from_dict`, `core.
+  outcome_approval.OutcomeApproval.from_dict`, both fixed via a documented
+  `cast()` rather than a runtime behaviour change) - taking the ceiling to
+  225. `core.canonical_curves.py` (124 of the remaining errors) and
+  `core.outcome_approval.py`'s `matches_scope(**scope)` kwarg-splat were
+  investigated and deliberately left alone - the former's errors are
+  scattered across ~55 distinct lines with no single root cause, and the
+  latter would require a signature change to fix properly; neither is
+  "straightforward," so neither was touched). It is a ceiling, not a
+  target.
   CI must fail if the measured count increases.
 - The Scenario Planner *page*'s manual tab (`pages/08_Scenario_
   Planner.py`, WP5 part 2 of `...Post PR262`; parts 3-4, 2026-08-18) now

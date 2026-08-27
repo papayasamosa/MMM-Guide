@@ -20,7 +20,7 @@ import json
 import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple, cast
 
 from .outcomes import (
     OutcomeDefinition,
@@ -301,9 +301,15 @@ class OutcomeApproval:
             "segment_scope",
             "conditions",
         ):
-            if tuple_field in payload and isinstance(payload[tuple_field], list):
-                payload[tuple_field] = tuple(payload[tuple_field])
-        return cls(**payload)
+            field_value = payload.get(tuple_field)
+            if isinstance(field_value, list):
+                payload[tuple_field] = tuple(field_value)
+        # `payload` is necessarily untyped (deserialised from an arbitrary
+        # caller-supplied mapping, filtered to known dataclass field names
+        # above) - this cast documents that trust rather than asserting a
+        # static guarantee mypy cannot verify from `Mapping[str, object]`
+        # alone. No runtime behaviour change.
+        return cls(**cast(Dict[str, Any], payload))
 
 
 # ---------------------------------------------------------------------------
