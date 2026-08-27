@@ -175,6 +175,79 @@ def test_all_three_required_domains_supplied_shows_ready_badge():
     assert any("Ready" in (m.value or "") for m in at.markdown)
 
 
+# ---------------------------------------------------------------------------
+# UI-WP3: default-view hierarchy (readiness -> add/replace -> template
+# download -> inventory) and progressive disclosure for specialist
+# Experiment Evidence / Named Events administration. Purely presentational -
+# no source contract, adoption, or governance behaviour is asserted here
+# beyond "the page still renders and groups sources the same way", which the
+# tests above already cover.
+# ---------------------------------------------------------------------------
+
+
+def test_default_view_orders_readiness_before_add_before_templates_before_inventory():
+    at = _run_at(
+        raw_sources={"media": _frame(), "outcomes": _frame(), "controls": _frame()},
+        source_definitions=[
+            SourceDefinition(
+                source_id="media",
+                name="media",
+                logical_domain=DOMAIN_ACTIVITY_AND_MEDIA,
+            ).to_dict(),
+            SourceDefinition(
+                source_id="outcomes", name="outcomes", logical_domain=DOMAIN_OUTCOMES
+            ).to_dict(),
+            SourceDefinition(
+                source_id="controls",
+                name="controls",
+                logical_domain="context_and_external_factors",
+            ).to_dict(),
+        ],
+        data_loaded=True,
+    )
+    assert not at.exception, f"page raised: {at.exception}"
+
+    def _first_index(needle: str) -> int:
+        return next(i for i, m in enumerate(at.markdown) if needle in (m.value or ""))
+
+    readiness_idx = _first_index("Source readiness")
+    add_idx = _first_index("Add or update sources")
+    templates_idx = _first_index("Download standard templates")
+    inventory_idx = _first_index("Source inventory")
+    assert readiness_idx < add_idx < templates_idx < inventory_idx, (
+        readiness_idx,
+        add_idx,
+        templates_idx,
+        inventory_idx,
+    )
+
+
+def test_experiment_evidence_and_named_events_are_collapsed_behind_advanced_expanders():
+    at = _run_at(
+        raw_sources={"media": _frame(), "outcomes": _frame(), "controls": _frame()},
+        source_definitions=[
+            SourceDefinition(
+                source_id="media",
+                name="media",
+                logical_domain=DOMAIN_ACTIVITY_AND_MEDIA,
+            ).to_dict(),
+            SourceDefinition(
+                source_id="outcomes", name="outcomes", logical_domain=DOMAIN_OUTCOMES
+            ).to_dict(),
+            SourceDefinition(
+                source_id="controls",
+                name="controls",
+                logical_domain="context_and_external_factors",
+            ).to_dict(),
+        ],
+        data_loaded=True,
+    )
+    assert not at.exception, f"page raised: {at.exception}"
+    expander_labels = {e.label for e in at.expander}
+    assert "Experiment Evidence registry (advanced)" in expander_labels
+    assert "Named events administration (advanced)" in expander_labels
+
+
 def test_realistic_source_pack_demo_loads_as_separate_governed_sources():
     at = _run_at()
     realistic_button = next(
