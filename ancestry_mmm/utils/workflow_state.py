@@ -639,15 +639,96 @@ def workflow_page_states(
     )
 
 
-def next_workflow_step_key(*, getter: Optional[StateGetter] = None) -> Optional[str]:
-    """Return the first unsatisfied required page in canonical order."""
+@dataclass(frozen=True)
+class WorkflowNavigationTarget:
+    """One page a navigation resolver may point the analyst toward."""
 
-    for state in workflow_page_states(getter=getter):
+    key: str
+    label: str
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class WorkflowNavigation:
+    """What an analyst should do next, resolved from a point in the workflow
+    (or from the very start, for Home) against the same page-state evidence
+    that drives the sidebar and readiness badges.
+
+    ``kind`` is one of:
+
+    * ``"required"`` - `target` is the next required page, and it is
+      currently available.
+    * ``"blocked"`` - `target` is the next required page, but it is not yet
+      available; `target.reason` names the unmet prerequisite. This lets a
+      caller name the real next requirement without offering a dead-end
+      continue action for it.
+    * ``"done"`` - no required page remains unsatisfied; `target` is None.
+
+    An optional page is never returned as `target` - it can only appear in
+    `optional_targets`, the optional pages encountered between the resolved
+    starting point and `target` (or the end of the workflow, for "done").
+    This is what keeps an optional page such as Coverage & Gaps, Causal
+    Graph or Model Comparison from ever being presented as the required next
+    step (see docs/decision_log.md, UI-WP1).
+    """
+
+    kind: str
+    target: Optional[WorkflowNavigationTarget]
+    optional_targets: tuple[WorkflowNavigationTarget, ...] = ()
+
+
+def resolve_workflow_navigation(
+    current_key: Optional[str] = None, *, getter: Optional[StateGetter] = None
+) -> WorkflowNavigation:
+    """The single navigation resolver shared by Home and every page footer.
+
+    Scans WORKFLOW_STEPS forward from just after `current_key`'s position
+    (or from the very first page when `current_key` is None or not a
+    registered step - e.g. Home) for the next required page that is not yet
+    satisfied. Optional pages encountered along the way are collected into
+    `optional_targets` instead of ever becoming the primary target.
+    """
+
+    start_index = 0
+    for i, step in enumerate(WORKFLOW_STEPS):
+        if step["key"] == current_key:
+            start_index = i + 1
+            break
+
+    optional_targets: list[WorkflowNavigationTarget] = []
+    for step in WORKFLOW_STEPS[start_index:]:
+        state = workflow_page_state(step["key"], getter=getter)
         if state.optional:
+            optional_targets.append(
+                WorkflowNavigationTarget(
+                    key=step["key"], label=step["label"], reason=state.reason
+                )
+            )
             continue
-        if not state.satisfied:
-            return state.key
-    return None
+        if state.satisfied:
+            continue
+        target = WorkflowNavigationTarget(
+            key=step["key"], label=step["label"], reason=state.reason
+        )
+        kind = "blocked" if state.access_status == "blocked" else "required"
+        return WorkflowNavigation(
+            kind=kind, target=target, optional_targets=tuple(optional_targets)
+        )
+
+    return WorkflowNavigation(
+        kind="done", target=None, optional_targets=tuple(optional_targets)
+    )
+
+
+def next_workflow_step_key(*, getter: Optional[StateGetter] = None) -> Optional[str]:
+    """Return the first unsatisfied required page in canonical order.
+
+    A thin compatibility wrapper around `resolve_workflow_navigation` (called
+    from the start of the workflow) for callers that only need the key.
+    """
+
+    nav = resolve_workflow_navigation(None, getter=getter)
+    return nav.target.key if nav.target is not None else None
 
 
 def workflow_progress(*, getter: Optional[StateGetter] = None) -> tuple[int, int]:

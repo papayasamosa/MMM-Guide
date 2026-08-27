@@ -265,12 +265,7 @@ if source_layout.is_source_native:
                     "The source dictionaries, irregular events, and supporting "
                     "evidence remain separate and are not sent through the model-input join."
                 )
-                if st.button(
-                    "Continue to Coverage & Gaps",
-                    type="primary",
-                    key="adopted_source_continue",
-                ):
-                    st.switch_page("pages/15_Data_Coverage.py")
+                render_next_step("transform_pipeline", key_suffix="_adopted")
         elif _unsupported_frequencies:
             with SectionCard(
                 "Official preparation needs a frequency decision",
