@@ -14,6 +14,16 @@ confirmation -> generate a THIRD official model-input response curve through
 the real Official Curve Generation page (page 13) - never only imported,
 pre-built ones - -> Results shows the official response-curve summaries ->
 Scenario Planner shows the imported saved scenario.
+
+Work Package 6 (`Media-Mix-Lab Coding LLM Next Steps 2026-08-27`) adds the
+sequential-weekly manual Scenario Planner journey to this module, reusing
+the same module-scoped `bundle_path`/`streamlit_base_url` fixtures - not a
+modelling decision, mechanical browser-level coverage only for a manual
+evaluation path that already has core/application/AppTest coverage
+(`test_sequential_scenario_evaluation.py`, `test_scenario_service_
+sequential.py`, `test_scenario_planner_apptest.py`) but no prior real-
+browser exercise. Constrained/unconstrained optimisation remain on their
+existing steady-state-only implementation, untouched here.
 """
 
 from __future__ import annotations
@@ -397,6 +407,144 @@ def test_official_lifecycle_journey_in_browser(
             exact=False,
         )
     ).not_to_be_visible()
+
+    unexpected_console_errors = [
+        e for e in console_errors if "favicon" not in e.lower()
+    ]
+    assert unexpected_console_errors == [], unexpected_console_errors
+
+
+def test_sequential_scenario_planner_manual_evaluation_in_browser(
+    page: Page, streamlit_base_url: str, bundle_path: Path
+) -> None:
+    """Work Package 6 (`Media-Mix-Lab Coding LLM Next Steps 2026-08-27`):
+    the sequential-weekly manual Scenario Planner path, exercised in a real
+    browser for the first time - method selection, the fail-closed
+    acknowledgement gate, a valid synthetic plan, successful evaluation
+    (weekly/monthly results, short/long response horizons, terminal
+    carryover), and save. Reuses this module's already-running Streamlit
+    server and deterministic bundle (module-scoped fixtures), a fresh
+    browser page/session per test function - the same real project-bundle
+    import path `test_official_lifecycle_journey_in_browser` already
+    proves, not re-verified here.
+    """
+    console_errors: list[str] = []
+    page.on(
+        "console",
+        lambda msg: console_errors.append(msg.text) if msg.type == "error" else None,
+    )
+
+    page.goto(streamlit_base_url, wait_until="load")
+    expect(
+        page.get_by_test_id("stSidebarUserContent").get_by_text(
+            "Family History & DNA MMM"
+        )
+    ).to_be_visible(timeout=60_000)
+
+    page.get_by_role("link", name="Export & Recovery").click()
+    expect(
+        page.get_by_text("Upload a previously exported .zip", exact=True)
+    ).to_be_visible(timeout=30_000)
+    page.locator("input[type=file]").set_input_files(str(bundle_path))
+    import_button = page.get_by_role("button", name="Import bundle")
+    expect(import_button).to_be_enabled(timeout=30_000)
+    import_button.click()
+    expect(
+        page.get_by_text(
+            "Project imported. Review each page to pick up where you left off.",
+            exact=True,
+        )
+    ).to_be_visible(timeout=30_000)
+
+    # --- Scenario Planner: select sequential-weekly manual evaluation ----
+    page.get_by_role("link", name="Scenario Planner").click()
+    method_radio_option = page.get_by_text("Sequential weekly", exact=True)
+    expect(method_radio_option).to_be_visible(timeout=30_000)
+    method_radio_option.click()
+    expect(
+        page.get_by_text("Sequential weekly starts immediately", exact=False)
+    ).to_be_visible(timeout=30_000)
+
+    # --- Fail-closed path: no result before every required assumption is
+    # acknowledged - the page's own guard, not a page default standing in
+    # for analyst consent (WP6 required fail-closed coverage).
+    expect(
+        page.get_by_text(
+            "Confirm the assumption(s) above to calculate this sequential scenario.",
+            exact=True,
+        )
+    ).to_be_visible(timeout=30_000)
+    expect(
+        page.get_by_text("Weekly incremental outcome", exact=False)
+    ).not_to_be_visible()
+
+    # --- Acknowledge every required assumption for this deterministic
+    # fixture. The start-month-reassignment checkbox is conditional (only
+    # rendered when the analyst's selected "Plan start month" differs from
+    # the market's real historical-continuation week) - present for this
+    # fixture's fixed historical window versus any current wall-clock
+    # default, checked defensively rather than assumed. The no-promotion
+    # checkbox is unconditional - always required.
+    start_month_ack = page.get_by_role(
+        "checkbox",
+        name=re.compile("I understand my entered monthly values will be reassigned"),
+    )
+    if start_month_ack.count() > 0:
+        start_month_ack.check(force=True, timeout=15_000)
+        expect(start_month_ack).to_be_checked(timeout=5_000)
+    no_promotion_ack = page.get_by_role(
+        "checkbox",
+        name=re.compile("I explicitly confirm no promotion is planned"),
+    )
+    expect(no_promotion_ack).to_be_visible(timeout=30_000)
+    no_promotion_ack.check(force=True, timeout=15_000)
+    expect(no_promotion_ack).to_be_checked(timeout=5_000)
+
+    # --- Successful evaluation: weekly, monthly, short/long horizon, and
+    # terminal-carryover results all render from one acknowledged plan.
+    expect(
+        page.get_by_role(
+            "heading",
+            name=re.compile(r"Weekly incremental outcome"),
+        )
+    ).to_be_visible(timeout=30_000)
+    expect(
+        page.get_by_role(
+            "heading",
+            name=re.compile(r"Monthly incremental outcome"),
+        )
+    ).to_be_visible(timeout=30_000)
+    expect(
+        page.get_by_role("heading", name="Response horizons", exact=True)
+    ).to_be_visible(timeout=30_000)
+    expect(
+        page.get_by_text("Short-horizon incremental", exact=False).first
+    ).to_be_visible(timeout=30_000)
+    expect(
+        page.get_by_text("Long-horizon incremental", exact=False).first
+    ).to_be_visible(timeout=30_000)
+    expect(
+        page.get_by_role(
+            "heading", name="Terminal carryover (informational)", exact=True
+        )
+    ).to_be_visible(timeout=30_000)
+
+    # --- Save: appends a calculation_method="sequential_weekly" scenario,
+    # rendered in its own "Saved sequential-weekly scenarios" section
+    # (structurally separate from the steady-state comparison table, which
+    # requires a `predicted` DataFrame no sequential scenario dict carries
+    # - see `pages/08_Scenario_Planner.py`'s own WP5-part-4 note). The
+    # scenario-name field already carries a governed default value; saving
+    # it unedited is a valid input, not a shortcut around the field.
+    save_button = page.get_by_role("button", name="Save this scenario")
+    expect(save_button).to_be_enabled(timeout=30_000)
+    save_button.click()
+    expect(page.get_by_text(re.compile(r"Saved scenario '"))).to_be_visible(
+        timeout=30_000
+    )
+    expect(
+        page.get_by_text("Saved sequential-weekly scenarios", exact=True)
+    ).to_be_visible(timeout=30_000)
 
     unexpected_console_errors = [
         e for e in console_errors if "favicon" not in e.lower()

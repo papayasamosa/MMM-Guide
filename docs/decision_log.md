@@ -7729,3 +7729,88 @@ re-export is not a copy.
 **Owner:** Platform engineering, implemented autonomously.
 **Status:** Implemented (mypy reduction, Phase 1 extraction, refactor
 plan). Phase 2 and Phase 3 of the plan remain open, explicitly deferred.
+
+---
+
+**Date:** 2026-08-27
+**Decision:** Implement Work Package 6 (`Media-Mix-Lab Coding LLM Next
+Steps 2026-08-27`): add the missing sequential Scenario Planner browser
+lifecycle test. Mechanical test coverage only, confirmed against the
+brief before starting - no sequential optimisation implemented, no
+statistical or causal semantics changed. New `test_sequential_scenario_
+planner_manual_evaluation_in_browser` in `ancestry_mmm/tests/
+test_official_lifecycle_browser.py`, reusing that module's existing
+module-scoped `bundle_path`/`streamlit_base_url` fixtures (the same
+deterministic already-fitted synthetic project bundle and real Streamlit
+server `test_official_lifecycle_journey_in_browser` already proves) - no
+new fixture, no new CI job. Covers: selecting "Sequential weekly" on the
+manual-plan evaluation-method radio; the fail-closed acknowledgement gate
+(asserted both that "Confirm the assumption(s) above..." renders and that
+no result table renders before every required checkbox is checked - the
+explicit fail-closed path the brief requires); checking the two
+checkboxes this deterministic fixture actually renders (the start-month-
+reassignment checkbox, checked defensively via a presence check since it
+is conditional on the analyst's selected Plan-start-month differing from
+the market's real historical-continuation week - true for this fixture's
+fixed historical window against any current wall-clock default; and the
+unconditional no-promotion checkbox); successful evaluation rendering
+weekly/monthly incremental tables, short/long response-horizon metrics,
+and the terminal-carryover section; saving the scenario and confirming
+both the save-success message and the "Saved sequential-weekly scenarios"
+section render; and zero unexpected browser console errors.
+
+Before writing the test, the exact journey was driven manually against a
+real local Streamlit server (`--server.port 8501`, matching the Playwright
+MCP config's origin allowlist) using the Playwright MCP browser tools,
+with the same deterministic bundle built via `build_lifecycle_project_
+bundle` - confirming the fixture's model (no fitted exogenous controls,
+so the "hold last observed" checkbox never renders for it) actually
+computes a valid sequential plan end-to-end before encoding any locator
+into the pytest suite, rather than guessing at UI text/structure from
+source reading alone.
+
+**Reason:** The brief requires closing this specific, already-disclosed
+browser-level coverage gap (`REPO_REVIEW_AND_NEXT_STEPS.md`'s own prior
+"Known bounded gaps" entry) without implementing sequential optimisation,
+which remains genuinely blocked on `docs/wp6_sequential_optimisation_
+decision_package.md` (a different, unrelated "Work Package 6" from an
+earlier task-doc round, per that document's own dated history) -
+confirmed at the outset that this request is mechanical test coverage,
+not a modelling decision.
+
+**Alternatives considered:** Writing the test directly from source
+reading alone, without a live manual run first (rejected - two of the
+three acknowledgement checkboxes are conditional on runtime state
+`pages/08_Scenario_Planner.py`'s own code makes non-obvious from a static
+read alone - e.g. whether the analyst's selected Plan-start-month happens
+to differ from the market's real historical-continuation week - and a
+locator guessed wrong would only surface as a CI failure, not locally);
+creating a new test file/fixture pair instead of reusing `test_official_
+lifecycle_browser.py`'s existing module-scoped fixtures (rejected -
+duplicating ~90 lines of subprocess/server-startup boilerplate for no
+behavioural difference, and would require a `.github/workflows/tests.yml`
+edit to add the new file to the `Browser lifecycle journey` job's pytest
+invocation; extending the existing file needs no CI change at all, since
+that job already runs every test in this file by path); using Graphify to
+trace the page/service/persistence dependency graph first, per the
+brief's own suggested approach (not possible this session - Graphify MCP
+unavailable, its launcher refuses to start given this machine's ambient
+`UV_TOOL_BIN_DIR` falling outside the configured D-drive root, a
+governance guard not weakened) - direct source reading plus the live
+manual Playwright run substituted for it.
+
+**Impact:** `ancestry_mmm/tests/test_official_lifecycle_browser.py` (one
+new test function, module docstring updated; no fixture change). No
+`ancestry_mmm/core`, `application`, or `pages` code changed - a pure test
+addition. No `.github/workflows/tests.yml` change (the existing `Browser
+lifecycle journey` job already runs every test in the modified file by
+path). No `docs/approved_requirements/` change; no statistical, causal,
+or business semantics changed. Verified: the new test passes in isolation
+(88s) and the full existing `Browser lifecycle journey` job invocation
+(`test_official_lifecycle_browser.py` + `test_causal_graph_editor_
+browser.py`, 4 tests total) passes together (255s), locally, with real
+Chromium via `pytest-playwright`.
+**Owner:** Platform engineering, implemented autonomously.
+**Status:** Implemented. Sequential-weekly optimisation (`REQ-SCEN-004`)
+remains blocked pending its own decision package, unaffected by this
+package.
