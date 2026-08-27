@@ -162,6 +162,11 @@ def _all_markdown_text(at: AppTest) -> str:
     parts = [(m.value or "") for m in at.markdown]
     parts += [(c.value or "") for c in at.caption]
     parts += [(i.value or "") for i in at.info]
+    # UI-WP5: several section headings moved from a plain st.markdown line
+    # into an st.expander label (collapsed by default under "Specialised
+    # evidence") - AppTest still constructs their body regardless of
+    # expanded state, but the label itself is a distinct element type.
+    parts += [(e.label or "") for e in at.expander]
     return "\n".join(parts)
 
 
