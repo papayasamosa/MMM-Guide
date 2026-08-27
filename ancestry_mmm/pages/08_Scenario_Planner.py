@@ -613,17 +613,11 @@ render_workspace_note(
     kind="derived",
 )
 st.info(
-    "**Steady-state monthly approximation.** Each month is evaluated as a steady "
-    "monthly state; media carryover and future external factors are not simulated."
-)
-render_technical_details(
-    body=(
-        "The current calculation holds each month's media input constant and evaluates the fitted "
-        "response at its adstock steady state. It uses a closed-form planning calculation rather "
-        "than MCMC in the planning loop. It does not run sequential week-over-week carry-in "
-        "simulation, a capacity-constrained delivery model, or an external Chronos-2 (or other "
-        "external) forecast path."
-    )
+    "**Two evaluation methods are available below: steady-state monthly "
+    "approximation, and sequential weekly.** The spend plan grid and optimiser "
+    "tabs are shared; how a plan is calculated depends on the evaluation method "
+    "you choose under Planning assumptions. Method-specific detail is shown "
+    "once you choose one."
 )
 
 _dashboard_trained = all(
@@ -639,8 +633,19 @@ with st.container(border=True):
     _desk_status[1].metric(
         "Plan state", "Editable" if _dashboard_trained else "Blocked"
     )
+    _selected_evaluation_method = str(
+        st.session_state.get("scenario_evaluation_method") or ""
+    )
     _desk_status[2].metric(
-        "Evaluation", "Steady-state monthly" if _dashboard_trained else "Unavailable"
+        "Evaluation method",
+        (
+            {
+                "steady_state_monthly": "Steady-state monthly",
+                "sequential_weekly": "Sequential weekly",
+            }.get(_selected_evaluation_method, "Choose below")
+            if _dashboard_trained
+            else "Unavailable"
+        ),
     )
     _desk_status[3].metric("Saved scenarios", len(get_state("scenarios") or []))
     st.caption(
@@ -1414,6 +1419,7 @@ cost_as_of_by_month = {
 # the constrained/unconstrained optimiser tabs remain steady-state-only
 # (sequential optimisation is a separate, not-yet-implemented work
 # package).
+st.markdown("#### Evaluation method")
 evaluation_method = st.radio(
     "Manual plan evaluation method",
     ["steady_state_monthly", "sequential_weekly"],
@@ -1435,6 +1441,24 @@ evaluation_method = st.radio(
         "remain steady-state only."
     ),
 )
+if evaluation_method == "steady_state_monthly":
+    st.info(
+        "**Steady-state monthly approximation** is selected.\n"
+        "- Each month is approximated independently.\n"
+        "- It uses the fitted model's steady-state response.\n"
+        "- It does not reproduce starting carryover or sequential month-to-month "
+        "timing."
+    )
+else:
+    st.info(
+        "**Sequential weekly** is selected.\n"
+        "- It continues from this market's own historical fitted state.\n"
+        "- It models real week-by-week media carryover.\n"
+        "- It supports short/long response horizons and terminal carryover.\n"
+        "- Constrained and unconstrained optimisation below remain "
+        "steady-state-monthly only in this release - not available for "
+        "sequential weekly."
+    )
 
 # G2A.7a.7: build objective options from fitted outcome catalogue
 _fitted_outcome_ids = set(meta.outcome_ids) if hasattr(meta, "outcome_ids") else set()
@@ -1727,6 +1751,7 @@ tab_manual, tab_constrained, tab_unconstrained = st.tabs(
 
 
 def _render_steady_state_manual_tab():
+    st.caption("Evaluation method: **Steady-state monthly approximation**.")
     st.markdown("Predicted outcomes for the spend plan as edited above.")
     # PR 82C: routed through ScenarioService.evaluate_manual() with a typed
     # ManualScenarioInput - the page no longer calls evaluate_manual_scenario()
@@ -1970,6 +1995,7 @@ def _render_steady_state_manual_tab():
 
 
 def _render_sequential_manual_tab():
+    st.caption("Evaluation method: **Sequential weekly**.")
     st.markdown(
         "Predicted outcomes for the spend plan as edited above, simulated week by "
         "week from this market's real historical carry-in."
@@ -2268,6 +2294,10 @@ with tab_manual:
         _render_steady_state_manual_tab()
 
 with tab_constrained:
+    st.caption(
+        "Evaluation method: **steady-state monthly** - this optimiser mode does "
+        "not support sequential weekly."
+    )
     st.markdown("#### Constraints (distinct from the assumptions above)")
     st.markdown(
         "Add the constraints Ancestry actually plans against: locked cells (e.g. committed TV "
@@ -2497,6 +2527,10 @@ with tab_constrained:
             st.success(f"Saved scenario '{name}'.")
 
 with tab_unconstrained:
+    st.caption(
+        "Evaluation method: **steady-state monthly** - this optimiser mode does "
+        "not support sequential weekly."
+    )
     st.warning(
         "**Theoretical optimum, not a recommended plan.** This reallocates the same total budget "
         "freely, ignoring locks, timing commitments and operational constraints - shown for "

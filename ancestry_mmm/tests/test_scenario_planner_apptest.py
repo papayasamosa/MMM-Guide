@@ -1093,33 +1093,81 @@ def test_normal_saved_scenario_with_only_a_nested_governance_dependency_is_flagg
 # ---------------------------------------------------------------------------
 
 
-def test_steady_state_label_is_prominent_and_honest():
-    """The steady-state monthly approximation must be stated up front, and
-    must not imply a sequential, capacity-constrained, or Chronos-2 path is
-    active - none of those are implemented (root AGENTS.md / this page's own
-    docstring)."""
+def test_opening_banner_does_not_claim_steady_state_only():
+    """UI-WP2: the page-level opening banner must describe the planner
+    generically - it must not claim (as it once did) that every scenario
+    uses steady-state monthly evaluation, since sequential weekly is a fully
+    implemented, selectable method for the manual tab."""
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_consistent_session_state(at, value_currency="GBP")
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
     info_texts = [i.value or "" for i in at.info]
-    assert any("Steady-state monthly approximation" in text for text in info_texts)
-    steady_state_text = next(
-        text for text in info_texts if "Steady-state monthly approximation" in text
+    assert not any(
+        "Steady-state monthly approximation.** Each month is evaluated as a "
+        "steady monthly state" in text
+        for text in info_texts
     )
-    assert (
-        "media carryover and future external factors are not simulated"
-        in steady_state_text
+    assert any("Two evaluation methods are available" in text for text in info_texts)
+
+
+def test_evaluation_method_selection_shows_method_specific_detail():
+    """UI-WP2: once an evaluation method is chosen, its own characteristics
+    must be shown inline (not only in a hover tooltip), and switching methods
+    must switch the visible detail - never leaving stale steady-state detail
+    visible while sequential weekly is selected, or vice versa."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+
+    info_texts = [i.value or "" for i in at.info]
+    assert any(
+        "Steady-state monthly approximation** is selected" in text
+        for text in info_texts
     )
-    assert "no sequential week-over-week carry-in simulation" not in steady_state_text
-    technical_text = " ".join(
-        (element.value or "")
-        for element in at.markdown
-        if element.value
-        and "sequential week-over-week carry-in simulation" in element.value
+    steady_detail = next(
+        text
+        for text in info_texts
+        if "Steady-state monthly approximation** is selected" in text
     )
-    assert "capacity-constrained delivery model" in technical_text
-    assert "Chronos-2" in technical_text
+    assert "does not reproduce starting carryover" in steady_detail
+    assert "Sequential weekly** is selected" not in " ".join(info_texts)
+
+    method_radio = next(
+        r for r in at.radio if r.label == "Manual plan evaluation method"
+    )
+    method_radio.set_value("sequential_weekly").run()
+    assert not at.exception, f"selecting sequential_weekly raised: {at.exception}"
+
+    info_texts = [i.value or "" for i in at.info]
+    assert not any(
+        "Steady-state monthly approximation** is selected" in text
+        for text in info_texts
+    )
+    sequential_detail = next(
+        text for text in info_texts if "Sequential weekly** is selected" in text
+    )
+    assert "week-by-week media carryover" in sequential_detail
+    assert "terminal carryover" in sequential_detail
+    assert "steady-state-monthly only" in sequential_detail
+
+
+def test_optimiser_tabs_state_their_evaluation_method():
+    """UI-WP2: the constrained and unconstrained optimiser tabs must state
+    they use steady-state monthly evaluation, since neither supports
+    sequential weekly."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(at, value_currency="GBP")
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    caption_texts = [c.value or "" for c in at.caption]
+    matching = [
+        text
+        for text in caption_texts
+        if "Evaluation method" in text and "steady-state monthly" in text
+    ]
+    assert len(matching) >= 2, caption_texts
 
 
 def test_spend_plan_grid_is_labelled_as_the_editable_decision():
@@ -1372,6 +1420,6 @@ def test_allocation_desk_separates_editable_proposed_and_saved_state():
     assert {
         "Model approval",
         "Plan state",
-        "Evaluation",
+        "Evaluation method",
         "Saved scenarios",
     } <= metric_labels
