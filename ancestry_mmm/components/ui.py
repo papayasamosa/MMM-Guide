@@ -428,10 +428,7 @@ def render_next_step(key: str, *, key_suffix: str = "") -> None:
             st.switch_page(target_step["path"])
 
     if nav.optional_targets:
-        st.caption(
-            "Optional: "
-            + " · ".join(t.label for t in nav.optional_targets)
-        )
+        st.caption("Optional: " + " · ".join(t.label for t in nav.optional_targets))
         cols = st.columns(len(nav.optional_targets))
         for col, opt in zip(cols, nav.optional_targets):
             opt_step = get_step(opt.key)
