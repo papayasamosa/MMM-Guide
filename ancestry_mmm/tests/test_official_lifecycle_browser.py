@@ -103,6 +103,28 @@ def _click_until_visible(
     raise last_error
 
 
+def _check_with_retry(checkbox, *, attempts: int = 3, timeout_ms: int = 15_000) -> None:
+    """Check `checkbox`, retrying on a transient "did not change its state"
+    error - the exact CI-only-Linux widget-timing flake
+    `test_official_lifecycle_journey_in_browser`'s own `confirm_checkbox`
+    handling already documents for a different widget (never reproduced
+    locally on Windows: this test passed locally on the first attempt,
+    then failed in CI at this exact call with `Locator.check: Clicking the
+    checkbox did not change its state` - a Streamlit rerun mid-flight
+    changing the DOM under the click, not a real assertion failure)."""
+    last_error: Exception | None = None
+    for _ in range(attempts):
+        try:
+            checkbox.check(force=True, timeout=timeout_ms)
+            expect(checkbox).to_be_checked(timeout=5_000)
+            return
+        except Exception as exc:  # noqa: BLE001 - retry, then re-raise below
+            last_error = exc
+    assert last_error is not None
+    checkbox.check(force=True, timeout=timeout_ms)
+    expect(checkbox).to_be_checked(timeout=timeout_ms)
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -490,15 +512,13 @@ def test_sequential_scenario_planner_manual_evaluation_in_browser(
         name=re.compile("I understand my entered monthly values will be reassigned"),
     )
     if start_month_ack.count() > 0:
-        start_month_ack.check(force=True, timeout=15_000)
-        expect(start_month_ack).to_be_checked(timeout=5_000)
+        _check_with_retry(start_month_ack)
     no_promotion_ack = page.get_by_role(
         "checkbox",
         name=re.compile("I explicitly confirm no promotion is planned"),
     )
     expect(no_promotion_ack).to_be_visible(timeout=30_000)
-    no_promotion_ack.check(force=True, timeout=15_000)
-    expect(no_promotion_ack).to_be_checked(timeout=5_000)
+    _check_with_retry(no_promotion_ack)
 
     # --- Successful evaluation: weekly, monthly, short/long horizon, and
     # terminal-carryover results all render from one acknowledged plan.
