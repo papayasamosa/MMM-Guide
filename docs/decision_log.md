@@ -7814,3 +7814,102 @@ Chromium via `pytest-playwright`.
 **Status:** Implemented. Sequential-weekly optimisation (`REQ-SCEN-004`)
 remains blocked pending its own decision package, unaffected by this
 package.
+
+---
+
+**Date:** 2026-08-27
+**Decision:** Implement the first half of Work Package 7
+(`Media-Mix-Lab Coding LLM Next Steps 2026-08-27`): reconcile the
+governed-FX PRD authority backlog. New `REQ-FX-001` through `REQ-FX-006`
+(`docs/approved_requirements/`) translate `Ancestry_MMM_Governed_FX_
+Translation_Requirements_Addendum.md`'s *architecture* into repository
+authority: currency-concept separation and the canonical monetary record
+(001, Sections 1-3 of the addendum); immutable versioned FX-rate/rate-set
+governance and cross-rate derivation (002, Sections 4-5, 8); the closed
+historical conversion-method vocabulary (003, Section 6); the
+provider-adapter pattern and ingestion governance (004, Sections 7, 9,
+17); future FX assumptions, model treatment, and scenario/optimisation
+translation (005, Sections 10-12); and reporting/year-on-year FX
+decomposition (006, Sections 13-15). Every record is a target-state
+contract only, with zero implementation.
+
+Authority for reconciling the *architecture* specifically (as opposed to
+inventing that approval unilaterally) comes from `docs/specification_
+authority.md`'s own existing record of the 2026-08-22 analyst decision
+response: "The FX addendum is approved as the normative product/
+architecture contract; Finance operational provider, rate-set and
+future-assumption choices remain deferred." This decision applies that
+existing approval to six concrete records rather than granting new
+authority.
+
+New `docs/wp7_governed_fx_finance_decision_package.md` collects all 12
+Finance-owned open questions in one place: the 10 items the addendum's
+own Section 20 lists by number (is USD definitely the group currency;
+what `CSD` means; the market-currency mapping; authoritative source;
+Finance-rate override policy; default weekly-conversion method; budget-
+planning rate; constant-currency basis; rounding precision; hedged-
+contract handling; initial currency/market scope - one addendum item,
+covered together with scope) plus provider-adapter selection, which each
+`REQ-FX-*` record's own "Explicitly excluded" section separately defers.
+No option is selected for any of them.
+
+New `ancestry_mmm/tests/test_governed_fx_authority_reconciliation.py`
+(13 tests, mirroring `test_structural_causal_authority_reconciliation.
+py`'s pattern) guards: all six records indexed and their files exist;
+each has its own `docs/specification_authority.md` gaps-table row
+classified "Requirement exists but capability incomplete"; all six are
+named in the "already implemented" section; the decision package exists,
+makes no decision, and is referenced by all six records; the decision
+package covers every one of the addendum's 10 numbered Section 20 items;
+the addendum source file itself is unmodified; and `README.md` documents
+the new `REQ-FX-*` category.
+
+**Reason:** The brief's Work Package 7 requires converting this specific,
+already-disclosed PRD-traceability gap ("Governed FX (`REQ-FX-001`-
+`REQ-FX-006`) | No approved requirement/decision yet | No indexed record
+exists.", `docs/specification_authority.md`'s own prior gap-table row)
+into either approved requirements or decision packages, explicitly
+separating "stable data/identity/version/provenance contracts... Finance-
+owned provider/rate-set decisions... future FX assumptions, planning
+translation, optimisation translation, approval and staleness" (the
+former mechanically reconcilable, the latter requiring a decision
+package) - never hard-coding a provider, rate set, refresh rule, or
+future FX assumption without approval.
+
+**Alternatives considered:** Treating the entire addendum as still
+"Proposed requirements and technical design" (its own header status) and
+creating a decision package with no `REQ-FX-*` records at all (rejected -
+`docs/specification_authority.md` already records that the *architecture*
+specifically was separately approved on 2026-08-22, distinct from the
+addendum's own overall draft status; not reconciling that already-granted
+approval would leave real, existing authority undocumented); collapsing
+all six records into one broader `REQ-FX-001` covering the whole
+addendum (rejected - the addendum's own six-part structure, and the gap
+table's own pre-existing `REQ-FX-001`-`REQ-FX-006` range naming,
+indicate six independently reconcilable contracts, mirroring how
+`REQ-SCENGINE-001`/`REQ-SCEFFECT-001`/`REQ-CAUSALROBUST-001`/
+`REQ-SCCURVE-001` were kept as four separate records rather than one);
+selecting a default conversion method or provider from the addendum's own
+stated preferences (e.g. spend-weighted conversion, the ECB adapter)
+(rejected - a preference stated as an option in a "Proposed" document is
+not the same as an approval, and Section 20 poses several of these
+exact questions as still open).
+
+**Impact:** New `docs/approved_requirements/REQ-FX-001.md` through
+`REQ-FX-006.md`, `docs/wp7_governed_fx_finance_decision_package.md`,
+`ancestry_mmm/tests/test_governed_fx_authority_reconciliation.py`.
+Modified: `docs/approved_requirements/index.json` (6 new entries,
+`generated_at` bumped to 2026-08-27), `docs/approved_requirements/
+README.md` (new `REQ-FX-*` category line), `docs/specification_
+authority.md` (gap-table row reclassified, six new "already implemented"
+bullets), `ancestry_mmm/tests/test_outcome_approval.py` (matching
+`generated_at` assertion). No `ancestry_mmm/core`, `application`, or
+`pages` code changed. No statistical, causal, or business/Finance
+decision made - every Finance-owned choice remains exactly as open as it
+was before this record, now with a single document naming all of them.
+**Owner:** Finance (business/policy questions) / Platform engineering
+(architecture reconciliation, implemented autonomously).
+**Status:** Architecture reconciled; every Finance-owned operational
+choice remains open pending `docs/wp7_governed_fx_finance_decision_
+package.md`. The Search/SEO half of Work Package 7 remains separate and
+not yet started.
