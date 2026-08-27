@@ -400,10 +400,10 @@ def render_next_step(key: str, *, key_suffix: str = "") -> None:
         return
     nav = resolve_workflow_navigation(key, getter=get_state)
 
-    if nav.kind == "done":
+    target = nav.target
+    if target is None:
         copy = "No further required workflow stage remains."
     else:
-        target = nav.target
         target_step = get_step(target.key)
         purpose = (target_step or {}).get("purpose", "")
         copy = f"{target.label}" + (f" - {purpose}" if purpose else "")
@@ -418,10 +418,10 @@ def render_next_step(key: str, *, key_suffix: str = "") -> None:
         unsafe_allow_html=True,
     )
 
-    if nav.kind == "required":
-        target_step = get_step(nav.target.key)
+    if nav.kind == "required" and target is not None:
+        target_step = get_step(target.key)
         if target_step and st.button(
-            f"Continue to {nav.target.label} →",
+            f"Continue to {target.label} →",
             type="primary",
             key=f"next_{key}{key_suffix}",
         ):
