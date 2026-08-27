@@ -699,7 +699,7 @@ class TestAuthorityConsistency:
             / "index.json"
         )
         data = json.loads(index_path.read_text())
-        assert data["generated_at"] == "2026-08-19"
+        assert data["generated_at"] == "2026-08-26"
 
         datain = next(
             req
