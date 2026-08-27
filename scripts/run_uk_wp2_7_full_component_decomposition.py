@@ -113,9 +113,9 @@ def main() -> int:
             random_seed=20260825,
             component_var_names=COMPONENT_VAR_NAMES,
         )
-        components = (
-            result["plausibility"].get("component_decomposition") or {}
-        ).get("components", {})
+        components = (result["plausibility"].get("component_decomposition") or {}).get(
+            "components", {}
+        )
         summary = {
             name: {
                 "q05": comp["q05"],
@@ -126,16 +126,18 @@ def main() -> int:
             for name, comp in components.items()
             if comp is not None
         }
-        ranked = sorted(
-            summary.items(), key=lambda kv: kv[1]["abs_q95"], reverse=True
-        )
+        ranked = sorted(summary.items(), key=lambda kv: kv[1]["abs_q95"], reverse=True)
         _write_json(
             output_dir / f"wp2_7_component_decomposition_{model_name}.json",
             {"components": summary, "ranked_by_abs_q95": [name for name, _ in ranked]},
         )
-        print(f"{model_name}: dominant component by |q95| = {ranked[0][0] if ranked else 'n/a'}")
+        print(
+            f"{model_name}: dominant component by |q95| = {ranked[0][0] if ranked else 'n/a'}"
+        )
         for name, comp in ranked:
-            print(f"  {name}: q05={comp['q05']:.3f} median={comp['median']:.3f} q95={comp['q95']:.3f}")
+            print(
+                f"  {name}: q05={comp['q05']:.3f} median={comp['median']:.3f} q95={comp['q95']:.3f}"
+            )
 
     return 0
 

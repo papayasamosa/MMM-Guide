@@ -35,7 +35,10 @@ import arviz as az
 import numpy as np
 import pandas as pd
 
-from ancestry_mmm.core.prefit_identifiability import (
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from ancestry_mmm.core.prefit_identifiability import (  # noqa: E402
     classify_short_sampler_screen,
 )
 
@@ -175,7 +178,11 @@ def _trace_metrics(
     stats = trace.sample_stats
     divergences = int(stats["diverging"].sum()) if "diverging" in stats else 0
     bfmi_values = np.asarray(az.bfmi(trace), dtype=float).reshape(-1)
-    tree_depth = np.asarray(stats["tree_depth"], dtype=float) if "tree_depth" in stats else np.array([])
+    tree_depth = (
+        np.asarray(stats["tree_depth"], dtype=float)
+        if "tree_depth" in stats
+        else np.array([])
+    )
     acceptance_name = "acceptance_rate" if "acceptance_rate" in stats else None
     acceptance = (
         np.asarray(stats[acceptance_name], dtype=float).reshape(-1)
@@ -331,8 +338,7 @@ def _support_classification(row: Mapping[str, Any]) -> str:
     ):
         return "strong"
     if (
-        row["positive_weeks"]
-        >= SUPPORT_THRESHOLDS["moderate"]["positive_weeks_min"]
+        row["positive_weeks"] >= SUPPORT_THRESHOLDS["moderate"]["positive_weeks_min"]
         and row["distinct_positive_values"]
         >= SUPPORT_THRESHOLDS["moderate"]["distinct_positive_values_min"]
         and row["effective_adstock_cv"] is not None
@@ -367,7 +373,9 @@ def _posterior_intervals(
         for variable in ("decay_rate", "hill_K", "hill_S"):
             if variable not in trace.posterior:
                 continue
-            cell = np.asarray(trace.posterior[variable].sel(channel=channel)).reshape(-1)
+            cell = np.asarray(trace.posterior[variable].sel(channel=channel)).reshape(
+                -1
+            )
             q = np.quantile(cell, [0.05, 0.5, 0.95])
             values[variable] = {
                 "q05": float(q[0]),
@@ -416,7 +424,10 @@ def _support_matrix(
     from ancestry_mmm.core.transformations import geometric_adstock_matrix
 
     recovery_path = reference_root / "02_synthetic_recovery" / "synthetic-recovery.json"
-    recovery_evidence: dict[str, Any] = {"status": "unavailable", "path": str(recovery_path)}
+    recovery_evidence: dict[str, Any] = {
+        "status": "unavailable",
+        "path": str(recovery_path),
+    }
     if recovery_path.exists():
         recovery_payload = _load_json(recovery_path)
         scaled_recovery = next(
@@ -462,13 +473,17 @@ def _support_matrix(
                 "product": product,
                 "channel": channel,
                 "model_input_unit": semantic.get("model_input_unit", "unresolved"),
-                "model_input_measure": semantic.get("model_input_measure", "unresolved"),
+                "model_input_measure": semantic.get(
+                    "model_input_measure", "unresolved"
+                ),
                 "currency": semantic.get("currency", "unresolved"),
                 "target_weeks": int(len(raw)),
                 "positive_weeks": int(np.sum(raw > 0)),
                 "zero_weeks": int(np.sum(raw == 0)),
                 "longest_zero_run": _longest_zero_run(raw),
-                "positive_median": float(np.median(positives)) if positives.size else None,
+                "positive_median": float(np.median(positives))
+                if positives.size
+                else None,
                 "positive_iqr": (
                     float(np.quantile(positives, 0.75) - np.quantile(positives, 0.25))
                     if positives.size
@@ -493,8 +508,17 @@ def _support_matrix(
                 "response_domain_adstock_over_K": _quantiles(ratio),
                 "current_transform_priors": {
                     "decay_rate": {"distribution": "Beta", "mu": 0.5, "sigma": 0.2},
-                    "hill_K": {"distribution": "Gamma", "alpha": 3.0, "mean": float(K[index])},
-                    "hill_S": {"distribution": "Gamma", "alpha": 4.0, "beta": 4.0, "mean": 1.0},
+                    "hill_K": {
+                        "distribution": "Gamma",
+                        "alpha": 3.0,
+                        "mean": float(K[index]),
+                    },
+                    "hill_S": {
+                        "distribution": "Gamma",
+                        "alpha": 4.0,
+                        "beta": 4.0,
+                        "mean": 1.0,
+                    },
                 },
                 "current_hierarchy_priors": {
                     "mu_channel": {"distribution": "Normal", "mu": -2.5, "sigma": 0.5},
@@ -569,9 +593,15 @@ def _hierarchy_prior_audit(
             for oi, outcome in enumerate(outcomes):
                 x = sigma_values[..., ci].reshape(-1)
                 y = log_beta_values[..., oi, ci].reshape(-1)
-                corr = float(np.corrcoef(x, y)[0, 1]) if np.std(x) and np.std(y) else None
+                corr = (
+                    float(np.corrcoef(x, y)[0, 1]) if np.std(x) and np.std(y) else None
+                )
                 correlations.append(
-                    {"channel": str(channel), "outcome": str(outcome), "corr_sigma_pool_log_beta": corr}
+                    {
+                        "channel": str(channel),
+                        "outcome": str(outcome),
+                        "corr_sigma_pool_log_beta": corr,
+                    }
                 )
         audit["posterior_correlations"][product] = {
             "status": "available",
@@ -746,7 +776,16 @@ def _markdown_report(payload: Mapping[str, Any]) -> str:
     lines.extend(["", "## Support classification thresholds", ""])
     lines.append("```json")
     lines.append(json.dumps(SUPPORT_THRESHOLDS, indent=2, sort_keys=True))
-    lines.extend(["```", "", "Classifications are diagnostics for identifiability only; they are not channel-selection gates.", "", "## C0-C5 ladder", ""])
+    lines.extend(
+        [
+            "```",
+            "",
+            "Classifications are diagnostics for identifiability only; they are not channel-selection gates.",
+            "",
+            "## C0-C5 ladder",
+            "",
+        ]
+    )
     for row in payload["ladder"]:
         lines.append(
             f"- {row['variant']}: {row['status']}; FH divergences={row.get('family_history_divergences')}, DNA divergences={row.get('dna_kit_divergences')}; "
@@ -760,7 +799,9 @@ def _markdown_report(payload: Mapping[str, Any]) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo-root", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument(
+        "--repo-root", type=Path, default=Path(__file__).resolve().parents[1]
+    )
     parser.add_argument("--pack-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--reference-artifacts-dir", type=Path, required=True)
@@ -803,19 +844,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                 target_accept=args.target_accept,
                 seed=args.seed,
             )
-            model_rows = {row.get("model_name"): row for row in result.get("models", [])}
+            model_rows = {
+                row.get("model_name"): row for row in result.get("models", [])
+            }
             ladder_rows.append(
                 {
                     "variant": variant,
                     "status": result["status"],
                     "target_accept": args.target_accept,
                     "seed": args.seed,
-                    "family_history_divergences": model_rows.get("family_history", {}).get("metrics", {}).get("divergences"),
-                    "dna_kit_divergences": model_rows.get("dna_kit", {}).get("metrics", {}).get("divergences"),
+                    "family_history_divergences": model_rows.get("family_history", {})
+                    .get("metrics", {})
+                    .get("divergences"),
+                    "dna_kit_divergences": model_rows.get("dna_kit", {})
+                    .get("metrics", {})
+                    .get("divergences"),
                     "all_models_healthy": bool(
                         result["status"] == "completed"
                         and all(
-                            model_rows.get(product, {}).get("metrics", {}).get("short_screen_healthy", False)
+                            model_rows.get(product, {})
+                            .get("metrics", {})
+                            .get("short_screen_healthy", False)
                             for product in PRODUCTS
                         )
                     ),
@@ -852,11 +901,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         support_rows = _support_matrix(
             reference_root=args.reference_artifacts_dir,
-            localisation_root=args.reference_artifacts_dir / "05_scaled_confirmation_localisation",
+            localisation_root=args.reference_artifacts_dir
+            / "05_scaled_confirmation_localisation",
             semantic_mapping=semantic_mapping,
         )
         pd.DataFrame(support_rows).to_csv(
-            args.output_dir / "support-transform-identifiability-matrix.csv", index=False
+            args.output_dir / "support-transform-identifiability-matrix.csv",
+            index=False,
         )
         _write_json(
             args.output_dir / "support-transform-identifiability-matrix.json",
@@ -873,7 +924,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_dir=args.output_dir,
             reference_root=args.reference_artifacts_dir,
             c1_failed=not next(
-                (row["all_models_healthy"] for row in ladder_rows if row["variant"] == "C1"),
+                (
+                    row["all_models_healthy"]
+                    for row in ladder_rows
+                    if row["variant"] == "C1"
+                ),
                 False,
             ),
         )
@@ -901,14 +956,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "rhat_max": 1.0061802417236916,
                 "ess_min": 712.282014311935,
                 "bfmi_min": 0.8790173893775926,
-                "source": str(args.reference_artifacts_dir / "04_four_chain_scaled_confirmation" / "family_history" / "production-fit-report.json"),
+                "source": str(
+                    args.reference_artifacts_dir
+                    / "04_four_chain_scaled_confirmation"
+                    / "family_history"
+                    / "production-fit-report.json"
+                ),
             },
             "dna_kit": {
                 "divergences": 14,
                 "rhat_max": 1.0054511824505918,
                 "ess_min": 1209.0679479582127,
                 "bfmi_min": 0.9360468012768854,
-                "source": str(args.reference_artifacts_dir / "04_four_chain_scaled_confirmation" / "dna_kit" / "production-fit-report.json"),
+                "source": str(
+                    args.reference_artifacts_dir
+                    / "04_four_chain_scaled_confirmation"
+                    / "dna_kit"
+                    / "production-fit-report.json"
+                ),
             },
         }
         model_status = "blocked_no_production_candidate"
@@ -943,7 +1008,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "frequency": "canonical Sunday-Saturday weeks",
             },
             "reference_metrics": reference_metrics,
-            "support_matrix_path": str(args.output_dir / "support-transform-identifiability-matrix.json"),
+            "support_matrix_path": str(
+                args.output_dir / "support-transform-identifiability-matrix.json"
+            ),
             "ladder": ladder_rows,
             "ladder_semantics": {
                 "short_screen_is_diagnostic_only": True,
@@ -957,7 +1024,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "selected_diagnostic_candidate": candidate,
             "full_confirmation": {
                 "status": "not_run",
-                "reason": "No repeated short-screen candidate passed the required gate." if candidate is None else "Not run in this diagnostic invocation; approval and recovery/full-gate review remain required.",
+                "reason": "No repeated short-screen candidate passed the required gate."
+                if candidate is None
+                else "Not run in this diagnostic invocation; approval and recovery/full-gate review remain required.",
             },
             "model_status": model_status,
             "decision_required": decision,
@@ -966,7 +1035,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "full_production_validation": "not run by this diagnostic harness",
             },
         }
-        _write_json(args.output_dir / "uk-transform-identifiability-report.json", payload)
+        _write_json(
+            args.output_dir / "uk-transform-identifiability-report.json", payload
+        )
         (args.output_dir / "uk-transform-identifiability-report.md").write_text(
             _markdown_report(payload), encoding="utf-8"
         )

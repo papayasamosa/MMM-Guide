@@ -211,7 +211,9 @@ def _run_wp2_5_for_model(
     fold_manifest = run_payload["fold_manifest"]
     mature_fold = _mature_fold_id(fold_manifest)
     transform_sensitivity = (
-        _transform_sensitivity_for_fold(screening_report["surrogate_results"], mature_fold)
+        _transform_sensitivity_for_fold(
+            screening_report["surrogate_results"], mature_fold
+        )
         if mature_fold
         else []
     )

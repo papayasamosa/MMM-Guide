@@ -42,8 +42,8 @@ from ancestry_mmm.core.schema import ModelSpec  # noqa: E402
 from ancestry_mmm.data.preprocessor import prepare_fh_modeling_frame  # noqa: E402
 
 from scripts.run_uk_production_fit import (  # noqa: E402
-    GOVERNED_END,
-    GOVERNED_START,
+    COMMON_WINDOW_END as GOVERNED_END,
+    COMMON_WINDOW_START as GOVERNED_START,
     TARGET_FREQUENCY,
     _add_history,
     _completeness_metadata,
@@ -131,7 +131,9 @@ def _metric_rows(
         "mape_pct": _float(np.mean(np.abs(residual[nonzero] / actual[nonzero])) * 100)
         if nonzero.any()
         else None,
-        "smape_pct": _float(np.mean(np.abs(residual[smape_mask]) / denom[smape_mask]) * 100)
+        "smape_pct": _float(
+            np.mean(np.abs(residual[smape_mask]) / denom[smape_mask]) * 100
+        )
         if smape_mask.any()
         else 0.0,
         "wape_pct": _float(np.sum(np.abs(residual)) / total * 100)
@@ -233,7 +235,9 @@ def _ppc_rows(
             {
                 "outcome_id": outcome_id,
                 "credible_mass": 0.90,
-                "coverage_pct": _float(np.mean((actual >= lower) & (actual <= upper)) * 100),
+                "coverage_pct": _float(
+                    np.mean((actual >= lower) & (actual <= upper)) * 100
+                ),
                 "target_pct": 90.0,
                 "n_predictive_samples": int(draws.shape[1]),
             }
@@ -262,7 +266,10 @@ def _sampling_diagnostics(trace: az.InferenceData) -> dict[str, Any]:
 def _source_readiness(source_dir: Path, output_dir: Path) -> dict[str, Any]:
     paths = (
         ("activity_and_media", source_dir / "activity_data.xlsx"),
-        ("context_and_external_factors", source_dir / "context_and_external_factors_data.xlsx"),
+        (
+            "context_and_external_factors",
+            source_dir / "context_and_external_factors_data.xlsx",
+        ),
         ("outcomes", source_dir / "outcome_data.xlsx"),
     )
     evidence = []
@@ -306,7 +313,9 @@ def _source_readiness(source_dir: Path, output_dir: Path) -> dict[str, Any]:
 
 
 def _current_preparation_audit(source_dir: Path, output_dir: Path) -> dict[str, Any]:
-    activity = pd.read_excel(source_dir / "activity_data.xlsx", sheet_name="activity_data")
+    activity = pd.read_excel(
+        source_dir / "activity_data.xlsx", sheet_name="activity_data"
+    )
     activity_dict = pd.read_excel(
         source_dir / "activity_data.xlsx", sheet_name="activity_dictionary"
     )
@@ -334,7 +343,11 @@ def _current_preparation_audit(source_dir: Path, output_dir: Path) -> dict[str, 
         source_column = measure if measure in activity.columns else "spend"
         scoped = activity[activity["activity_id"].astype(str) == activity_id]
         target = scoped[scoped["period_start"].isin(target_set)]
-        observed = target[source_column].notna() if source_column in target else pd.Series(dtype=bool)
+        observed = (
+            target[source_column].notna()
+            if source_column in target
+            else pd.Series(dtype=bool)
+        )
         missing = int(len(TARGET_DATES) - int(observed.sum()))
         row = {
             "activity_id": activity_id,
@@ -345,12 +358,17 @@ def _current_preparation_audit(source_dir: Path, output_dir: Path) -> dict[str, 
             "currency": record.get("currency"),
             "source_column": source_column,
             "source_rows": int(len(scoped)),
-            "source_start": scoped["period_start"].min().strftime("%Y-%m-%d") if not scoped.empty else None,
-            "source_end": scoped["period_start"].max().strftime("%Y-%m-%d") if not scoped.empty else None,
+            "source_start": scoped["period_start"].min().strftime("%Y-%m-%d")
+            if not scoped.empty
+            else None,
+            "source_end": scoped["period_start"].max().strftime("%Y-%m-%d")
+            if not scoped.empty
+            else None,
             "target_observed_rows": int(observed.sum()),
             "target_missing_rows": missing,
             "target_nonzero_or_variable": bool(
-                observed.any() and target.loc[observed, source_column].nunique(dropna=True) > 1
+                observed.any()
+                and target.loc[observed, source_column].nunique(dropna=True) > 1
             ),
         }
         activity_rows.append(row)
@@ -380,7 +398,9 @@ def _current_preparation_audit(source_dir: Path, output_dir: Path) -> dict[str, 
         if primary_outcomes[column].isna().all()
     ]
     nbt_identity_ok = set(
-        primary_outcomes[primary_outcomes["product"] == "Family History"]["source_column"]
+        primary_outcomes[primary_outcomes["product"] == "Family History"][
+            "source_column"
+        ]
     ) == {
         "fh_net_billthrough_count_new",
         "fh_net_billthrough_count_dna_cross_sell",
@@ -404,9 +424,15 @@ def _current_preparation_audit(source_dir: Path, output_dir: Path) -> dict[str, 
                 "source": record.get("source"),
                 "series_type": record.get("series_type"),
                 "source_rows": int(len(scoped)),
-                "source_start": scoped["period_start"].min().strftime("%Y-%m-%d") if not scoped.empty else None,
-                "source_end": scoped["period_start"].max().strftime("%Y-%m-%d") if not scoped.empty else None,
-                "target_overlap_rows": int(scoped[scoped["period_start"].isin(target_set)].shape[0]),
+                "source_start": scoped["period_start"].min().strftime("%Y-%m-%d")
+                if not scoped.empty
+                else None,
+                "source_end": scoped["period_start"].max().strftime("%Y-%m-%d")
+                if not scoped.empty
+                else None,
+                "target_overlap_rows": int(
+                    scoped[scoped["period_start"].isin(target_set)].shape[0]
+                ),
                 "treatment": "retained native; not consumed without an explicit approved causal/control role",
             }
         )
@@ -438,7 +464,9 @@ def _current_preparation_audit(source_dir: Path, output_dir: Path) -> dict[str, 
                 "source_end": outcomes["period_start"].max().strftime("%Y-%m-%d"),
             },
             "context_and_external_factors": {
-                "sha256": _sha256(source_dir / "context_and_external_factors_data.xlsx"),
+                "sha256": _sha256(
+                    source_dir / "context_and_external_factors_data.xlsx"
+                ),
                 "rows": int(len(context)),
                 "source_start": context["period_start"].min().strftime("%Y-%m-%d"),
                 "source_end": context["period_start"].max().strftime("%Y-%m-%d"),
@@ -446,19 +474,30 @@ def _current_preparation_audit(source_dir: Path, output_dir: Path) -> dict[str, 
         },
         "outcome_identity": {
             "family_history_primary_source_columns": sorted(
-                primary_outcomes[primary_outcomes["product"] == "Family History"]["source_column"].tolist()
+                primary_outcomes[primary_outcomes["product"] == "Family History"][
+                    "source_column"
+                ].tolist()
             ),
             "dna_primary_source_columns": sorted(
-                primary_outcomes[primary_outcomes["product"] == "DNA"]["source_column"].tolist()
+                primary_outcomes[primary_outcomes["product"] == "DNA"][
+                    "source_column"
+                ].tolist()
             ),
             "nbt_identity_ok": bool(nbt_identity_ok),
             "gsa_aliases_present": bool(
                 any("gsa" in str(column).lower() for column in outcomes.columns)
-                or any("gsa" in str(column).lower() for column in outcome_dict["source_column"])
+                or any(
+                    "gsa" in str(column).lower()
+                    for column in outcome_dict["source_column"]
+                )
             ),
             "unresolved_governance_fields": unresolved_outcome_fields,
-            "official_value_weight_status": "unresolved_blank_in_source" if primary_outcomes["include_in_value"].isna().any() else "resolved",
-            "official_optimisation_status": "unresolved_blank_in_source" if primary_outcomes["include_in_optimisation"].isna().any() else "resolved",
+            "official_value_weight_status": "unresolved_blank_in_source"
+            if primary_outcomes["include_in_value"].isna().any()
+            else "resolved",
+            "official_optimisation_status": "unresolved_blank_in_source"
+            if primary_outcomes["include_in_optimisation"].isna().any()
+            else "resolved",
             "approved_run_governance_overlay": {
                 "scope": "five primary UK outcomes only",
                 "role": "primary",
@@ -488,7 +527,9 @@ def _current_preparation_audit(source_dir: Path, output_dir: Path) -> dict[str, 
     return report
 
 
-def _mixed_frequency_report(preparation: Mapping[str, Any], output_dir: Path) -> dict[str, Any]:
+def _mixed_frequency_report(
+    preparation: Mapping[str, Any], output_dir: Path
+) -> dict[str, Any]:
     inventory = preparation["context_inventory"]
     rows = []
     for item in inventory:
@@ -513,7 +554,9 @@ def _mixed_frequency_report(preparation: Mapping[str, Any], output_dir: Path) ->
                 "variable_class": item["variable_class"],
                 "method_id": method,
                 "method_version": 1 if method else None,
-                "status": "diagnostic_only_unresolved" if item.get("role") == "diagnostic" else "decision_required",
+                "status": "diagnostic_only_unresolved"
+                if item.get("role") == "diagnostic"
+                else "decision_required",
                 "treatment": treatment,
                 "source_support": {
                     "start": item.get("source_start"),
@@ -537,7 +580,9 @@ def _mixed_frequency_report(preparation: Mapping[str, Any], output_dir: Path) ->
     return report
 
 
-def _previous_model_inputs(report: Mapping[str, Any], pack: Any) -> list[tuple[str, Any, ModelSpec, dict[str, Any]]]:
+def _previous_model_inputs(
+    report: Mapping[str, Any], pack: Any
+) -> list[tuple[str, Any, ModelSpec, dict[str, Any]]]:
     from ancestry_mmm.data.source_pack_adoption import adopted_model_input_sources
     from ancestry_mmm.core.official_preparation import prepare_canonical_native_frame
 
@@ -562,7 +607,9 @@ def _previous_model_inputs(report: Mapping[str, Any], pack: Any) -> list[tuple[s
     target["period_start"] = pd.to_datetime(target["period_start"])
     target = target[target["period_start"].isin(TARGET_DATES)].copy()
     target = target.sort_values(["market", "period_start"]).reset_index(drop=True)
-    definitions = {item.outcome_id: item for item in pack.outcome_bundle.outcome_definitions}
+    definitions = {
+        item.outcome_id: item for item in pack.outcome_bundle.outcome_definitions
+    }
     results = []
     for model in report["models"]:
         name = model["model_name"]
@@ -586,7 +633,9 @@ def _previous_model_inputs(report: Mapping[str, Any], pack: Any) -> list[tuple[s
             spec,
             outcomes=outcomes,
             activity_definitions=list(pack.activity_bundle.activity_definitions),
-            net_billthrough_metadata=next(iter(_completeness_metadata(definitions.values()).values())),
+            net_billthrough_metadata=next(
+                iter(_completeness_metadata(definitions.values()).values())
+            ),
         )
         frame["preparation_mode"] = "historical_exact_reconstruction"
         history = _add_history(frame, pack.activity_bundle.model_input_media, spec)
@@ -603,7 +652,14 @@ def _previous_model_inputs(report: Mapping[str, Any], pack: Any) -> list[tuple[s
             causal_graph=None,
             search_objects=(),
         )
-        results.append((name, model_result, spec, {"frame": frame, "history": history, "outcomes": outcomes}))
+        results.append(
+            (
+                name,
+                model_result,
+                spec,
+                {"frame": frame, "history": history, "outcomes": outcomes},
+            )
+        )
     return results
 
 
@@ -620,7 +676,13 @@ def _validate_previous_fit(
         name = saved["model_name"]
         trace_path = Path(saved["trace_path"])
         if not trace_path.exists():
-            model_rows.append({"model_name": name, "status": "blocked", "reason": f"posterior missing: {trace_path}"})
+            model_rows.append(
+                {
+                    "model_name": name,
+                    "status": "blocked",
+                    "reason": f"posterior missing: {trace_path}",
+                }
+            )
             continue
         old_posterior_hashes[name] = _sha256(trace_path)
         model_result, prepared = by_name[name][1], by_name[name][3]
@@ -691,46 +753,77 @@ def _validate_previous_fit(
             "loo_waic_error": density_error,
             "prior_predictive": prior,
             "prior_predictive_error": prior_error,
-            "rolling_origin": {"status": "not_run", "reason": "would require refitting the previous model; prohibited by the retrospective validation brief"},
-            "structural_stability": {"status": "not_run", "reason": "requires additional fits or saved fold posteriors; not inferred from one posterior"},
+            "rolling_origin": {
+                "status": "not_run",
+                "reason": "would require refitting the previous model; prohibited by the retrospective validation brief",
+            },
+            "structural_stability": {
+                "status": "not_run",
+                "reason": "requires additional fits or saved fold posteriors; not inferred from one posterior",
+            },
         }
         _write_json(model_dir / "validation.json", payload)
-        pd.DataFrame(metrics["point_metrics"]).to_csv(model_dir / "outcome_metrics.csv", index=False)
-        pd.DataFrame(metrics["bayesian_r2"]).to_csv(model_dir / "bayesian_r2.csv", index=False)
-        pd.DataFrame(metrics["residual_temporal"]).to_csv(model_dir / "residual_temporal.csv", index=False)
+        pd.DataFrame(metrics["point_metrics"]).to_csv(
+            model_dir / "outcome_metrics.csv", index=False
+        )
+        pd.DataFrame(metrics["bayesian_r2"]).to_csv(
+            model_dir / "bayesian_r2.csv", index=False
+        )
+        pd.DataFrame(metrics["residual_temporal"]).to_csv(
+            model_dir / "residual_temporal.csv", index=False
+        )
         pd.DataFrame(ppc_rows).to_csv(model_dir / "ppc_coverage.csv", index=False)
         model_rows.append(
             {
                 "model_name": name,
                 "status": payload["status"],
-                "exact_structural_identity_match": payload["reconstruction"]["exact_structural_identity_match"],
-                "trace_sha256_unchanged": payload["previous_fit_trace_sha256_before"] == payload["previous_fit_trace_sha256_after"],
+                "exact_structural_identity_match": payload["reconstruction"][
+                    "exact_structural_identity_match"
+                ],
+                "trace_sha256_unchanged": payload["previous_fit_trace_sha256_before"]
+                == payload["previous_fit_trace_sha256_after"],
                 "divergences": diagnostics.get("divergences"),
                 "rhat_max": diagnostics.get("rhat_max"),
                 "ess_min": diagnostics.get("ess_min"),
-                "ppc_mean_coverage_pct": _float(np.mean([row["coverage_pct"] for row in ppc_rows])),
-                "loo_waic_status": "computed" if density is not None else "unsupported_or_failed",
+                "ppc_mean_coverage_pct": _float(
+                    np.mean([row["coverage_pct"] for row in ppc_rows])
+                ),
+                "loo_waic_status": "computed"
+                if density is not None
+                else "unsupported_or_failed",
             }
         )
         outcome_rows.extend(
             [{"model_name": name, **row} for row in metrics["point_metrics"]]
         )
     result = {
-        "status": "completed" if all(row["status"] == "validated_without_refit" for row in model_rows) else "partial_or_blocked",
+        "status": "completed"
+        if all(row["status"] == "validated_without_refit" for row in model_rows)
+        else "partial_or_blocked",
         "previous_fit_report": str(PREVIOUS_REPORT),
         "source_pack": str(pack_dir),
         "models": model_rows,
         "immutable_previous_fit_check": {
-            "status": "pass" if all(row.get("trace_sha256_unchanged") for row in model_rows) else "fail",
+            "status": "pass"
+            if all(row.get("trace_sha256_unchanged") for row in model_rows)
+            else "fail",
             "posterior_hashes": old_posterior_hashes,
         },
     }
     _write_json(output_dir / "previous-fit-validation.json", result)
-    pd.DataFrame(outcome_rows).to_csv(output_dir / "previous-fit-validation.csv", index=False)
+    pd.DataFrame(outcome_rows).to_csv(
+        output_dir / "previous-fit-validation.csv", index=False
+    )
     return result
 
 
-def _write_markdown_reports(output_dir: Path, prep: Mapping[str, Any], previous: Mapping[str, Any], revised: Mapping[str, Any], comparison: Mapping[str, Any]) -> None:
+def _write_markdown_reports(
+    output_dir: Path,
+    prep: Mapping[str, Any],
+    previous: Mapping[str, Any],
+    revised: Mapping[str, Any],
+    comparison: Mapping[str, Any],
+) -> None:
     blocker_lines = [
         f"- `{item['activity_id']}` / `{item['model_input_column']}`: {item['missing_target_weeks']} target weeks missing; source ends {item.get('source_end')}."
         for item in prep.get("required_fit_coverage_blockers", [])
@@ -746,7 +839,10 @@ def _write_markdown_reports(output_dir: Path, prep: Mapping[str, Any], previous:
         "## Required fit blockers\n\n"
         + ("\n".join(blocker_lines) if blocker_lines else "None.")
         + "\n\n## Governance questions left unresolved\n\n"
-        + "\n".join(f"- `{item}`" for item in prep["outcome_identity"].get("unresolved_governance_fields", []))
+        + "\n".join(
+            f"- `{item}`"
+            for item in prep["outcome_identity"].get("unresolved_governance_fields", [])
+        )
         + "\n",
         encoding="utf-8",
     )
@@ -773,11 +869,15 @@ def _write_markdown_reports(output_dir: Path, prep: Mapping[str, Any], previous:
     )
 
 
-def _write_plots(output_dir: Path, prep: Mapping[str, Any], previous: Mapping[str, Any]) -> None:
+def _write_plots(
+    output_dir: Path, prep: Mapping[str, Any], previous: Mapping[str, Any]
+) -> None:
     try:
         import matplotlib.pyplot as plt
     except Exception as exc:
-        _write_json(output_dir / "plots.json", {"status": "unavailable", "error": str(exc)})
+        _write_json(
+            output_dir / "plots.json", {"status": "unavailable", "error": str(exc)}
+        )
         return
     rows = prep.get("activity_coverage", [])
     if rows:
@@ -792,10 +892,19 @@ def _write_plots(output_dir: Path, prep: Mapping[str, Any], previous: Mapping[st
         fig.tight_layout()
         fig.savefig(output_dir / "plots" / "updated-activity-coverage.png", dpi=140)
         plt.close(fig)
-    _write_json(output_dir / "plots.json", {"status": "written", "files": ["plots/updated-activity-coverage.png"]})
+    _write_json(
+        output_dir / "plots.json",
+        {"status": "written", "files": ["plots/updated-activity-coverage.png"]},
+    )
 
 
-def run(*, source_dir: Path, previous_pack_dir: Path, previous_report_path: Path, output_dir: Path) -> dict[str, Any]:
+def run(
+    *,
+    source_dir: Path,
+    previous_pack_dir: Path,
+    previous_report_path: Path,
+    output_dir: Path,
+) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     prep = _current_preparation_audit(source_dir, output_dir)
     source_gate = _source_readiness(source_dir, output_dir)
@@ -807,17 +916,24 @@ def run(*, source_dir: Path, previous_pack_dir: Path, previous_report_path: Path
     if cached_previous.exists():
         cached = _read_json(cached_previous)
         if cached.get("status") == "completed" and all(
-            _read_json(output_dir / "previous-fit-validation" / name / "validation.json").get(
-                "validation_schema_version"
-            ) == 2
+            _read_json(
+                output_dir / "previous-fit-validation" / name / "validation.json"
+            ).get("validation_schema_version")
+            == 2
             for name in ("family_history", "dna_kit")
-            if (output_dir / "previous-fit-validation" / name / "validation.json").exists()
+            if (
+                output_dir / "previous-fit-validation" / name / "validation.json"
+            ).exists()
         ):
             previous = cached
         else:
-            previous = _validate_previous_fit(previous_report, previous_pack_dir, output_dir)
+            previous = _validate_previous_fit(
+                previous_report, previous_pack_dir, output_dir
+            )
     else:
-        previous = _validate_previous_fit(previous_report, previous_pack_dir, output_dir)
+        previous = _validate_previous_fit(
+            previous_report, previous_pack_dir, output_dir
+        )
     mediation = {
         "status": "blocked_for_current_uk_fit",
         "engine": "PyMC observed mediation capability implemented and synthetic graph/model tests available",
@@ -845,7 +961,13 @@ def run(*, source_dir: Path, previous_pack_dir: Path, previous_report_path: Path
         },
     }
     _write_json(output_dir / "mediation-specification.json", mediation)
-    _write_json(output_dir / "mediation-validation.json", {"status": "synthetic_capability_tests_pending_or_run_in_repo", "specification": mediation})
+    _write_json(
+        output_dir / "mediation-validation.json",
+        {
+            "status": "synthetic_capability_tests_pending_or_run_in_repo",
+            "specification": mediation,
+        },
+    )
 
     revised = {
         "status": "blocked",
@@ -873,13 +995,37 @@ def run(*, source_dir: Path, previous_pack_dir: Path, previous_report_path: Path
                 }
             ]
         ).to_csv(model_dir / "posterior_summary.csv", index=False)
-    _write_json(output_dir / "revised-validation.json", {"status": "not_run", "reason": revised["reason"]})
-    _write_json(output_dir / "ppc.json", {"previous": "computed_in_previous-fit-validation", "revised": "not_run"})
-    _write_json(output_dir / "residual-diagnostics.json", {"previous": "computed_in_previous-fit-validation", "revised": "not_run"})
-    _write_json(output_dir / "prior-posterior.json", {"previous": "computed_in_previous-fit-validation", "revised": "not_run"})
-    _write_json(output_dir / "rolling-origin.json", {"previous": "not_run_without_refit", "revised": "blocked_by_preparation"})
-    _write_json(output_dir / "structural-stability.json", {"previous": "not_run_without_fold_posteriors", "revised": "blocked_by_preparation"})
-    _write_json(output_dir / "specification-sensitivity.json", {"status": "not_run", "reason": "revised model was blocked before fitting"})
+    _write_json(
+        output_dir / "revised-validation.json",
+        {"status": "not_run", "reason": revised["reason"]},
+    )
+    _write_json(
+        output_dir / "ppc.json",
+        {"previous": "computed_in_previous-fit-validation", "revised": "not_run"},
+    )
+    _write_json(
+        output_dir / "residual-diagnostics.json",
+        {"previous": "computed_in_previous-fit-validation", "revised": "not_run"},
+    )
+    _write_json(
+        output_dir / "prior-posterior.json",
+        {"previous": "computed_in_previous-fit-validation", "revised": "not_run"},
+    )
+    _write_json(
+        output_dir / "rolling-origin.json",
+        {"previous": "not_run_without_refit", "revised": "blocked_by_preparation"},
+    )
+    _write_json(
+        output_dir / "structural-stability.json",
+        {
+            "previous": "not_run_without_fold_posteriors",
+            "revised": "blocked_by_preparation",
+        },
+    )
+    _write_json(
+        output_dir / "specification-sensitivity.json",
+        {"status": "not_run", "reason": "revised model was blocked before fitting"},
+    )
     comparison = {
         "status": "incomplete_due_to_revised_fit_blocker",
         "previous_status": previous["status"],
@@ -892,8 +1038,16 @@ def run(*, source_dir: Path, previous_pack_dir: Path, previous_report_path: Path
     _write_json(output_dir / "historical-comparison.json", comparison)
     pd.DataFrame(
         [
-            {"model_name": "family_history", "previous_status": previous["models"][0]["status"], "revised_status": "blocked"},
-            {"model_name": "dna_kit", "previous_status": previous["models"][1]["status"], "revised_status": "blocked"},
+            {
+                "model_name": "family_history",
+                "previous_status": previous["models"][0]["status"],
+                "revised_status": "blocked",
+            },
+            {
+                "model_name": "dna_kit",
+                "previous_status": previous["models"][1]["status"],
+                "revised_status": "blocked",
+            },
         ]
     ).to_csv(output_dir / "historical-comparison.csv", index=False)
     _write_markdown_reports(output_dir, prep, previous, revised, comparison)

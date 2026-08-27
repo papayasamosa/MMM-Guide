@@ -40,6 +40,8 @@ jobs:
       - run: uv sync --locked
       - name: Compile package
         run: uv run python -m compileall -q ancestry_mmm
+      - name: Compile decision-critical/evidence scripts (WP2, issue tracked in docs/decision_critical_scripts_inventory.md)
+        run: uv run python -m compileall -q scripts
       - name: Import critical modules
         run: |
           uv run python -c "import ancestry_mmm.core.validation_policy"
@@ -448,9 +450,9 @@ jobs:
           cache-dependency-glob: "uv.lock"
       - run: uv sync --locked
       - name: Run ruff check
-        run: uv run ruff check ancestry_mmm
+        run: uv run ruff check ancestry_mmm scripts
       - name: Run ruff format check
-        run: uv run ruff format --check ancestry_mmm
+        run: uv run ruff format --check ancestry_mmm scripts
 
   # -- Mypy type checking ---------------------------------------------
   mypy:

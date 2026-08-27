@@ -346,7 +346,9 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Wrote WP2.6 control-prior calibration evidence to {args.output_dir}")
     for model_name in results:
-        print(f"  {model_name}: control profile + {len(CONTROL_SIGMA_GRID)}-point grid computed")
+        print(
+            f"  {model_name}: control profile + {len(CONTROL_SIGMA_GRID)}-point grid computed"
+        )
     return 0
 
 

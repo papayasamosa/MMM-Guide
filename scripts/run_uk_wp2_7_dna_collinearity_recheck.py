@@ -216,8 +216,7 @@ def _analyse_dna(frame: dict[str, Any]) -> dict[str, Any]:
                             )
                         )
                         if any(
-                            c is not None
-                            for c in other_channel_correlations.values()
+                            c is not None for c in other_channel_correlations.values()
                         )
                         else None
                     ),
