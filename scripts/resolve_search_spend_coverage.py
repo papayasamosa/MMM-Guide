@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import pandas as pd
 
-from ancestry_mmm.core.search_preparation import (
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from ancestry_mmm.core.search_preparation import (  # noqa: E402
     product_search_bindings,
     resolve_product_search_spend_coverage,
 )

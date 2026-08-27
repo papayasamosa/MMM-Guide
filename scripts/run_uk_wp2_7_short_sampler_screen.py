@@ -114,14 +114,16 @@ def _flatten_named(values: dict[str, Any], coord: list[str] | None) -> dict[str,
         if array.ndim == 0:
             out[name] = float(array)
             continue
-        last_axis_labels = (
-            coord if coord and len(coord) == array.shape[-1] else None
-        )
+        last_axis_labels = coord if coord and len(coord) == array.shape[-1] else None
         for index in np.ndindex(array.shape):
             if last_axis_labels is not None:
                 index_label = ",".join(str(i) for i in index[:-1])
                 label = last_axis_labels[index[-1]]
-                key = f"{name}[{index_label},{label}]" if index_label else f"{name}[{label}]"
+                key = (
+                    f"{name}[{index_label},{label}]"
+                    if index_label
+                    else f"{name}[{label}]"
+                )
             else:
                 key = f"{name}[{','.join(str(i) for i in index)}]"
             out[key] = float(array[index])

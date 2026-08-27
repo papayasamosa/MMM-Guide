@@ -122,9 +122,13 @@ def _param_variable_and_label(key: str) -> tuple[str, str | None]:
 def _quantiles(values: np.ndarray) -> dict[str, float]:
     finite = values[np.isfinite(values)]
     if finite.size == 0:
-        return {q: float("nan") for q in ("q01", "q05", "q25", "q50", "q75", "q95", "q99")}
+        return {
+            q: float("nan") for q in ("q01", "q05", "q25", "q50", "q75", "q95", "q99")
+        }
     qs = np.quantile(finite, [0.01, 0.05, 0.25, 0.50, 0.75, 0.95, 0.99])
-    return dict(zip(("q01", "q05", "q25", "q50", "q75", "q95", "q99"), (float(q) for q in qs)))
+    return dict(
+        zip(("q01", "q05", "q25", "q50", "q75", "q95", "q99"), (float(q) for q in qs))
+    )
 
 
 def _sampler_pathology(idata: az.InferenceData) -> dict[str, Any]:
@@ -142,7 +146,9 @@ def _sampler_pathology(idata: az.InferenceData) -> dict[str, Any]:
         out["max_tree_depth_observed"] = int(depths.max())
         out["max_tree_depth_configured"] = 10
         out["n_draws_at_max_tree_depth_total"] = int(np.sum(depths >= 10))
-        out["n_draws_at_max_tree_depth_by_chain"] = np.sum(depths >= 10, axis=1).tolist()
+        out["n_draws_at_max_tree_depth_by_chain"] = np.sum(
+            depths >= 10, axis=1
+        ).tolist()
     if "acceptance_rate" in stats:
         out["mean_acceptance_rate_by_chain"] = (
             stats["acceptance_rate"].mean(dim="draw").values.tolist()
@@ -213,7 +219,9 @@ def _convergence_summary(
             "ess_bulk_min": min(
                 ess_bulk_by_param[k] for k in matched if k in ess_bulk_by_param
             ),
-            "worst_params": sorted(matched.items(), key=lambda kv: kv[1], reverse=True)[:5],
+            "worst_params": sorted(matched.items(), key=lambda kv: kv[1], reverse=True)[
+                :5
+            ],
         }
 
     sparse_present = {c for c in channel_coord if c in SPARSE_CHANNELS}
@@ -224,7 +232,9 @@ def _convergence_summary(
         "rhat_distribution": _quantiles(rhat_values),
         "ess_bulk_min": diagnostics["ess_min"],
         "ess_bulk_distribution": _quantiles(ess_bulk_values),
-        "ess_tail_min": float(np.min(ess_tail_values)) if ess_tail_values.size else None,
+        "ess_tail_min": float(np.min(ess_tail_values))
+        if ess_tail_values.size
+        else None,
         "ess_tail_distribution": _quantiles(ess_tail_values),
         "divergences": diagnostics["divergences"],
         "converged_per_pymc_default_threshold": diagnostics["converged"],
@@ -327,10 +337,12 @@ def _seasonality_summary(
             amplitude = eta_season_draws.max(axis=0) - eta_season_draws.min(axis=0)
             amplitude_by_outcome[oid] = _quantiles(amplitude)
             coef_by_outcome[oid] = {
-                f"fourier_{i}": _quantiles(flat[:, i, o_idx])
-                for i in range(n_fourier)
+                f"fourier_{i}": _quantiles(flat[:, i, o_idx]) for i in range(n_fourier)
             }
-        return {"amplitude_by_outcome": amplitude_by_outcome, "coefficients_by_outcome": coef_by_outcome}
+        return {
+            "amplitude_by_outcome": amplitude_by_outcome,
+            "coefficients_by_outcome": coef_by_outcome,
+        }
 
     return {
         "prior": _amplitude_and_coefs(prior),
@@ -349,7 +361,9 @@ def _competition_check(
     out: dict[str, Any] = {}
     if "eta_season" not in post:
         return out
-    season_mean = post["eta_season"].mean(dim=("chain", "draw")).values  # (obs, outcome)
+    season_mean = (
+        post["eta_season"].mean(dim=("chain", "draw")).values
+    )  # (obs, outcome)
     for other in ("eta_trend", "eta_channels", "eta_controls"):
         if other not in post:
             continue
@@ -419,7 +433,13 @@ def _evaluate_model(
         prior_idata = pm.sample_prior_predictive(
             draws=8000,
             random_seed=seed,
-            var_names=["decay_rate", "hill_K", "hill_S", "gamma_fourier", "control_coef"],
+            var_names=[
+                "decay_rate",
+                "hill_K",
+                "hill_S",
+                "gamma_fourier",
+                "control_coef",
+            ],
         )
 
     convergence = _convergence_summary(posterior, channel_coord, control_coord)
@@ -434,7 +454,9 @@ def _evaluate_model(
     scorecard = compute_scorecard(posterior, frame, proposed.meta)
     residuals = residual_temporal_diagnostics(frame, proposed.meta, params)
     error_metrics = error_metrics_by_outcome(frame, proposed.meta, params)
-    actual_vs_predicted = _actual_vs_predicted(frame, proposed.meta, params, outcome_ids)
+    actual_vs_predicted = _actual_vs_predicted(
+        frame, proposed.meta, params, outcome_ids
+    )
 
     result = {
         "model_name": model_name,
@@ -457,7 +479,9 @@ def _evaluate_model(
         "residual_temporal_diagnostics": residuals.to_dict(orient="records"),
         "actual_vs_predicted": actual_vs_predicted,
     }
-    _write_json(output_dir / f"wp2_8_full_posterior_evaluation_{model_name}.json", result)
+    _write_json(
+        output_dir / f"wp2_8_full_posterior_evaluation_{model_name}.json", result
+    )
     return result
 
 

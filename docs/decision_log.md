@@ -7574,3 +7574,71 @@ tests.
 **Status:** Implemented. The current UK activity-data review and the
 WP2.11 hierarchy-default decision remain open and unaffected by this
 package.
+
+---
+
+**Date:** 2026-08-27
+**Decision:** Implement Work Package 2 (`Media-Mix-Lab Coding LLM Next
+Steps 2026-08-27`): add lightweight CI coverage for the 33
+`scripts/*.py` decision-critical/evidence scripts, previously entirely
+outside the `Ruff`/`Compile + Import` gates (which targeted `ancestry_mmm`
+only). New `docs/decision_critical_scripts_inventory.md` classifies every
+script as reusable-operational (11) or historical one-off (22, one
+superseded), and documents the three-tier CI boundary (ordinary package
+CI / this lightweight evidence-script CI / expensive scheduled-manual
+recovery evidence, unchanged). `Ruff` and `Compile + Import` now also
+target `scripts` (same job names, broader scope - no merge-gate script
+change needed). New `ancestry_mmm/tests/test_decision_critical_scripts_
+ci_coverage.py`: an import-only smoke test for every script (33 cases),
+plus a real `--help` CLI subprocess smoke test for the 11 reusable-
+operational scripts, plus two anti-drift guards.
+
+Making this coverage real, rather than only adding it, found and fixed
+two genuine pre-existing defects the same pass: `scripts/run_historical_
+mmm_validation.py` imported `GOVERNED_START`/`GOVERNED_END` from
+`scripts.run_uk_production_fit` - names that script had since renamed to
+`COMMON_WINDOW_START`/`COMMON_WINDOW_END` - a broken import that made the
+whole script uninvokable; and three scripts (`resolve_search_spend_
+coverage.py`, `run_historical_mmm_remediation.py`, `run_uk_transform_
+identifiability_experiment.py`) were missing the `sys.path` shim every
+other script already carries, so `python scripts/<name>.py` (the exact
+invocation style already used elsewhere, e.g. `run_uk_readiness.py` in
+`.github/workflows/tests.yml`) would fail with `ModuleNotFoundError: No
+module named 'ancestry_mmm'`. Also confirmed, and documented, that every
+hierarchy-challenger script builds its diagnostic `prior_config` as a
+shallow copy of `scripts.run_uk_production_fit.APPROVED_UK_MODEL_A_
+PRIOR_CONFIG`, never mutating it in place - a diagnostic challenger
+cannot silently change the production default for any other caller.
+
+**Reason:** WP2's own brief requires preventing exactly this kind of
+silent drift for scripts that directly influence model decisions, without
+forcing every historical one-off script into a production-quality
+package or running real data/expensive MCMC in blocking CI.
+
+**Alternatives considered:** Renaming every `GOVERNED_START`/`GOVERNED_
+END` use-site in `run_historical_mmm_validation.py` to the current names
+(rejected - a straight import alias is the smaller, equally correct diff,
+and the local name `GOVERNED_START`/`GOVERNED_END` remains meaningful
+within that file); giving every historical one-off script the same
+`--help` CLI subprocess smoke test as the reusable tier (rejected - two
+of them have no `argparse` CLI at all and would hang or run real logic on
+`--help`, and forcing a CLI contract onto a genuinely one-shot script
+contradicts the brief's own "do not force every historical script into a
+production-quality package"); adding a brand-new CI job instead of
+extending `Ruff`/`Compile + Import` (rejected - extending the existing
+job names keeps `scripts/wait_for_pr_green_then_merge.ps1`'s required-
+checks list unchanged, avoiding an unrelated merge-gate-script edit).
+
+**Impact:** `.github/workflows/tests.yml` (`Ruff`/`Compile + Import` jobs
+extended to `scripts`), `docs/decision_critical_scripts_inventory.md`
+(new), `ancestry_mmm/tests/test_decision_critical_scripts_ci_coverage.py`
+(new, 46 tests), `scripts/run_historical_mmm_validation.py` (import fix),
+`scripts/resolve_search_spend_coverage.py`/`run_historical_mmm_
+remediation.py`/`run_uk_transform_identifiability_experiment.py`
+(`sys.path` shim added), 9 further scripts reformatted (whitespace only,
+`ruff format`, no behaviour change). No `ancestry_mmm/core`,
+`ancestry_mmm/application`, or `ancestry_mmm/pages` code changed; no
+statistical/causal/business semantics changed; no real Ancestry data or
+expensive MCMC added to blocking CI.
+**Owner:** Platform engineering, implemented autonomously.
+**Status:** Implemented.

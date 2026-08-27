@@ -16,6 +16,7 @@ import argparse
 import hashlib
 import json
 import math
+import sys
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -23,15 +24,18 @@ import arviz as az
 import numpy as np
 import pandas as pd
 
-from ancestry_mmm.core.frequency_alignment import AlignmentSpecification
-from ancestry_mmm.core.frequency_conversion import (
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from ancestry_mmm.core.frequency_alignment import AlignmentSpecification  # noqa: E402
+from ancestry_mmm.core.frequency_conversion import (  # noqa: E402
     FrequencyConversionError,
     execute_frequency_conversion,
 )
-from ancestry_mmm.core.identification_diagnostics import (
+from ancestry_mmm.core.identification_diagnostics import (  # noqa: E402
     equation_identification_diagnostics,
 )
-from ancestry_mmm.core.transformations import (
+from ancestry_mmm.core.transformations import (  # noqa: E402
     geometric_adstock_matrix,
     hill_function,
 )
@@ -179,7 +183,11 @@ def reconcile_activity_coverage(
                 "activity_id": activity_id,
                 "raw_mapping": (
                     raw_record.iloc[0][
-                        ["model_input_column", "model_input_measure", "model_input_unit"]
+                        [
+                            "model_input_column",
+                            "model_input_measure",
+                            "model_input_unit",
+                        ]
                     ].to_dict()
                     if not raw_record.empty
                     else None
@@ -209,7 +217,9 @@ def reconcile_activity_coverage(
             raw_present = date_value in raw_activity.index
             approved_present = date_value in approved_activity.index
             value = (
-                pd.to_numeric(approved_activity.loc[date_value, measure], errors="coerce")
+                pd.to_numeric(
+                    approved_activity.loc[date_value, measure], errors="coerce"
+                )
                 if approved_present and measure in approved_activity.columns
                 else np.nan
             )
@@ -243,7 +253,9 @@ def reconcile_activity_coverage(
                 raw_activity.loc[date_value, measure]
             ):
                 classification = (
-                    "excluded_from_model" if not required_models else "source_unavailable"
+                    "excluded_from_model"
+                    if not required_models
+                    else "source_unavailable"
                 )
                 raw_state = "existing_row_null_selected_delivery"
                 previous_state = "existing_row_null_remains_missing"
@@ -430,7 +442,9 @@ def migrate_nbt_governance(
                     "value_currency": None,
                 },
                 "migration_status": (
-                    "decision_required" if unresolved else "migrated_from_previous_approved_registry"
+                    "decision_required"
+                    if unresolved
+                    else "migrated_from_previous_approved_registry"
                 ),
                 "unresolved_fields": unresolved,
                 "raw_source_unchanged": True,
@@ -438,7 +452,9 @@ def migrate_nbt_governance(
         )
     report = {
         "schema_version": 1,
-        "status": "resolved" if not any(row["unresolved_fields"] for row in rows) else "partially_resolved",
+        "status": "resolved"
+        if not any(row["unresolved_fields"] for row in rows)
+        else "partially_resolved",
         "raw_outcome_sha256": _sha256(source_dir / "outcome_data.xlsx"),
         "lineage": rows,
         "gsa_aliases_in_corrected_identity": False,
@@ -491,7 +507,9 @@ def _max_mcse(trace: az.InferenceData) -> float | None:
         return None
 
 
-def complete_previous_validation(previous_dir: Path, output_dir: Path) -> dict[str, Any]:
+def complete_previous_validation(
+    previous_dir: Path, output_dir: Path
+) -> dict[str, Any]:
     """Reformat existing posterior validation into the requested full scorecard."""
 
     old_root = previous_dir / "previous-fit-validation"
@@ -506,7 +524,11 @@ def complete_previous_validation(previous_dir: Path, output_dir: Path) -> dict[s
         trace = az.from_netcdf(trace_path)
         diagnostics = payload.get("sampling_diagnostics") or {}
         sample_stats = trace.sample_stats
-        max_tree_depth = int(sample_stats.tree_depth.max().values) if "tree_depth" in sample_stats else None
+        max_tree_depth = (
+            int(sample_stats.tree_depth.max().values)
+            if "tree_depth" in sample_stats
+            else None
+        )
         tree_depth_hits = (
             int((sample_stats.tree_depth.values == max_tree_depth).sum())
             if max_tree_depth is not None
@@ -553,7 +575,9 @@ def complete_previous_validation(previous_dir: Path, output_dir: Path) -> dict[s
                 "rmse": point.get("rmse"),
                 "mape_pct": point.get("mape_pct") if mape_valid else None,
                 "mape_status": "valid" if mape_valid else "not_applicable",
-                "mape_reason": "none" if mape_valid else "all observed outcomes are zero or near-zero",
+                "mape_reason": "none"
+                if mape_valid
+                else "all observed outcomes are zero or near-zero",
                 "smape_pct": point.get("smape_pct"),
                 "wape_pct": point.get("wape_pct"),
                 "bias": point.get("bias"),
@@ -592,7 +616,9 @@ def complete_previous_validation(previous_dir: Path, output_dir: Path) -> dict[s
             },
             "diagnostics": model_diag,
             "ppc_summary": {
-                "mean_coverage_pct": float(np.mean([r["ppc_coverage_pct"] for r in model_score_rows])),
+                "mean_coverage_pct": float(
+                    np.mean([r["ppc_coverage_pct"] for r in model_score_rows])
+                ),
                 "nominal_interval": 0.90,
                 "pointwise_across_weeks": True,
                 "averaged_across_outcomes": True,
@@ -605,7 +631,11 @@ def complete_previous_validation(previous_dir: Path, output_dir: Path) -> dict[s
         }
         model_rows.append(model_payload)
         after = _sha256(trace_path)
-        hashes[model_name] = {"before": before, "after": after, "unchanged": before == after}
+        hashes[model_name] = {
+            "before": before,
+            "after": after,
+            "unchanged": before == after,
+        }
 
     result = {
         "schema_version": 1,
@@ -633,7 +663,10 @@ def complete_previous_validation(previous_dir: Path, output_dir: Path) -> dict[s
     for row in score_rows:
         lines.append(
             "| {model_name} | {outcome_label} | {r_squared:.4f} | {bayesian_r2_mean:.4f} | {mae:.2f} | {rmse:.2f} | {mape_pct:.2f} | {smape_pct:.2f} | {wape_pct:.2f} | {bias:.2f} | {durbin_watson:.3f} | {lag1_residual_autocorrelation:.3f} | {ljung_box_pvalue:.4g} | {ppc_coverage_pct:.2f}% |".format(
-                **{key: ("n/a" if value is None else value) for key, value in row.items()}
+                **{
+                    key: ("n/a" if value is None else value)
+                    for key, value in row.items()
+                }
             )
         )
     (output_dir / "previous-fit-validation-complete.md").write_text(
@@ -728,8 +761,14 @@ def mixed_frequency_preparation(source_dir: Path, output_dir: Path) -> dict[str,
             if native == "monthly" and variable_class == "flow_count":
                 target_start = pd.Timestamp(GOVERNED_START)
                 target_end = pd.Timestamp(GOVERNED_END) + pd.Timedelta(days=6)
-                source_month_start = scoped["period_start"].dt.to_period("M").dt.start_time.dt.normalize()
-                source_month_end = scoped["period_start"].dt.to_period("M").dt.end_time.dt.normalize()
+                source_month_start = (
+                    scoped["period_start"]
+                    .dt.to_period("M")
+                    .dt.start_time.dt.normalize()
+                )
+                source_month_end = (
+                    scoped["period_start"].dt.to_period("M").dt.end_time.dt.normalize()
+                )
                 execution_source = scoped[
                     (source_month_end >= target_start)
                     & (scoped["period_start"] <= target_end)
@@ -781,7 +820,9 @@ def mixed_frequency_preparation(source_dir: Path, output_dir: Path) -> dict[str,
             except (FrequencyConversionError, ValueError) as exc:
                 if prepared:
                     row["prepared"] = False
-                    row["reason"] = f"Executor failed closed: {type(exc).__name__}: {exc}"
+                    row["reason"] = (
+                        f"Executor failed closed: {type(exc).__name__}: {exc}"
+                    )
                 executions.append(
                     {
                         "variable_id": variable_id,
@@ -838,15 +879,27 @@ def context_role_report(source_dir: Path) -> list[dict[str, Any]]:
         series_type = str(record.get("series_type") or "")
         variable_class = str(record.get("variable_class") or "")
         if "brand_search_interest" in variable_id or "category_demand" in variable_id:
-            role, justification = "demand_proxy", "Potentially endogenous search/category demand; diagnostic until graph approval."
+            role, justification = (
+                "demand_proxy",
+                "Potentially endogenous search/category demand; diagnostic until graph approval.",
+            )
         elif "web_visits" in variable_id or "aided_brand_awareness" in variable_id:
-            role, justification = "diagnostic_only", "Funnel or survey state may be downstream of media; no approved mediator equation yet."
+            role, justification = (
+                "diagnostic_only",
+                "Funnel or survey state may be downstream of media; no approved mediator equation yet.",
+            )
         elif variable_class in {"rate_index", "flow_count"} and (
             variable_id.startswith("uk_") or "competitor" in series_type
         ):
-            role, justification = "control", "Candidate exogenous macro/category context, subject to source coverage, timing, and graph approval."
+            role, justification = (
+                "control",
+                "Candidate exogenous macro/category context, subject to source coverage, timing, and graph approval.",
+            )
         else:
-            role, justification = "diagnostic_only", "No approved causal edge or model equation currently consumes this variable."
+            role, justification = (
+                "diagnostic_only",
+                "No approved causal edge or model equation currently consumes this variable.",
+            )
         rows.append(
             {
                 "variable": variable_id,
@@ -910,7 +963,9 @@ def build_search_review(output_dir: Path) -> dict[str, Any]:
     return report
 
 
-def build_candidate_graph(output_dir: Path, activity_channels: Sequence[str]) -> dict[str, Any]:
+def build_candidate_graph(
+    output_dir: Path, activity_channels: Sequence[str]
+) -> dict[str, Any]:
     """Create a draft candidate graph without inventing upstream edges."""
 
     media_nodes = [
@@ -924,36 +979,48 @@ def build_candidate_graph(output_dir: Path, activity_channels: Sequence[str]) ->
         for channel in activity_channels
     ]
     outcomes = [
-        {"node_id": outcome, "label": label, "role": "outcome", "product": "Family History" if outcome.startswith("fh_") else "DNA"}
+        {
+            "node_id": outcome,
+            "label": label,
+            "role": "outcome",
+            "product": "Family History" if outcome.startswith("fh_") else "DNA",
+        }
         for outcome, label in NBT_LABELS.items()
     ]
-    nodes = media_nodes + outcomes + [
-        {
-            "node_id": "paid_brand_search_spend",
-            "label": "Paid Brand Search spend (GBP)",
-            "role": "intervention",
-            "search_object_id": "paid_search_spend",
-        },
-        {
-            "node_id": "paid_brand_search_clicks",
-            "label": "Paid Brand Search clicks/delivery",
-            "role": "mediator",
-            "search_object_id": "paid_search_delivery",
-        },
-        {
-            "node_id": "ancestry_brand_search_interest",
-            "label": "Ancestry brand-search interest (diagnostic demand proxy)",
-            "role": "diagnostic",
-            "search_object_id": "search_demand_proxy",
-        },
-    ]
+    nodes = (
+        media_nodes
+        + outcomes
+        + [
+            {
+                "node_id": "paid_brand_search_spend",
+                "label": "Paid Brand Search spend (GBP)",
+                "role": "intervention",
+                "search_object_id": "paid_search_spend",
+            },
+            {
+                "node_id": "paid_brand_search_clicks",
+                "label": "Paid Brand Search clicks/delivery",
+                "role": "mediator",
+                "search_object_id": "paid_search_delivery",
+            },
+            {
+                "node_id": "ancestry_brand_search_interest",
+                "label": "Ancestry brand-search interest (diagnostic demand proxy)",
+                "role": "diagnostic",
+                "search_object_id": "search_demand_proxy",
+            },
+        ]
+    )
     edges = [
         {
             "source_node_id": "paid_brand_search_spend",
             "target_node_id": "paid_brand_search_clicks",
             "role": "mediated",
             "lag_type": "none",
-            "metadata": {"approval_required": True, "source_support": "spend and clicks supplied"},
+            "metadata": {
+                "approval_required": True,
+                "source_support": "spend and clicks supplied",
+            },
         },
     ]
     graph = {
@@ -1063,17 +1130,30 @@ def build_identification_report(
         for index in range(seasonality.shape[1]):
             outcome_matrix[f"fourier_{index + 1}"] = seasonality[:, index]
         adstock = geometric_adstock_matrix(
-            media_values.to_numpy(dtype=float), np.full(len(channels), 0.5), normalize=True
+            media_values.to_numpy(dtype=float),
+            np.full(len(channels), 0.5),
+            normalize=True,
         )
         transformed = hill_function(
-            adstock, np.maximum(media_values.mean(axis=0).to_numpy(dtype=float), 1.0), np.full(len(channels), 1.0)
+            adstock,
+            np.maximum(media_values.mean(axis=0).to_numpy(dtype=float), 1.0),
+            np.full(len(channels), 1.0),
         )
         transformed_full = np.column_stack(
-            [transformed, outcome_matrix[["trend"] + [f"fourier_{i + 1}" for i in range(6)]].to_numpy()]
+            [
+                transformed,
+                outcome_matrix[
+                    ["trend"] + [f"fourier_{i + 1}" for i in range(6)]
+                ].to_numpy(),
+            ]
         )
-        labels = list(sorted(channels)) + ["trend"] + [f"fourier_{i + 1}" for i in range(6)]
+        labels = (
+            list(sorted(channels)) + ["trend"] + [f"fourier_{i + 1}" for i in range(6)]
+        )
         result = equation_identification_diagnostics(
-            outcome_matrix[labels], labels=labels, transformed_predictors=transformed_full
+            outcome_matrix[labels],
+            labels=labels,
+            transformed_predictors=transformed_full,
         )
         equations.append(
             {
@@ -1099,7 +1179,13 @@ def build_identification_report(
                     "model_name": model_name,
                     "equation_type": "outcome",
                     "variable": name,
-                    "max_abs_pairwise_pearson": max(abs(result["pearson_correlation"][name][other]) for other in labels if other != name) if len(labels) > 1 else 0.0,
+                    "max_abs_pairwise_pearson": max(
+                        abs(result["pearson_correlation"][name][other])
+                        for other in labels
+                        if other != name
+                    )
+                    if len(labels) > 1
+                    else 0.0,
                     "vif": vif,
                     "condition_number": result["condition_number"],
                     "matrix_rank": result["matrix_rank"],
@@ -1108,17 +1194,27 @@ def build_identification_report(
                     "blocking": False,
                 }
             )
-        search_activity = "fh_brand_search" if model_name == "family_history" else "dna_brand_search"
+        search_activity = (
+            "fh_brand_search" if model_name == "family_history" else "dna_brand_search"
+        )
         search_dict = dictionary[dictionary["activity_id"] == search_activity].iloc[0]
         search_measure = str(search_dict["model_input_measure"])
         prepared_source = _read_sheet(
-            approved_pack_dir / "activity_data_approved_metadata_and_structural_zeros.xlsx",
+            approved_pack_dir
+            / "activity_data_approved_metadata_and_structural_zeros.xlsx",
             "activity_data",
         )
-        prepared_source = prepared_source[prepared_source["period_start"].isin(TARGET_DATE_SET)]
+        prepared_source = prepared_source[
+            prepared_source["period_start"].isin(TARGET_DATE_SET)
+        ]
         search = prepared_source[prepared_source["activity_id"] == search_activity][
             ["period_start", search_measure, "spend"]
-        ].rename(columns={search_measure: "paid_search_delivery", "spend": "paid_search_spend"})
+        ].rename(
+            columns={
+                search_measure: "paid_search_delivery",
+                "spend": "paid_search_spend",
+            }
+        )
         mediator = media_values.copy()
         mediator["paid_search_spend"] = (
             search.set_index("period_start")["paid_search_spend"]
@@ -1182,7 +1278,11 @@ def build_identification_report(
                     "model_name": model_name,
                     "equation_type": "mediator",
                     "variable": name,
-                    "max_abs_pairwise_pearson": max(abs(mediator_result["pearson_correlation"][name][other]) for other in mediator_labels if other != name),
+                    "max_abs_pairwise_pearson": max(
+                        abs(mediator_result["pearson_correlation"][name][other])
+                        for other in mediator_labels
+                        if other != name
+                    ),
                     "vif": vif,
                     "condition_number": mediator_result["condition_number"],
                     "matrix_rank": mediator_result["matrix_rank"],
@@ -1209,7 +1309,9 @@ def build_identification_report(
         ],
     }
     _write_json(output_dir / "pre-fit-identification-report.json", report)
-    pd.DataFrame(csv_rows).to_csv(output_dir / "pre-fit-identification-report.csv", index=False)
+    pd.DataFrame(csv_rows).to_csv(
+        output_dir / "pre-fit-identification-report.csv", index=False
+    )
     lines = [
         "# Pre-fit identification diagnostics",
         "",
@@ -1252,14 +1354,18 @@ def write_prefit_summary(
         row.get("included_in_fit") and not row.get("prepared")
         for row in mixed.get("variables", [])
     ):
-        blockers.append("some optional context series lack executable release/timing metadata")
+        blockers.append(
+            "some optional context series lack executable release/timing metadata"
+        )
     blockers.append("historical causal graph is draft and requires analyst approval")
     blockers.append("Search mediator identification is not approved for fitting")
     summary = {
         "schema_version": 1,
         "status": "blocked_before_revised_fit",
         "gates": {
-            "activity_coverage": "resolved_for_required_fit_inputs" if not coverage.get("genuine_missing_required_fit_observations") else "blocked",
+            "activity_coverage": "resolved_for_required_fit_inputs"
+            if not coverage.get("genuine_missing_required_fit_observations")
+            else "blocked",
             "nbt_governance": nbt.get("status"),
             "mixed_frequency": "capability_ready_optional_context_timing_unresolved",
             "search_mediation": search.get("status"),
@@ -1332,8 +1438,14 @@ def write_prepared_model_frame_audit(
     report = {
         "schema_version": 1,
         "status": "candidate_audit_before_graph_approval",
-        "target_window": {"start": GOVERNED_START, "end": GOVERNED_END, "frequency": "Sunday-Saturday"},
-        "required_activity_fit_blockers": coverage.get("genuine_missing_required_fit_observations", 0),
+        "target_window": {
+            "start": GOVERNED_START,
+            "end": GOVERNED_END,
+            "frequency": "Sunday-Saturday",
+        },
+        "required_activity_fit_blockers": coverage.get(
+            "genuine_missing_required_fit_observations", 0
+        ),
         "rows": audit_rows,
     }
     _write_json(output_dir / "prepared-model-frame-audit.json", report)
@@ -1366,7 +1478,9 @@ def run(
     # The report path is kept explicit and separate from the immutable
     # previous-validation directory because the validation artefact itself
     # records the exact production report used for reconstruction.
-    previous_validation = _read_json(previous_validation_dir / "previous-fit-validation.json")
+    previous_validation = _read_json(
+        previous_validation_dir / "previous-fit-validation.json"
+    )
     production_report_path = Path(previous_validation["previous_fit_report"])
     previous_report = _read_json(production_report_path)
     coverage = reconcile_activity_coverage(
@@ -1384,7 +1498,10 @@ def run(
     write_prepared_model_frame_audit(
         output_dir, previous_report, coverage, identification
     )
-    roles = {"variables": identification["context_roles"], "status": "candidate_roles_require_graph_approval"}
+    roles = {
+        "variables": identification["context_roles"],
+        "status": "candidate_roles_require_graph_approval",
+    }
     _write_json(output_dir / "context-variable-roles.json", roles)
     summary = write_prefit_summary(
         output_dir, coverage, nbt, mixed, search, graph, identification
@@ -1421,7 +1538,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-dir", type=Path, default=SOURCE_DIR)
     parser.add_argument("--approved-pack-dir", type=Path, default=APPROVED_PACK_DIR)
-    parser.add_argument("--previous-validation-dir", type=Path, default=PREVIOUS_VALIDATION_DIR)
+    parser.add_argument(
+        "--previous-validation-dir", type=Path, default=PREVIOUS_VALIDATION_DIR
+    )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     args = parser.parse_args(argv)
     result = run(
