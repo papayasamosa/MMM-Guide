@@ -14,6 +14,7 @@ from ancestry_mmm.core.fingerprint import fingerprint_dataframe
 from ancestry_mmm.utils.workflow_state import (
     is_registered_step_complete,
     next_workflow_step_key,
+    resolve_workflow_navigation,
     workflow_page_state,
     workflow_progress,
 )
@@ -256,3 +257,79 @@ def test_numeric_completion_checks_page_state_not_position():
     assert is_registered_step_complete(1, getter=getter)
     assert not is_registered_step_complete(2, getter=getter)
     assert not is_registered_step_complete(16, getter=getter)
+
+
+# UI-WP1: resolve_workflow_navigation is the single shared resolver behind
+# both Home's "next recommended action" and every page footer's "NEXT STEP"
+# panel, so an optional page (Coverage & Gaps, Causal Graph, Model
+# Comparison, ...) can never be presented as the required next step, and a
+# required page that is still blocked is named honestly instead of offered
+# as a dead-end continue button.
+
+
+def test_new_project_resolves_to_data_upload_as_the_required_start():
+    nav = resolve_workflow_navigation(None, getter=_getter({}))
+
+    assert nav.kind == "required"
+    assert nav.target.key == "data_upload"
+    assert nav.optional_targets == ()
+    # Home's next_recommended_step_key is a thin wrapper around the same
+    # resolver call, so the two must always agree.
+    assert next_workflow_step_key(getter=_getter({})) == nav.target.key
+
+
+def test_exploratory_continuation_offers_coverage_as_optional_not_required():
+    getter = _getter({"transformed_data": object()})
+
+    nav = resolve_workflow_navigation("transform_pipeline", getter=getter)
+
+    assert nav.kind == "required"
+    assert nav.target.key == "channel_media_units"
+    assert [t.key for t in nav.optional_targets] == ["data_coverage"]
+
+
+def test_model_comparison_with_one_candidate_stays_optional():
+    getter = _getter(
+        {"model_trained": True, "model_comparison_candidates": ["candidate-a"]}
+    )
+
+    nav = resolve_workflow_navigation("model_training", getter=getter)
+
+    assert nav.kind == "required"
+    assert nav.target.key == "diagnostics"
+    assert [t.key for t in nav.optional_targets] == ["compare_models"]
+
+
+def test_causal_graph_not_required_when_no_approved_graph_exists():
+    getter = _getter(
+        {
+            "transformed_data": object(),
+            "model_spec": {"markets": ["UK"]},
+            "activity_definitions": [{"activity_id": "uk-tv"}],
+        }
+    )
+
+    nav = resolve_workflow_navigation("structure", getter=getter)
+
+    assert nav.kind == "required"
+    assert nav.target.key == "model_config"
+    assert [t.key for t in nav.optional_targets] == [
+        "causal_graph",
+        "market_descriptors",
+    ]
+
+
+def test_blocked_prerequisite_is_named_but_not_offered_as_a_dead_end():
+    nav = resolve_workflow_navigation("model_training", getter=_getter({}))
+
+    assert nav.kind == "blocked"
+    assert nav.target.key == "diagnostics"
+    assert "Fit the model" in nav.target.reason
+
+
+def test_end_of_workflow_has_no_further_required_target():
+    nav = resolve_workflow_navigation("export", getter=_getter({}))
+
+    assert nav.kind == "done"
+    assert nav.target is None
+    assert nav.optional_targets == ()

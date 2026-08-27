@@ -34,7 +34,10 @@ from ancestry_mmm.utils.workflow import (
     nav_groups,
     workflow_label,
 )
-from ancestry_mmm.utils.workflow_state import workflow_page_states
+from ancestry_mmm.utils.workflow_state import (
+    resolve_workflow_navigation,
+    workflow_page_states,
+)
 from ancestry_mmm.components import (
     apply_theme,
     render_sidebar,
@@ -42,7 +45,6 @@ from ancestry_mmm.components import (
     render_status_badges,
     page_readiness,
     group_readiness,
-    next_recommended_step_key,
     SectionCard,
     InfoPanel,
 )
@@ -156,9 +158,10 @@ def _command_palette_dialog() -> None:
 
 
 def _render_next_action(*, compact: bool = False) -> None:
-    """Item 1: the single dominant "what should I do next" element,
-    derived from `next_recommended_step_key()` (Phase 1's
-    `page_readiness()`, extended by composition). Doubles as item 4 (the
+    """Item 1: the single dominant "what should I do next" element, derived
+    from `resolve_workflow_navigation()` - the same shared resolver every
+    page footer uses (UI-WP1), so Home and footers can never disagree on
+    what is required next versus merely optional. Doubles as item 4 (the
     synthetic-demo entry point) when no project data is loaded yet, since
     that *is* the next recommended action in that state.
     """
@@ -191,8 +194,8 @@ def _render_next_action(*, compact: bool = False) -> None:
                     st.switch_page("pages/01_Data_Upload.py")
             return
 
-        next_key = next_recommended_step_key()
-        if next_key is None:
+        nav = resolve_workflow_navigation(None, getter=get_state)
+        if nav.target is None:
             st.markdown(
                 "Every required workflow stage is ready. Review results in "
                 "**Results & Response Curves**, plan a scenario, or export the "
@@ -214,12 +217,15 @@ def _render_next_action(*, compact: bool = False) -> None:
                     st.switch_page("pages/09_Project_Export.py")
             return
 
-        step = get_step(next_key)
-        st.markdown(f"**{step['label']}**")
-        if step.get("purpose"):
+        step = get_step(nav.target.key)
+        st.markdown(f"**{nav.target.label}**")
+        if nav.kind == "blocked":
+            st.caption(nav.target.reason or "This stage is not yet available.")
+            return
+        if step and step.get("purpose"):
             st.caption(step["purpose"])
-        if st.button(
-            f"Continue to {step['label']} →",
+        if step and st.button(
+            f"Continue to {nav.target.label} →",
             type="primary",
             key="home_next_action",
         ):

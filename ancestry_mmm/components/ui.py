@@ -25,12 +25,12 @@ from ancestry_mmm.utils.session_state import get_state
 from ancestry_mmm.utils.workflow import (
     get_step,
     nav_groups,
-    next_step_key,
     step_number,
     workflow_label,
 )
 from ancestry_mmm.utils.workflow_state import (
     next_workflow_step_key,
+    resolve_workflow_navigation,
     workflow_page_states,
     workflow_page_state,
 )
@@ -387,26 +387,63 @@ def BlockingPanel(title: str, *, description: Optional[str] = None):
 
 
 def render_next_step(key: str, *, key_suffix: str = "") -> None:
-    """Bottom-of-page next action without another full-width divider or card."""
+    """Bottom-of-page next action without another full-width divider or card.
+
+    Routed through `resolve_workflow_navigation` (UI-WP1) rather than the
+    raw registry order, so this footer can never present an optional page
+    (Coverage & Gaps, Causal Graph, Model Comparison, ...) as though it were
+    the required next step, and never offers a dead-end continue button for
+    a required page that is still blocked by an earlier prerequisite.
+    """
     step = get_step(key)
-    if step is None or not step.get("next"):
+    if step is None:
         return
+    nav = resolve_workflow_navigation(key, getter=get_state)
+
+    if nav.kind == "done":
+        copy = "No further required workflow stage remains."
+    else:
+        target = nav.target
+        target_step = get_step(target.key)
+        purpose = (target_step or {}).get("purpose", "")
+        copy = f"{target.label}" + (f" - {purpose}" if purpose else "")
+        if nav.kind == "blocked" and target.reason:
+            copy += f" ({target.reason})"
+
     st.markdown(
         '<div class="mmm-next-step">'
         '<span class="mmm-next-step-label">NEXT STEP</span>'
-        f'<span class="mmm-next-step-copy">{_html.escape(step["next"])}</span>'
+        f'<span class="mmm-next-step-copy">{_html.escape(copy)}</span>'
         "</div>",
         unsafe_allow_html=True,
     )
-    nxt_key = next_step_key(key)
-    if nxt_key is not None:
-        nxt = get_step(nxt_key)
-        if st.button(
-            f"Continue to {nxt['label']} →",
+
+    if nav.kind == "required":
+        target_step = get_step(nav.target.key)
+        if target_step and st.button(
+            f"Continue to {nav.target.label} →",
             type="primary",
             key=f"next_{key}{key_suffix}",
         ):
-            st.switch_page(nxt["path"])
+            st.switch_page(target_step["path"])
+
+    if nav.optional_targets:
+        st.caption(
+            "Optional: "
+            + " · ".join(t.label for t in nav.optional_targets)
+        )
+        cols = st.columns(len(nav.optional_targets))
+        for col, opt in zip(cols, nav.optional_targets):
+            opt_step = get_step(opt.key)
+            if opt_step is None:
+                continue
+            with col:
+                if st.button(
+                    opt.label,
+                    key=f"next_optional_{key}_{opt.key}{key_suffix}",
+                    width="stretch",
+                ):
+                    st.switch_page(opt_step["path"])
 
 
 def render_empty_state(
