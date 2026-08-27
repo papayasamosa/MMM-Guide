@@ -107,7 +107,9 @@ render_page_header(
 )
 render_workspace_note(
     "Fit assumptions",
-    "Market and outcome scope is read from Structure. Edit pooling, curve, prior, and sampling assumptions here.",
+    "Market scope, outcome scope, and market pooling exceptions are inherited "
+    "from Structure (read-only below). Choose the response strategy, advanced "
+    "response assumptions, and sampling settings here.",
     kind="editable",
 )
 
@@ -166,15 +168,15 @@ with st.container(border=True):
         "Prepared frame", "Ready" if get_state("frame") is not None else "Not prepared"
     )
     st.caption(
-        "Pooling strategy: "
+        "Response strategy: "
         f"{'Market-specific' if get_state('model_type') == 'market_specific' else 'Shared'} · "
-        "change it in Model strategy below."
+        "change it in Response strategy below."
     )
 
 st.markdown("---")
 with SectionCard(
-    "Model strategy · market pooling",
-    description="Read-only here - change markets/pooling on the Structure page.",
+    "Market scope and hierarchy",
+    description="Read-only here - inherited from Structure. Change markets or pooling exceptions on the Structure page.",
 ):
     st.info(
         f"Markets: {', '.join(spec.markets)}. "
@@ -185,7 +187,7 @@ with SectionCard(
 
 st.markdown("---")
 _model_structure_section = SectionCard(
-    "Model strategy",
+    "Response strategy",
     description="Shared curve across markets, or market-specific partially-pooled curves.",
 )
 _model_structure_section.__enter__()
@@ -194,7 +196,7 @@ render_definition_help(
     "Markets get their own response estimates while borrowing strength from the other markets, so smaller markets are less likely to produce unstable curves.",
 )
 render_decision_help(
-    "How should I choose the model strategy?",
+    "How should I choose the response strategy?",
     controls="Whether channel response is shared across markets or allowed to vary with partial pooling.",
     why="The choice balances stability against local market differences. More flexibility is useful only when the data can identify it.",
     options={
@@ -255,7 +257,7 @@ prior_config = {
     **(get_state("prior_config") or {}),
 }
 
-with st.expander("Advanced model assumptions", expanded=False):
+with st.expander("Advanced response assumptions", expanded=False):
     st.caption(
         "These controls set the model's starting assumptions. Most analysts can keep the defaults; open this area when the data or an approved modelling decision calls for a change."
     )
@@ -476,56 +478,60 @@ for e in brand_search_errors:
 _priors_section.__exit__(None, None, None)
 
 st.markdown("---")
-with st.expander("Advanced sampling", expanded=False):
-    st.caption(
-        "Reasonable defaults are pre-filled. Increase draws/tune for a more reliable fit; reduce them for a quicker check."
-    )
-    c1, c2, c3, c4 = st.columns(4)
-    mcmc_draws = c1.number_input(
-        "Draws",
-        min_value=200,
-        max_value=5000,
-        value=int(get_state("mcmc_draws", 2000)),
-        step=200,
-        key="mcmc_draws_input",
-    )
-    mcmc_tune = c2.number_input(
-        "Tune",
-        min_value=200,
-        max_value=5000,
-        value=int(get_state("mcmc_tune", 1000)),
-        step=200,
-        key="mcmc_tune_input",
-    )
-    mcmc_chains = c3.number_input(
-        "Chains",
-        min_value=1,
-        max_value=8,
-        value=int(get_state("mcmc_chains", 4)),
-        key="mcmc_chains_input",
-    )
-    mcmc_target_accept = c4.slider(
-        "Target accept",
-        0.7,
-        0.99,
-        float(get_state("mcmc_target_accept", 0.9)),
-        0.01,
-        key="mcmc_target_accept_input",
-    )
+with SectionCard(
+    "Sampling settings",
+    description="MCMC controls used for the next fit.",
+):
+    with st.expander("Advanced sampling", expanded=False):
+        st.caption(
+            "Reasonable defaults are pre-filled. Increase draws/tune for a more reliable fit; reduce them for a quicker check."
+        )
+        c1, c2, c3, c4 = st.columns(4)
+        mcmc_draws = c1.number_input(
+            "Draws",
+            min_value=200,
+            max_value=5000,
+            value=int(get_state("mcmc_draws", 2000)),
+            step=200,
+            key="mcmc_draws_input",
+        )
+        mcmc_tune = c2.number_input(
+            "Tune",
+            min_value=200,
+            max_value=5000,
+            value=int(get_state("mcmc_tune", 1000)),
+            step=200,
+            key="mcmc_tune_input",
+        )
+        mcmc_chains = c3.number_input(
+            "Chains",
+            min_value=1,
+            max_value=8,
+            value=int(get_state("mcmc_chains", 4)),
+            key="mcmc_chains_input",
+        )
+        mcmc_target_accept = c4.slider(
+            "Target accept",
+            0.7,
+            0.99,
+            float(get_state("mcmc_target_accept", 0.9)),
+            0.01,
+            key="mcmc_target_accept_input",
+        )
 
-render_decision_help(
-    "How should I choose sampling settings?",
-    controls="The number of posterior draws, tuning steps, chains, and the target acceptance rate used when fitting.",
-    why="More sampling can improve the reliability of convergence evidence but costs time. These controls do not change the business definition of an outcome.",
-    options={
-        "Default settings": "Use for the normal fit when the model is behaving as expected.",
-        "More draws or tuning": "Use when convergence or effective sample size needs more evidence and the fit can take longer.",
-        "Higher target acceptance": "Use as a diagnostic response to sampling problems, with the trade-off of slower sampling.",
-    },
-    normal_path="Start with the defaults, then respond to Diagnostics evidence rather than changing settings speculatively.",
-    downstream="Sampling settings change the posterior evidence and therefore the model identity and downstream diagnostics.",
-    invalidates="Changing them requires a new fit and fresh diagnostics; an existing approval cannot be carried across a changed fit.",
-)
+    render_decision_help(
+        "How should I choose sampling settings?",
+        controls="The number of posterior draws, tuning steps, chains, and the target acceptance rate used when fitting.",
+        why="More sampling can improve the reliability of convergence evidence but costs time. These controls do not change the business definition of an outcome.",
+        options={
+            "Default settings": "Use for the normal fit when the model is behaving as expected.",
+            "More draws or tuning": "Use when convergence or effective sample size needs more evidence and the fit can take longer.",
+            "Higher target acceptance": "Use as a diagnostic response to sampling problems, with the trade-off of slower sampling.",
+        },
+        normal_path="Start with the defaults, then respond to Diagnostics evidence rather than changing settings speculatively.",
+        downstream="Sampling settings change the posterior evidence and therefore the model identity and downstream diagnostics.",
+        invalidates="Changing them requires a new fit and fresh diagnostics; an existing approval cannot be carried across a changed fit.",
+    )
 
 render_drift_status(
     outcome_definitions, get_state("model_meta"), available_columns=set(df.columns)
