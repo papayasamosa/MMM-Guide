@@ -451,6 +451,32 @@ approved, by this overlay section — and it does not change what the
 structural-causal or named-event overlays themselves reconciled at their
 own versions.
 
+### Work Package 1 update (2026-08-28): partial reconciliation into approved requirements
+
+The text above accurately describes what was true on 2026-08-24 and is
+not rewritten. Work Package 1 of `Media-Mix-Lab Coding LLM Next Steps
+2026-08-27` has since reconciled the implementation-ready, already-
+unambiguous portion of this overlay into three new approved records:
+`docs/approved_requirements/REQ-SEARCH-004.md` (governed Search-intent
+taxonomy, term/query mapping, and parent-child activity lineage),
+`docs/approved_requirements/REQ-SEARCH-005.md` (multi-axis Search
+granularity eligibility contract), and
+`docs/approved_requirements/REQ-SEO-001.md` (governed SEO visibility/
+ranking metric-definition and observation data shape). Each is a
+target-state architecture contract with zero implementation.
+
+`docs/wp1_search_seo_granularity_decision_package.md` collects every
+statistical, causal, business, and threshold choice this overlay's own
+decision registers (`DD-020`, `MD-008A`, `MD-008B`, `MD-008C`, `VL-032`,
+`VL-033`, `VL-034`, `PL-027`, `PL-028`, `RP-030`, `RP-031`, `RP-032`,
+`API-029`, `FR-CAU-015`, and Part 2 §26.3 item 14) leave open — most
+significantly SEO visibility's causal role and estimand, any
+controllable SEO intervention, the initial taxonomy's content, every
+identification/promotion threshold, and any parent-child cost-allocation
+method. No candidate in that package is chosen, and no threshold is
+approved. This update does not select, approve, or rule out any
+candidate approach the original 2026-08-24 text above disclaimed.
+
 ## Historical status of earlier documents
 
 | Document | Status | Notes |
@@ -526,6 +552,9 @@ Each row below is one of two distinct states, not to be conflated:
 | Experiment evidence modes and provenance (`REQ-EXPMODE-001`) | Requirement exists but capability incomplete | Approved 2026-08-17 (Work Package 0), core registry implemented Work Package 4 (2026-08-18): `core.experiments` provides an immutable, versioned `ExperimentRecord` (mirroring `core.causal_graph`/`core.search_objects`'s lineage pattern), `ExperimentToModelUse`'s closed four-value evidence-mode vocabulary, a caller-evidenced `CompatibilityAssessment` across all nine required dimensions, a fail-closed `build_calibrating_use` gate, a double-counting check, and a per-experiment (never averaged) provenance report. Durable adoption/persistence/Diagnostics workflow implemented Work Package 2 of `...Post PR291` (2026-08-19): `application.experiment_service` is the explicit analyst-reviewed adoption boundary (source rows never auto-adopt; missing required fields fail closed; the registry is immutable with versioned edits; calibrating uses require a fully compatible assessment, explicit prior/likelihood identity, and a dependence-handling method when a new use would create a double-counted dependence), the registry persists through the project bundle (`config/experiments.json`, `EXPERIMENT_REGISTRY_SCHEMA_VERSION`, quarantine-on-import via `core.persistence.resolve_imported_experiments`, future schema versions rejected), and the schema v8 `experiment_calibration` Diagnostics section is populated from the real saved registry (`provenance_for_model`, per-experiment, never averaged, with a live staleness note). Adoption/review UI on `pages/01_Data_Upload.py`; use declaration and provenance on `pages/06_Diagnostics.py`. Not yet implemented: any specific likelihood-/prior-calibration statistical mechanism (reserved for a future decision-support package per this record's own text) — the calibrated-vs-uncalibrated comparison half of the Diagnostics section therefore stays empty. |
 | Calibrated-versus-uncalibrated model comparison (`REQ-CALIB-001`) | Requirement exists but capability incomplete | Approved 2026-08-17 (Work Package 0), core comparison contract implemented Work Package 4 (2026-08-18): `core.calibration_comparison` reuses `core.model_identity.ModelIdentity` directly (resolving this record's own identity-architecture open question), rejecting construction unless the calibrated and uncalibrated identities are genuinely distinct (Requirement 1). Generic per-metric and per-experiment-agreement comparison, with no threshold/verdict/"preferred" field anywhere — verified by an explicit field-name scan (Requirement 3). `CalibrationEventRecord` implements Requirement 5's per-event record as caller-supplied, structured facts. Depends on `REQ-EXPMODE-001` (not yet coupled by import). No calibration mechanism exists or is implied. A schema v8 `experiment_calibration` Diagnostics display slot for the comparison artefact now exists (optional `CalibratedVsUncalibratedComparisonArtefact` payload, this record's own `to_dict()` — a read-only evidence view, always `None`/`not_applicable` until a calibration mechanism produces one). Not yet implemented: the material-change criteria that trigger mandatory review, any comparison tolerance/threshold, computing any comparison metric itself, and Requirement 4's separate calibrated/uncalibrated visibility in curves/planning/reports. |
 | Downstream forecast-consequence evidence (`REQ-FORECAST-001`) | Requirement exists but capability incomplete | Approved 2026-08-17. Separate from, and narrower than, the "Future-assumption bundles" row above (`REQ-FUTURE-001`, Work Package 9) — covers only the consequence-assessment contract for an already-classified exogenous control. Zero implementation yet. |
+| Governed Search-intent taxonomy, term/query mapping, and parent-child activity lineage (`REQ-SEARCH-004`) | Requirement exists but capability incomplete | Approved 2026-08-28 (Work Package 1). Target-state architecture contract only, extending `REQ-SEARCH-001`'s object-separation pattern to a governed `search_intent_group` taxonomy and raw-term/query mapping layer - blocked pending `docs/wp1_search_seo_granularity_decision_package.md`, which found the taxonomy's own content/ownership (`DD-020`) and every identification/promotion threshold (`MD-008A`, `VL-032`) undecided. Zero implementation yet; `core.search_objects`/`core.activities` carry no taxonomy or intent-group fields. |
+| Search granularity capability and multi-axis eligibility contract (`REQ-SEARCH-005`) | Requirement exists but capability incomplete | Approved 2026-08-28 (Work Package 1). Target-state architecture contract only, extending the existing single-valued `planning_eligibility` pattern to six independent boolean eligibility axes (model/contribution/curve/economics/planning/optimisation) at market x route x platform x parent-activity grain - blocked pending the same decision package, which found every promotion threshold for these axes undecided (`VL-032`, `PL-027`, `PL-028`). Zero implementation yet. |
+| Governed SEO visibility/ranking metric-definition and observation contract (`REQ-SEO-001`) | Requirement exists but capability incomplete | Approved 2026-08-28 (Work Package 1). Target-state architecture contract only for the data/provenance shape of an SEO visibility metric definition and its observations, distinct from organic Search capture - blocked pending the same decision package, which found SEO's causal role, estimand, transformation, and any controllable intervention all undecided (`MD-008C`, `VL-034`, `PL-028`, `FR-CAU-015`). Zero implementation yet; no SEO-visibility object exists anywhere in this repository. |
 
 ## Current analyst-decision overrides to historical gap rows
 
@@ -565,8 +594,10 @@ folds), `REQ-PPD-001` (posterior predictive metric distributions),
 submission), `REQ-CONTROL-001` (standardised category-demand control
 prior for the current UK Model A candidate), `REQ-HIERARCHY-001`
 (gated H2 diagnostic hierarchy challenger for the current UK Model A
-candidate), and `REQ-FX-001` through `REQ-FX-006` (governed FX
-translation architecture) are approved, indexed requirement records with
+candidate), `REQ-FX-001` through `REQ-FX-006` (governed FX
+translation architecture), and `REQ-SEARCH-004`, `REQ-SEARCH-005`, and
+`REQ-SEO-001` (Search-granularity and SEO-visibility governed
+architecture) are approved, indexed requirement records with
 substantive implementation.
 None is a gap requiring a new decision record — each has an explicit,
 narrower capability boundary documented in its own record:
@@ -842,3 +873,29 @@ narrower capability boundary documented in its own record:
   contract handling, and the addendum's own Section 20 items in full) —
   `docs/wp7_governed_fx_finance_decision_package.md` collects every one
   of those open questions in one place for a future Finance decision.
+- `REQ-SEARCH-004` (`docs/approved_requirements/REQ-SEARCH-004.md`,
+  approved 2026-08-28): reconciles the optional Search-granularity
+  overlay's governed `search_intent_group` taxonomy, raw paid-term/
+  organic-query mapping, and parent-child `ActivityDefinition` lineage
+  into repository authority, extending `REQ-SEARCH-001`'s existing
+  object-separation/versioning/persistence/validation pattern. Target-
+  state contract only, with zero implementation. Does not approve the
+  taxonomy's own content/ownership or any identification/mapping
+  threshold — `docs/wp1_search_seo_granularity_decision_package.md`
+  collects those open questions.
+- `REQ-SEARCH-005` (`docs/approved_requirements/REQ-SEARCH-005.md`,
+  approved 2026-08-28): reconciles the overlay's market x route x
+  platform x parent-activity Search granularity capability record into
+  repository authority, extending the existing single-valued
+  `planning_eligibility` pattern to six independent boolean eligibility
+  axes (model/contribution/curve/economics/planning/optimisation).
+  Target-state contract only, with zero implementation. Does not approve
+  any evidence threshold that would set an axis to `true` — the same
+  decision package collects those.
+- `REQ-SEO-001` (`docs/approved_requirements/REQ-SEO-001.md`, approved
+  2026-08-28): reconciles the overlay's governed SEO visibility/ranking
+  metric-definition and observation data shape into repository
+  authority, distinct from organic Search capture. Target-state contract
+  only, with zero implementation. Does not approve which metric is used,
+  its causal role, its estimand, or any controllable SEO intervention —
+  the same decision package collects those.
