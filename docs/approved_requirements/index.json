@@ -1281,7 +1281,7 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
         "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_search_004_indexed_and_classified_incomplete",
-        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_all_records_reference_the_decision_package"
+        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_all_three_records_reference_the_decision_package"
       ]
     },
     {
@@ -1303,7 +1303,7 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
         "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_search_005_indexed_and_classified_incomplete",
-        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_all_records_reference_the_decision_package"
+        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_all_three_records_reference_the_decision_package"
       ]
     },
     {
@@ -1325,7 +1325,7 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
         "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_seo_001_indexed_and_classified_incomplete",
-        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_all_records_reference_the_decision_package",
+        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_all_three_records_reference_the_decision_package",
         "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_seo_001_defers_causal_role"
       ]
     }
