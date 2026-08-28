@@ -8157,3 +8157,56 @@ new required_tests entries), `docs/specification_authority.md`
 per `REQ-ECON-002`).
 **Status:** WP2A complete and merged pending CI. WP2B (canonical
 historical valuation engine, `REQ-ECON-003`) is next.
+
+**Date:** 2026-08-28
+**Decision:** Implement WP2B (canonical historical valuation engine)
+against `REQ-ECON-003` Requirements 1-2. New
+`ancestry_mmm/core/outcome_valuation_rates.py`: `derive_weekly_value_rates`
+computes `value_per_unit(market, week, segment) = aggregate_value /
+denominator_count` from a `WeeklyOutcomeValuationRecord` catalogue
+(REQ-ECON-002, WP2A) and observed denominator-outcome counts, returning
+`(rates, blocking_issues)` rather than raising - a cell with no observed
+data supplied produces neither, since that is a data-completeness
+question upstream of rate derivation, not a rate-derivation
+inconsistency. Implements the explicit zero-denominator carve-out
+identically to WP2A's cross-validation semantics: a genuinely zero
+denominator paired with a genuinely zero or missing supplied value
+derives a rate of exactly `0.0` (never an actual division, confirmed by
+a dedicated `math.isfinite` regression test), while every other
+inconsistent combination (missing value with a non-zero denominator,
+non-zero value with a zero denominator, a value with a missing
+denominator) blocks with a specific, attributable message instead of a
+guessed rate.
+
+Does not implement Requirement 3 (the draw-level posterior join) or
+Requirement 4 (posterior uncertainty propagation) - those remain WP2C,
+a separate PR, since temporal aggregation and posterior-draw handling
+are a materially different concern from rate derivation and the
+governing brief's sequencing keeps them apart.
+
+**Alternatives considered:** refactoring WP2A's
+`cross_validate_against_observed_denominator` to share its row-
+classification logic with this module's rate derivation via a common
+helper (rejected for this pass - the shared-helper refactor would touch
+an already-merged, already-tested function purely for internal tidiness
+with no external behaviour change, and risks a regression in code with
+real governance weight; the two functions' classification logic is kept
+independently written and independently tested instead, accepting the
+small duplication as the safer tradeoff); returning `NaN`/`inf` for the
+zero-denominator case and letting the caller filter it out (rejected -
+`REQ-ECON-002`'s and `REQ-ECON-003`'s explicit carve-out requires a
+governed zero, not an unrepresentable float a caller could
+accidentally propagate uncaught).
+
+**Impact:** New `ancestry_mmm/core/outcome_valuation_rates.py`,
+`ancestry_mmm/tests/test_outcome_valuation_rates.py` (11 tests).
+Modified: `docs/approved_requirements/REQ-ECON-003.md` (Affected
+modules/Required tests/Migration impact updated), `docs/approved_
+requirements/index.json` (3 new required_tests entries),
+`docs/specification_authority.md` (REQ-ECON-003's gap-table row
+updated). Mypy baseline unchanged at 225. No other `core`,
+`application`, or `pages` code changed.
+**Owner:** Modelling / Platform engineering (implemented autonomously,
+per `REQ-ECON-003`).
+**Status:** WP2B complete and merged pending CI. WP2C (posterior
+economic attribution) is next.

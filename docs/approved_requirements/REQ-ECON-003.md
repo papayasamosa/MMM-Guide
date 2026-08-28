@@ -152,14 +152,23 @@ already requires — this record does not relax that existing rule.
 
 ## Affected modules
 
-None yet — target-state contract only. Anticipated future affected
-modules (WP2B/WP2C/WP2G, not created by this record):
+**WP2B delivered (2026-08-28):** `ancestry_mmm/core/outcome_valuation_rates.py`
+(new module) implements Requirements 1-2 — `derive_weekly_value_rates`
+computes `value_per_unit(market, week, segment)` from a
+`WeeklyOutcomeValuationRecord` catalogue and observed denominator
+counts, with the zero-denominator carve-out and every inconsistent case
+surfaced as a blocking issue rather than guessed.
+
+Not yet delivered (WP2C/WP2G, not created by this WP2B delivery):
+Requirement 3's draw-level posterior join and Requirement 4's
+uncertainty-propagation contract — anticipated in
 `ancestry_mmm/core/canonical_curves.py`, `ancestry_mmm/core/attribution.py`,
 `ancestry_mmm/core/optimization.py` (extending the existing scalar
-`value_per_response`/`ltv` lookups to the week-indexed rate from
-Requirement 1); `ancestry_mmm/core/uncertainty.py` (reuse, not
-extension, of `summarize_distribution`); `ancestry_mmm/core/planning/value.py`
-(forward-assumption schema extension); `ancestry_mmm/application/scenario_service.py`;
+`value_per_response`/`ltv` lookups to the week-indexed rate this WP2B
+delivery produces), and `ancestry_mmm/core/uncertainty.py` (reuse of
+`summarize_distribution`); Requirement 5's forward-assumption contract,
+anticipated in `ancestry_mmm/core/planning/value.py`,
+`ancestry_mmm/application/scenario_service.py`, and
 `ancestry_mmm/pages/08_Scenario_Planner.py`.
 
 ## Required tests
@@ -174,11 +183,14 @@ extension, of `summarize_distribution`); `ancestry_mmm/core/planning/value.py`
 - `ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_003_indexed_and_classified_incomplete`
 - `ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_003_requires_weekly_grain_before_aggregation`
 - `ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_003_fixes_value_uncertainty_treatment`
+- `ancestry_mmm/tests/test_outcome_valuation_rates.py::TestZeroDenominatorCarveOut::test_never_actually_divides_by_zero`
+- `ancestry_mmm/tests/test_outcome_valuation_rates.py::TestInconsistentCasesAreSurfaced::test_nonzero_value_with_zero_denominator_blocks`
+- `ancestry_mmm/tests/test_outcome_valuation_rates.py::TestOrdinaryDivision::test_derives_the_expected_rate`
 
 ## Migration impact
 
-None. No schema, persisted artefact, or application code changes as a
-result of this record.
+None. `outcome_valuation_rates.py` is an entirely new, additive module.
+No existing schema, persisted artefact, or application code changed.
 
 ## Unresolved decisions
 
