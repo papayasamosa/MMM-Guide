@@ -111,10 +111,18 @@ contract (Requirement 5) supplies the two periods a waterfall would
 compare, but does not itself define or approve the waterfall's
 computation.
 
+**2026-08-28 update:** the required design note has since been produced
+(`docs/wp2f_contribution_waterfall_design_note.md`) and reconciled into
+`REQ-ECON-005`. The text above remains accurate as the record of what
+was true when this requirement was approved and is not rewritten — the
+waterfall's computation method was, and remains, out of this record's
+own scope; it is `REQ-ECON-005`'s scope, not this one's.
+
 ## Out of scope (decision-required, not approved by this record)
 
 - The period-over-period contribution waterfall's computation method —
-  gated behind a required design note (WP2F), not this record.
+  was gated behind a required design note (WP2F); that note now exists
+  and is reconciled by `REQ-ECON-005`, a separate record from this one.
 - Any FX conversion applied to a reporting-currency view.
 - Component-level (channel/funnel/segment) economics where no approved
   allocation exists (Requirement 6 states the gating rule; it does not
@@ -166,8 +174,10 @@ changed.
 
 ## Unresolved decisions
 
-The waterfall computation method (gated behind a required design note),
-and any FX conversion policy — see `docs/wp2_outcome_valuation_decision_package.md`.
+Any FX conversion policy — see `docs/wp2_outcome_valuation_decision_
+package.md`. (The waterfall computation method, formerly listed here as
+gated behind a required design note, is now resolved by `REQ-ECON-005`
+and is no longer this record's unresolved item.)
 
 ## Owner
 

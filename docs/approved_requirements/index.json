@@ -1438,6 +1438,30 @@
         "ancestry_mmm/tests/test_outcome_valuation_periods.py::TestResolveWeeksForCalendarPeriod::test_partial_period_returns_only_actual_available_weeks",
         "ancestry_mmm/tests/test_outcome_valuation_periods.py::TestResolveWeeksForCustomRange::test_partial_overlap_returns_only_available_weeks"
       ]
+    },
+    {
+      "requirement_id": "REQ-ECON-005",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-ECON-005.md",
+      "affected_modules": [
+        "docs/wp2f_contribution_waterfall_design_note.md",
+        "ancestry_mmm/core/attribution.py",
+        "ancestry_mmm/core/market_specific_attribution.py",
+        "ancestry_mmm/core/outcome_valuation_periods.py",
+        "ancestry_mmm/core/uncertainty.py"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_005_indexed_and_classified_incomplete",
+        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_005_resolves_d5_without_a_residual",
+        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_design_note_proves_reconciliation_is_order_independent"
+      ]
     }
   ]
 }

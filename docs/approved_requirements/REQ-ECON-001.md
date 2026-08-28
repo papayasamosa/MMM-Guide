@@ -201,12 +201,12 @@ business-decision brief; this record's own arithmetic (Requirements 1-2,
 - future-value extrapolation policy — **resolved**: no auto-
   extrapolation, explicit scenario assumption required (`REQ-ECON-003`
   Requirement 5) — D4;
-- any waterfall/economic-decomposition accounting method — **still
-  open**: scope clarified as a period-over-period outcome-volume
-  contribution bridge, not an economic decomposition (`REQ-ECON-004`,
-  "Explicitly not covered"), but the computation method itself remains
-  gated behind a required calculation/design note before any further
-  authority record or code — D5;
+- any waterfall/economic-decomposition accounting method — **resolved**:
+  a period-over-period outcome-volume contribution bridge (not an
+  economic decomposition), using a generalised Shapley method over the
+  model's genuinely time-varying `eta` terms, with no residual term
+  required (`REQ-ECON-005`, per `docs/wp2f_contribution_waterfall_
+  design_note.md`) — D5;
 - reporting-period aggregation weighting for partial periods —
   **resolved**: actual included weeks only, never scaled or annualised
   (`REQ-ECON-004` Requirement 3) — D6;
@@ -227,7 +227,7 @@ business-decision brief; this record's own arithmetic (Requirements 1-2,
   resolved**: standard periods and calendar-quarter convention approved
   (`REQ-ECON-004` Requirements 1-2); the broader "YoY decomposition
   method" question is now understood to be the same D5 waterfall
-  question, scoped down to outcome volume, not economics — D10.
+  question, resolved by `REQ-ECON-005` — D10.
 
 ## Affected modules
 
@@ -259,10 +259,9 @@ behaviour into approved authority.
 
 ## Unresolved decisions
 
-D5 (waterfall computation method, gated behind a required design note)
-and D7 (FX conversion policy, Finance-owned and blocked) in
-`docs/wp2_outcome_valuation_decision_package.md`. D1-D4, D6, D8, D9, and
-D10 are resolved by `REQ-ECON-002`/`REQ-ECON-003`/`REQ-ECON-004`. None of
+D7 (FX conversion policy, Finance-owned and blocked) in `docs/wp2_
+outcome_valuation_decision_package.md`. D1-D6 and D8-D10 are resolved by
+`REQ-ECON-002`/`REQ-ECON-003`/`REQ-ECON-004`/`REQ-ECON-005`. None of
 D1-D10 ever affected the arithmetic this record approves; they affect
 only what is fed into it.
 

@@ -10,11 +10,14 @@ reviewed this package and approved business decisions closing D1, D2, D3,
 D4, D6, D8, D9, and D10 — see "## Business decisions approved (2026-08-28)"
 below for the resolutions, each reconciled into `docs/approved_
 requirements/REQ-ECON-002.md`, `REQ-ECON-003.md`, and `REQ-ECON-004.md`.
-**D5 (waterfall computation method) and D7 (FX conversion policy) remain
-open** — D5 pending a required calculation/design note, D7 pending
-Finance approval via `docs/wp7_governed_fx_finance_decision_package.md`.
-The D1-D10 analysis below is preserved as the record of what was
-open before this update.
+
+**Status (2026-08-28, WP2F-design update):** D5 (waterfall computation
+method) is now also resolved, via the required calculation/design note
+(`docs/wp2f_contribution_waterfall_design_note.md`) reconciled into
+`REQ-ECON-005`. **Only D7 (FX conversion policy) remains open**,
+pending Finance approval via `docs/wp7_governed_fx_finance_decision_
+package.md`. The D1-D10 analysis below is preserved as the record of
+what was open before these updates.
 
 ## Why this package exists
 
@@ -400,7 +403,7 @@ segment-specific or one overall value across eligible segments),
 persisted as part of the scenario definition and clearly distinguished
 from observed historical data.
 
-### D5 — scope resolved; computation method still open, gated behind a required design note
+### D5 — resolved: `REQ-ECON-005`, per `docs/wp2f_contribution_waterfall_design_note.md`
 
 The requested "waterfall" is confirmed to be a **period-over-period
 outcome-volume contribution bridge** (e.g. 10,000 sales in Period A to
@@ -409,20 +412,27 @@ an incremental-value-minus-cost or FX/mix economic decomposition. This
 resolves the D5/D10 ambiguity between an outcome-volume bridge and an
 economic (CPA/ROI/FX) decomposition in favour of the former — none of
 D5-A/B/C (which were framed around an economic decomposition) is
-selected as originally posed. Desired contributors include model-
-supported components — channels, and non-media/contextual effects
-(base/intercept, seasonality, controls/context, residual/unexplained) —
-wherever the model can legitimately decompose them; the exact
-allocation/ordering **method** that makes such a bridge mathematically
-reconcile is explicitly **not** approved by this update. Per the
-business-decision brief: *"Do not implement the waterfall until you have
-documented exactly how the existing posterior contribution artefacts can
-produce a mathematically reconciling Period A → Period B bridge... Create
-a focused calculation/design note first and prove the bridge reconciles
-on deterministic test data before implementing UI."* That design note is
-a required deliverable of WP2F, not of this package, and no `REQ-ECON-*`
-record covers the waterfall's computation method until it exists and is
-proven.
+selected as originally posed.
+
+Per the business-decision brief's own required process: *"Do not
+implement the waterfall until you have documented exactly how the
+existing posterior contribution artefacts can produce a mathematically
+reconciling Period A → Period B bridge... Create a focused calculation/
+design note first and prove the bridge reconciles on deterministic test
+data before implementing UI."* That design note
+(`docs/wp2f_contribution_waterfall_design_note.md`, 2026-08-28) has now
+been produced and reconciled into `REQ-ECON-005`: the method is a
+generalisation of the already-shipped `core.attribution.compute_
+shapley_contributions` Shapley convention to the model's genuinely
+time-varying `eta` terms (trend, seasonality, promotions, controls,
+channels), with `intercept`/market offset excluded by construction
+(proven time-invariant for a fixed market/outcome) and **no residual/
+unexplained term required** (the player list is exhaustive over the
+model's own additive structure). The design note proves the
+reconciliation invariant holds exactly regardless of Monte Carlo
+sampling, with worked deterministic examples. No decision package was
+required for this resolution — see `REQ-ECON-005`'s "Approval basis"
+section for why.
 
 ### D6 — resolved: `REQ-ECON-004` Requirement 3 (a variant of candidate D6-B)
 
@@ -483,13 +493,11 @@ remains unaddressed by this workstream and is not claimed to be resolved.
 
 ## What this package does not decide
 
-- **D5's exact waterfall computation/allocation method** — gated behind
-  a required calculation/design note (WP2F), proven on deterministic
-  test data, before any further authority record or UI code.
 - **D7, FX conversion policy in full** — remains entirely Finance-owned
   and blocked behind `docs/wp7_governed_fx_finance_decision_package.md`.
   Only the FX-neutral currency-identification interface is authorised
-  (`REQ-ECON-002` Requirement 7).
+  (`REQ-ECON-002` Requirement 7). (D5, the waterfall's computation
+  method, is resolved — see `REQ-ECON-005`.)
 - Whether this capability is scheduled ahead of, or behind, any other
   open work-package item.
 - Any `core`, `application`, or `pages` code change — none accompanies
@@ -501,11 +509,11 @@ remains unaddressed by this workstream and is not claimed to be resolved.
 **Owner:** Finance (business ownership of FH LTR and DNA revenue; FX
 policy under D7), Analytics (production of the underlying valuation
 numbers), Product (reporting-dimension and comparison scope),
-Modelling/Platform engineering (architecture and implementation once
-each decision lands, and the D5 design note).
+Modelling/Platform engineering (architecture and implementation).
 
 **Status:** D1-D4, D6, D8, D9, D10 resolved and reconciled into
 `REQ-ECON-002`/`REQ-ECON-003`/`REQ-ECON-004` (2026-08-28). D5 (waterfall
-method) and D7 (FX policy) remain open. `REQ-ECON-001` was, and remains,
-unaffected by any item in this package — it was always resolved on its
-own, narrower arithmetic scope.
+method) resolved and reconciled into `REQ-ECON-005` (2026-08-28). Only
+D7 (FX policy) remains open. `REQ-ECON-001` was, and remains, unaffected
+by any item in this package — it was always resolved on its own,
+narrower arithmetic scope.
