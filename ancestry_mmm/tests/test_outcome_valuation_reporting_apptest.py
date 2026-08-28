@@ -240,9 +240,6 @@ class TestEconomicValuationReportingHappyPath:
         at.selectbox(key="ev_report_period").set_value("2024-01").run()
         assert not at.exception
 
-        assert not any(
-            "Missing governed valuation coverage" in e.value for e in at.error
-        )
         metric_labels = [m.label for m in at.metric]
         assert "Incremental value" in metric_labels
         assert "Attributable spend" in metric_labels
@@ -297,3 +294,62 @@ class TestEconomicValuationFailsClosed:
         assert any("Missing governed valuation coverage" in e for e in errors)
         metric_labels = [m.label for m in at.metric]
         assert "ROI" not in metric_labels
+
+
+class TestPeriodComparison:
+    """WP2E: explicit two-period comparison section."""
+
+    def test_comparing_two_covered_weeks_shows_change_metrics(self):
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_session_state(at, valuation_records=_january_records())
+        at.run()
+
+        at.selectbox(key="ev_cmp_a_grain").set_value("Week").run()
+        at.selectbox(key="ev_cmp_a_week").set_value("2024-01-07").run()
+        at.selectbox(key="ev_cmp_b_grain").set_value("Week").run()
+        at.selectbox(key="ev_cmp_b_week").set_value("2024-01-14").run()
+        assert not at.exception
+
+        metric_labels = [m.label for m in at.metric]
+        assert "Incremental value - Period A" in metric_labels
+        assert "Incremental value - Period B" in metric_labels
+        assert "Incremental value - change" in metric_labels
+        assert "ROI - Period A" in metric_labels
+        headings = [m.value for m in at.markdown]
+        assert any("Change from Period A to Period B" in h for h in headings)
+
+    def test_comparing_an_uncovered_period_shows_error_not_fabricated_comparison(self):
+        """Only January has coverage; the fixture's default latest-week
+        selection (into April) is uncovered on both sides by default -
+        the comparison must show each period's own error, never a
+        fabricated delta."""
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_session_state(at, valuation_records=_january_records())
+        at.run()
+        assert not at.exception
+
+        errors = [e.value for e in at.error]
+        assert any("Missing governed valuation coverage" in e for e in errors)
+        metric_labels = [m.label for m in at.metric]
+        assert "Incremental value - change" not in metric_labels
+
+    def test_comparing_a_covered_and_an_uncovered_period(self):
+        """Period A covered, Period B not - each period's own card
+        renders independently and no cross-period delta is fabricated
+        from only one side."""
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_session_state(at, valuation_records=_january_records())
+        at.run()
+
+        at.selectbox(key="ev_cmp_a_grain").set_value("Week").run()
+        at.selectbox(key="ev_cmp_a_week").set_value("2024-01-07").run()
+        at.selectbox(key="ev_cmp_b_grain").set_value("Week").run()
+        at.selectbox(key="ev_cmp_b_week").set_value("2024-04-21").run()
+        assert not at.exception
+
+        errors = [e.value for e in at.error]
+        assert any("Missing governed valuation coverage" in e for e in errors)
+        metric_labels = [m.label for m in at.metric]
+        assert "Incremental value - change" not in metric_labels
+        # Period A's own card still renders successfully.
+        assert "Incremental value" in metric_labels

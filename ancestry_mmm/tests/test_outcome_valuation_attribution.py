@@ -175,3 +175,23 @@ class TestSummarizePosteriorEconomicAttribution:
         assert artefact.incremental_value_lower < artefact.incremental_value_mean
         assert artefact.incremental_value_mean < artefact.incremental_value_upper
         assert artefact.incremental_value_n_draws == 500
+
+    def test_incremental_outcome_summary_is_the_raw_pre_join_draws(self):
+        """WP2E: incremental_outcome_* summarises the same draws this
+        artefact is built from, summed per draw, *before* the value
+        join - independent of the rates' value_per_unit."""
+        draws = np.array([[10.0, 20.0], [12.0, 18.0], [8.0, 22.0]])
+        rates = [_rate("2025-01-06", 5.0), _rate("2025-01-13", 10.0)]
+        artefact = summarize_posterior_economic_attribution(draws, rates)
+        # draw totals (raw outcome units, not value): 30, 30, 30
+        assert artefact.incremental_outcome_mean == pytest.approx(30.0)
+        assert artefact.incremental_outcome_median == pytest.approx(30.0)
+
+    def test_incremental_outcome_summary_available_without_spend(self):
+        """The raw-outcome summary never depends on spend/ROI being
+        available - REQ-ECON-001's CPA-vs-ROI split."""
+        draws = np.array([[10.0, 20.0]])
+        rates = [_rate("2025-01-06", 5.0), _rate("2025-01-13", 10.0)]
+        artefact = summarize_posterior_economic_attribution(draws, rates, spend=None)
+        assert artefact.incremental_outcome_mean == pytest.approx(30.0)
+        assert artefact.roi_mean is None

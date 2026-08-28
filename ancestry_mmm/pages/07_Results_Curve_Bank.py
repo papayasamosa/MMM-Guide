@@ -315,6 +315,61 @@ def _render_outcome_valuation_catalogue_editor(meta, outcome_definitions, record
             st.rerun()
 
 
+_EV_PERIOD_SELECTOR_UNRESOLVABLE = object()
+
+
+def _render_period_selector(available_weeks, market, key_prefix, *, columns=None):
+    """Shared week/month/quarter/year/custom-range period selector
+    (WP2D-ui/WP2E). Returns `(grain, period_label, custom_start,
+    custom_end)`, or `_EV_PERIOD_SELECTOR_UNRESOLVABLE` after already
+    rendering its own explicit empty state when a calendar grain has no
+    periods available for `market` - callers must check for that
+    sentinel and return early without rendering anything further.
+    `key_prefix` keeps widget keys unique across the single-period view
+    and each side of a two-period comparison."""
+    c3, c4 = columns or st.columns(2)
+    grain_label = c3.selectbox(
+        "Period", list(_EV_GRAIN_LABELS), key=f"{key_prefix}_grain"
+    )
+    grain = _EV_GRAIN_LABELS[grain_label]
+
+    period_label = None
+    custom_start = None
+    custom_end = None
+    if grain == PERIOD_GRAIN_WEEK:
+        period_label = c4.selectbox(
+            "Week",
+            available_weeks,
+            index=len(available_weeks) - 1,
+            key=f"{key_prefix}_week",
+        )
+    elif grain == PERIOD_GRAIN_CUSTOM:
+        d1, d2 = st.columns(2)
+        custom_start = d1.selectbox(
+            "From week", available_weeks, key=f"{key_prefix}_custom_start"
+        )
+        custom_end = d2.selectbox(
+            "To week",
+            available_weeks,
+            index=len(available_weeks) - 1,
+            key=f"{key_prefix}_custom_end",
+        )
+    else:
+        period_options = distinct_calendar_periods(available_weeks, grain)
+        if not period_options:
+            render_empty_state(
+                f"No {grain_label.lower()}s are available for market '{market}' yet."
+            )
+            return _EV_PERIOD_SELECTOR_UNRESOLVABLE
+        period_label = c4.selectbox(
+            grain_label,
+            period_options,
+            index=len(period_options) - 1,
+            key=f"{key_prefix}_period",
+        )
+    return grain, period_label, custom_start, custom_end
+
+
 def _render_economic_valuation_reporting(meta, trace, frame, records):
     """Historical ROI/incremental-value reporting (WP2D-ui). Routes every
     calculation through `OutcomeValuationReportingService` - one join
@@ -360,45 +415,12 @@ def _render_economic_valuation_reporting(meta, trace, frame, records):
         st.error(str(exc))
         return
 
-    c3, c4 = st.columns(2)
-    grain_label = c3.selectbox("Period", list(_EV_GRAIN_LABELS), key="ev_report_grain")
-    grain = _EV_GRAIN_LABELS[grain_label]
-
-    period_label = None
-    custom_start = None
-    custom_end = None
-    if grain == PERIOD_GRAIN_WEEK:
-        period_label = c4.selectbox(
-            "Week",
-            available_weeks,
-            index=len(available_weeks) - 1,
-            key="ev_report_week",
-        )
-    elif grain == PERIOD_GRAIN_CUSTOM:
-        d1, d2 = st.columns(2)
-        custom_start = d1.selectbox(
-            "From week", available_weeks, key="ev_report_custom_start"
-        )
-        custom_end = d2.selectbox(
-            "To week",
-            available_weeks,
-            index=len(available_weeks) - 1,
-            key="ev_report_custom_end",
-        )
-    else:
-        period_options = distinct_calendar_periods(available_weeks, grain)
-        if not period_options:
-            render_empty_state(
-                f"No {grain_label.lower()}s are available for market "
-                f"'{report_market}' yet."
-            )
-            return
-        period_label = c4.selectbox(
-            grain_label,
-            period_options,
-            index=len(period_options) - 1,
-            key="ev_report_period",
-        )
+    period_selection = _render_period_selector(
+        available_weeks, report_market, "ev_report"
+    )
+    if period_selection is _EV_PERIOD_SELECTOR_UNRESOLVABLE:
+        return
+    grain, period_label, custom_start, custom_end = period_selection
 
     st.markdown("#### Reporting dimension")
     dim1, dim2 = st.columns(2)
@@ -434,6 +456,17 @@ def _render_economic_valuation_reporting(meta, trace, frame, records):
     with st.spinner("Computing posterior incremental value..."):
         result = OutcomeValuationReportingService().evaluate_period(request)
 
+    _render_valuation_result(result)
+
+
+def _render_valuation_result(result, *, heading=None, key_suffix=""):
+    """Shared single-period result card (WP2D-ui/WP2E): resolved-week
+    disclosure, headline metrics, and a posterior-uncertainty detail
+    expander. Reused for the single-period view and for each side of a
+    two-period comparison so both present the identical governed
+    numbers, never a second formatting/rounding path."""
+    if heading:
+        st.markdown(f"**{heading}**")
     if result.errors:
         for error in result.errors:
             st.error(error)
@@ -458,7 +491,7 @@ def _render_economic_valuation_reporting(meta, trace, frame, records):
     roi_statement = format_roi_statement(attribution.roi_mean, attribution.currency)
     m3.metric("ROI", roi_statement if roi_statement else "Not available")
 
-    with st.expander("Posterior uncertainty and detail"):
+    with st.expander("Posterior uncertainty and detail", key=f"ev_detail{key_suffix}"):
         st.write(
             f"{attribution.credible_mass:.0%} credible interval: "
             f"{format_currency(attribution.incremental_value_lower, attribution.currency)} "
@@ -475,6 +508,159 @@ def _render_economic_valuation_reporting(meta, trace, frame, records):
                 "ROI is not shown - attributable spend for this selection "
                 "is zero or unavailable."
             )
+
+
+def _render_metric_comparison_row(label, comparison, currency, *, is_roi=False):
+    if comparison is None:
+        st.write(f"{label}: not available for both periods.")
+        return
+    formatter = (
+        (lambda v: format_roi_statement(v, currency) or "Not available")
+        if is_roi
+        else (lambda v: format_currency(v, currency))
+    )
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric(f"{label} - Period A", formatter(comparison.period_a_value))
+    c2.metric(f"{label} - Period B", formatter(comparison.period_b_value))
+    c3.metric(f"{label} - change", formatter(comparison.absolute_change))
+    if comparison.percentage_change is not None:
+        c4.metric(f"{label} - % change", f"{comparison.percentage_change:+.1%}")
+    else:
+        c4.metric(f"{label} - % change", "Not available")
+        c4.caption(comparison.percentage_change_unavailable_reason or "")
+
+
+def _render_period_comparison(meta, trace, frame, records):
+    """Explicit two-period comparison (WP2E). Shares the market/
+    valuation-kind/segment/dimension selection across both periods -
+    only "when", not "what", varies - and routes both periods through
+    `OutcomeValuationReportingService.compare_periods()`, which itself
+    calls the identical `evaluate_period()` used by the single-period
+    view above."""
+    c1, c2 = st.columns(2)
+    cmp_market = c1.selectbox("Market", meta.markets, key="ev_cmp_market")
+    cmp_kind_label = c2.selectbox(
+        "Valuation kind", list(_EV_VALUATION_KIND_LABELS), key="ev_cmp_kind"
+    )
+    cmp_valuation_kind = _EV_VALUATION_KIND_LABELS[cmp_kind_label]
+
+    segment_options = sorted(
+        {
+            r.segment
+            for r in records
+            if r.market == cmp_market and r.valuation_kind == cmp_valuation_kind
+        }
+    )
+    if not segment_options:
+        render_empty_state(
+            f"No governed '{cmp_kind_label}' valuation records for market "
+            f"'{cmp_market}' yet - add catalogue rows above before "
+            "comparing periods."
+        )
+        return
+    cmp_segment = st.selectbox("Segment", segment_options, key="ev_cmp_segment")
+
+    denominator_ids = sorted(
+        {
+            r.denominator_outcome_id
+            for r in records
+            if r.market == cmp_market
+            and r.valuation_kind == cmp_valuation_kind
+            and r.segment == cmp_segment
+        }
+    )
+
+    dim1, dim2 = st.columns(2)
+    dimension = dim1.radio(
+        "Break out by",
+        ["Total (all media)", "Single channel"],
+        key="ev_cmp_dimension",
+    )
+    channel = None
+    if dimension == "Single channel":
+        channel = dim2.selectbox("Channel", meta.channels, key="ev_cmp_channel")
+
+    try:
+        available_weeks = available_weeks_for_market(frame, meta, cmp_market)
+    except OutcomeValuationReportingCoverageError as exc:
+        st.error(str(exc))
+        return
+
+    pa_col, pb_col = st.columns(2)
+    with pa_col:
+        st.markdown("**Period A**")
+        selection_a = _render_period_selector(
+            available_weeks, cmp_market, "ev_cmp_a", columns=st.columns(2)
+        )
+    with pb_col:
+        st.markdown("**Period B**")
+        selection_b = _render_period_selector(
+            available_weeks, cmp_market, "ev_cmp_b", columns=st.columns(2)
+        )
+    if (
+        selection_a is _EV_PERIOD_SELECTOR_UNRESOLVABLE
+        or selection_b is _EV_PERIOD_SELECTOR_UNRESOLVABLE
+    ):
+        return
+    grain_a, period_label_a, custom_start_a, custom_end_a = selection_a
+    grain_b, period_label_b, custom_start_b, custom_end_b = selection_b
+
+    common = dict(
+        market=cmp_market,
+        trace=trace,
+        frame=frame,
+        meta=meta,
+        outcome_ids=denominator_ids,
+        segment=cmp_segment,
+        valuation_kind=cmp_valuation_kind,
+        weekly_valuation_records=records,
+        channel=channel,
+    )
+    request_a = HistoricalOutcomeValuationRequest(
+        grain=grain_a,
+        period_label=period_label_a,
+        custom_range_start=custom_start_a,
+        custom_range_end=custom_end_a,
+        **common,
+    )
+    request_b = HistoricalOutcomeValuationRequest(
+        grain=grain_b,
+        period_label=period_label_b,
+        custom_range_start=custom_start_b,
+        custom_range_end=custom_end_b,
+        **common,
+    )
+    with st.spinner("Computing posterior incremental value for both periods..."):
+        comparison = OutcomeValuationReportingService().compare_periods(
+            request_a, request_b
+        )
+
+    pa_col, pb_col = st.columns(2)
+    with pa_col:
+        _render_valuation_result(
+            comparison.period_a, heading="Period A", key_suffix="_cmp_a"
+        )
+    with pb_col:
+        _render_valuation_result(
+            comparison.period_b, heading="Period B", key_suffix="_cmp_b"
+        )
+
+    if (
+        comparison.period_a.attribution is None
+        or comparison.period_b.attribution is None
+    ):
+        return
+
+    st.markdown("#### Change from Period A to Period B")
+    currency = comparison.period_a.attribution.currency
+    _render_metric_comparison_row(
+        "Incremental outcome", comparison.incremental_outcome, currency
+    )
+    _render_metric_comparison_row(
+        "Incremental value", comparison.incremental_value, currency
+    )
+    _render_metric_comparison_row("Attributable spend", comparison.spend, currency)
+    _render_metric_comparison_row("ROI", comparison.roi, currency, is_roi=True)
 
 
 def _render_economic_valuation_section(meta, trace, frame, outcome_definitions):
@@ -500,6 +686,14 @@ def _render_economic_valuation_section(meta, trace, frame, outcome_definitions):
         return
 
     _render_economic_valuation_reporting(meta, trace, frame, records)
+
+    st.markdown("#### Compare two periods")
+    st.caption(
+        "Explicit period-over-period comparison (e.g. Q1 2025 vs Q1 2026) "
+        "- reuses the identical single-period calculation above for both "
+        "periods, never a second calculation path."
+    )
+    _render_period_comparison(meta, trace, frame, records)
 
 
 def _display_outcome(value, outcome_labels):
