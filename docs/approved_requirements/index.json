@@ -1386,10 +1386,11 @@
       "record_path": "docs/approved_requirements/REQ-ECON-003.md",
       "affected_modules": [
         "ancestry_mmm/core/outcome_valuation_rates.py",
+        "ancestry_mmm/core/outcome_valuation_attribution.py",
+        "ancestry_mmm/core/uncertainty.py",
         "ancestry_mmm/core/canonical_curves.py",
         "ancestry_mmm/core/attribution.py",
         "ancestry_mmm/core/optimization.py",
-        "ancestry_mmm/core/uncertainty.py",
         "ancestry_mmm/core/planning/value.py",
         "ancestry_mmm/application/scenario_service.py"
       ],
@@ -1406,7 +1407,10 @@
         "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_003_fixes_value_uncertainty_treatment",
         "ancestry_mmm/tests/test_outcome_valuation_rates.py::TestZeroDenominatorCarveOut::test_never_actually_divides_by_zero",
         "ancestry_mmm/tests/test_outcome_valuation_rates.py::TestInconsistentCasesAreSurfaced::test_nonzero_value_with_zero_denominator_blocks",
-        "ancestry_mmm/tests/test_outcome_valuation_rates.py::TestOrdinaryDivision::test_derives_the_expected_rate"
+        "ancestry_mmm/tests/test_outcome_valuation_rates.py::TestOrdinaryDivision::test_derives_the_expected_rate",
+        "ancestry_mmm/tests/test_outcome_valuation_attribution.py::TestWeeklyGrainOrderingInvariant::test_join_then_aggregate_differs_from_aggregate_then_average_rate",
+        "ancestry_mmm/tests/test_outcome_valuation_attribution.py::TestSummarizePosteriorEconomicAttribution::test_credible_interval_uses_the_existing_governed_convention",
+        "ancestry_mmm/tests/test_outcome_valuation_attribution.py::TestSummarizePosteriorEconomicAttribution::test_zero_spend_means_no_roi"
       ]
     },
     {

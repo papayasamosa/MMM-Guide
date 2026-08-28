@@ -8210,3 +8210,64 @@ updated). Mypy baseline unchanged at 225. No other `core`,
 per `REQ-ECON-003`).
 **Status:** WP2B complete and merged pending CI. WP2C (posterior
 economic attribution) is next.
+
+**Date:** 2026-08-28
+**Decision:** Implement WP2C (posterior economic attribution) against
+`REQ-ECON-003` Requirements 3-4. New
+`ancestry_mmm/core/outcome_valuation_attribution.py`:
+`join_incremental_outcome_draws_to_value` multiplies a `(n_draws,
+n_weeks)` posterior incremental-outcome-draw array by the WP2B-derived
+`value_per_unit` rate, elementwise per week, returning the joined
+`(n_draws, n_weeks)` value draws unaggregated;
+`aggregate_incremental_value_draws` sums over weeks only after that
+join; `summarize_posterior_economic_attribution` runs the full
+pipeline and summarises the resulting incremental-value and (when spend
+is positive) ROI posterior distributions via the existing
+`core.uncertainty.summarize_distribution` credible-interval convention,
+never inventing a new interval. A dedicated regression test
+(`TestWeeklyGrainOrderingInvariant`) constructs deliberately anti-
+correlated outcome/rate data to prove join-then-aggregate produces a
+materially different (and correct) result from the forbidden aggregate-
+then-multiply-by-average-rate shortcut, and a companion test confirms
+the two methods agree only when the rate is genuinely constant across
+weeks - isolating that the discrepancy comes from week-varying rates,
+not a bug in either computation path.
+
+Supplied FH/DNA values remain fixed, non-drawn business inputs
+throughout - `value_per_unit` is a single scalar per week, identical
+across every draw for that week; only the incremental-outcome-count
+axis varies by draw, per the business decision's explicit "do not
+manufacture uncertainty around those supplied values."
+
+**Alternatives considered:** allowing `join_incremental_outcome_draws_to_value`
+to silently sum over weeks and return one column (rejected - collapsing
+the weekly axis inside the join function would make it impossible for
+a caller to verify, by construction, that aggregation happened after
+the join rather than before; keeping the unaggregated `(n_draws,
+n_weeks)` return value and a separate, explicitly-named aggregation
+function makes the required ordering structurally visible and
+independently testable); computing ROI whenever spend is supplied
+regardless of sign (rejected - REQ-ECON-001 never fabricates a ROI
+figure from a zero or negative spend denominator; `spend is not None
+and spend > 0` is the explicit gate, tested for both the `None` and
+`0.0` cases).
+
+**Impact:** New `ancestry_mmm/core/outcome_valuation_attribution.py`,
+`ancestry_mmm/tests/test_outcome_valuation_attribution.py` (14 tests).
+Modified: `docs/approved_requirements/REQ-ECON-003.md` (Affected
+modules/Required tests/Migration impact updated to record WP2C's
+delivery, marking Requirements 1-4 of 5 now implemented),
+`docs/approved_requirements/index.json` (3 new required_tests entries),
+`docs/specification_authority.md` (REQ-ECON-003's gap-table row
+updated). Mypy baseline unchanged at 225. No other `core`,
+`application`, or `pages` code changed - `core.canonical_curves`/
+`core.attribution`/`core.optimization`'s existing scalar
+`value_per_response`/`ltv` call sites are untouched; wiring the new
+artefact into them is deferred as a separate, future-scoped
+integration step, not part of this PR.
+**Owner:** Modelling / Platform engineering (implemented autonomously,
+per `REQ-ECON-003`).
+**Status:** WP2C complete and merged pending CI. WP2D (historical
+Results UI) is next, or WP2G (Scenario Planner forward-assumption
+contract) if UI work is deferred - the governing brief's proposed
+sequence lists WP2D next.

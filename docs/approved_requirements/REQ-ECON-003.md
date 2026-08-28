@@ -159,17 +159,30 @@ computes `value_per_unit(market, week, segment)` from a
 counts, with the zero-denominator carve-out and every inconsistent case
 surfaced as a blocking issue rather than guessed.
 
-Not yet delivered (WP2C/WP2G, not created by this WP2B delivery):
-Requirement 3's draw-level posterior join and Requirement 4's
-uncertainty-propagation contract — anticipated in
-`ancestry_mmm/core/canonical_curves.py`, `ancestry_mmm/core/attribution.py`,
-`ancestry_mmm/core/optimization.py` (extending the existing scalar
-`value_per_response`/`ltv` lookups to the week-indexed rate this WP2B
-delivery produces), and `ancestry_mmm/core/uncertainty.py` (reuse of
-`summarize_distribution`); Requirement 5's forward-assumption contract,
+**WP2C delivered (2026-08-28):** `ancestry_mmm/core/outcome_valuation_attribution.py`
+(new module) implements Requirements 3-4 —
+`join_incremental_outcome_draws_to_value` performs the draw-level,
+weekly-grain join (`(n_draws, n_weeks)` shaped, elementwise by week,
+deliberately not summed); `aggregate_incremental_value_draws` sums only
+after the join; `summarize_posterior_economic_attribution` produces the
+governed `PosteriorEconomicAttribution` artefact (incremental-value and,
+when spend is positive, ROI, both summarised via the existing
+`core.uncertainty.summarize_distribution` credible-interval convention -
+no new interval invented). A dedicated regression test proves
+join-then-aggregate differs from the forbidden aggregate-then-average-
+rate shortcut whenever rates vary by week, and agrees with it only when
+the rate is genuinely constant.
+
+Not yet delivered (WP2G, not created by this WP2C delivery):
+Requirement 5's forward-assumption contract for Scenario Planner,
 anticipated in `ancestry_mmm/core/planning/value.py`,
 `ancestry_mmm/application/scenario_service.py`, and
-`ancestry_mmm/pages/08_Scenario_Planner.py`.
+`ancestry_mmm/pages/08_Scenario_Planner.py`; and wiring
+`outcome_valuation_attribution.py`'s artefact into the existing
+`core.canonical_curves.py`/`core.attribution.py`/`core.optimization.py`
+CPA/ROI call sites (REQ-ECON-001's existing scalar
+`value_per_response`/`ltv` lookups remain unchanged and untouched by
+this delivery - integration is a separate, future-scoped step).
 
 ## Required tests
 
@@ -186,11 +199,15 @@ anticipated in `ancestry_mmm/core/planning/value.py`,
 - `ancestry_mmm/tests/test_outcome_valuation_rates.py::TestZeroDenominatorCarveOut::test_never_actually_divides_by_zero`
 - `ancestry_mmm/tests/test_outcome_valuation_rates.py::TestInconsistentCasesAreSurfaced::test_nonzero_value_with_zero_denominator_blocks`
 - `ancestry_mmm/tests/test_outcome_valuation_rates.py::TestOrdinaryDivision::test_derives_the_expected_rate`
+- `ancestry_mmm/tests/test_outcome_valuation_attribution.py::TestWeeklyGrainOrderingInvariant::test_join_then_aggregate_differs_from_aggregate_then_average_rate`
+- `ancestry_mmm/tests/test_outcome_valuation_attribution.py::TestSummarizePosteriorEconomicAttribution::test_credible_interval_uses_the_existing_governed_convention`
+- `ancestry_mmm/tests/test_outcome_valuation_attribution.py::TestSummarizePosteriorEconomicAttribution::test_zero_spend_means_no_roi`
 
 ## Migration impact
 
-None. `outcome_valuation_rates.py` is an entirely new, additive module.
-No existing schema, persisted artefact, or application code changed.
+None. `outcome_valuation_rates.py` and `outcome_valuation_attribution.py`
+are entirely new, additive modules. No existing schema, persisted
+artefact, or application code changed.
 
 ## Unresolved decisions
 
