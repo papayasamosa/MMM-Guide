@@ -669,3 +669,73 @@ def test_diagnostics_wp2_evidence_sections_render_in_browser(
         e for e in console_errors if "favicon" not in e.lower()
     ]
     assert unexpected_console_errors == [], unexpected_console_errors
+
+
+def test_economic_valuation_section_renders_in_browser(
+    page: Page, streamlit_base_url: str, bundle_path: Path
+) -> None:
+    """WP2D-ui: the new "Economic outcome valuation & ROI" section on
+    pages/07_Results_Curve_Bank.py renders in a real browser against a
+    real imported project, without crashing the page - reuses this
+    module's already-running Streamlit server and deterministic bundle.
+    The calculation/reporting logic already has dedicated core
+    (test_outcome_valuation_reporting.py), application
+    (test_outcome_valuation_reporting_service.py), and AppTest
+    (test_outcome_valuation_reporting_apptest.py) coverage; this test's
+    job is real-browser rendering/navigation only. This fixture bundle
+    has no governed outcome-valuation catalogue rows, so the section
+    must render its explicit fail-closed empty state, never crash or
+    fabricate a report.
+    """
+    console_errors: list[str] = []
+    page.on(
+        "console",
+        lambda msg: console_errors.append(msg.text) if msg.type == "error" else None,
+    )
+
+    page.goto(streamlit_base_url, wait_until="load")
+    expect(
+        page.get_by_test_id("stSidebarUserContent").get_by_text(
+            "Family History & DNA MMM"
+        )
+    ).to_be_visible(timeout=60_000)
+
+    page.get_by_role("link", name="Export & Recovery").click()
+    expect(
+        page.get_by_text("Upload a previously exported .zip", exact=True)
+    ).to_be_visible(timeout=30_000)
+    page.locator("input[type=file]").set_input_files(str(bundle_path))
+    import_button = page.get_by_role("button", name="Import bundle")
+    expect(import_button).to_be_enabled(timeout=30_000)
+    import_button.click()
+    expect(
+        page.get_by_text(
+            "Project imported. Review each page to pick up where you left off.",
+            exact=True,
+        )
+    ).to_be_visible(timeout=30_000)
+
+    page.get_by_role("link", name="Results & Response Curves").click()
+    expect(page.get_by_text("Results dashboard", exact=True)).to_be_visible(
+        timeout=30_000
+    )
+    heading = page.get_by_text("Economic outcome valuation & ROI", exact=True)
+    heading.scroll_into_view_if_needed(timeout=30_000)
+    expect(heading).to_be_visible(timeout=30_000)
+    expect(
+        page.get_by_text("No governed outcome-valuation records yet.", exact=False)
+    ).to_be_visible(timeout=30_000)
+
+    catalogue_expander = page.get_by_text(
+        "Governed valuation catalogue (Finance-supplied inputs)", exact=True
+    )
+    expect(catalogue_expander).to_be_visible(timeout=30_000)
+    catalogue_expander.click()
+    expect(page.get_by_text("One row per valuation kind", exact=False)).to_be_visible(
+        timeout=30_000
+    )
+
+    unexpected_console_errors = [
+        e for e in console_errors if "favicon" not in e.lower()
+    ]
+    assert unexpected_console_errors == [], unexpected_console_errors
