@@ -69,6 +69,12 @@ from ancestry_mmm.core.outcome_approval import (
     PlanningGovernanceError,
 )
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
+from ancestry_mmm.core.planning.value import (
+    DNA_VALUE_MODE_OVERALL,
+    DNA_VALUE_MODE_SEGMENT_SPECIFIC,
+    ScenarioValueAssumptions,
+    build_scenario_value_assumptions,
+)
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.optimization import (
     CurrencyContext,
@@ -1541,6 +1547,130 @@ if hasattr(meta, "outcome_catalogue_at_fit") and meta.outcome_catalogue_at_fit:
             None  # Mixed currencies among targets need an explicit FX layer
         )
 
+
+def _render_scenario_value_assumptions_editor(
+    meta, target_ids_for_value, default_currency
+):
+    """WP2G (`REQ-ECON-003` Requirement 5): explicit forward economic
+    value assumptions for this scenario - never extrapolated from
+    historical valuation. Saved (session-state key
+    "scenario_value_assumptions", exported/imported with the project
+    bundle exactly like value_mapping/currency_context) only when the
+    analyst explicitly clicks Save - live widget edits never silently
+    apply to evaluation before being confirmed."""
+    fh_ids = sorted(
+        set(fh_gsa_outcome_ids(meta))
+        | set(fh_signup_outcome_ids(meta))
+        | set(fh_net_billthrough_outcome_ids(meta))
+    )
+    dna_ids = sorted(dna_kit_sale_outcome_ids(meta))
+    fh_target_ids = [oid for oid in fh_ids if oid in target_ids_for_value]
+    dna_target_ids = [oid for oid in dna_ids if oid in target_ids_for_value]
+    if not fh_target_ids and not dna_target_ids:
+        return
+
+    outcome_labels = {
+        o.outcome_id: (o.segment or o.outcome_id)
+        for o in (meta.outcome_catalogue_at_fit or [])
+    }
+    stored = get_state("scenario_value_assumptions") or {}
+
+    with st.expander("Economic value assumptions (forward, for this scenario)"):
+        st.caption(
+            "Explicit future value assumptions for this scenario only - "
+            "never derived or extrapolated from historical valuation "
+            "data. Distinct from the Results page's historical ROI, "
+            "which reports what already happened."
+        )
+        currency = st.text_input(
+            "Currency (ISO-3)",
+            value=stored.get("currency") or default_currency or "",
+            key="sva_currency",
+            max_chars=3,
+        ).upper()
+
+        fh_values: dict[str, float] = {}
+        if fh_target_ids:
+            st.markdown("**Family History: LTR per outcome**")
+            for oid in fh_target_ids:
+                default_value = (stored.get("fh_value_by_outcome_id") or {}).get(
+                    oid, 0.0
+                )
+                fh_values[oid] = st.number_input(
+                    f"{outcome_labels.get(oid, oid)} ({oid})",
+                    min_value=0.0,
+                    value=float(default_value),
+                    key=f"sva_fh_{oid}",
+                )
+
+        dna_mode = DNA_VALUE_MODE_OVERALL
+        dna_overall_value: float | None = None
+        dna_values: dict[str, float] = {}
+        if dna_target_ids:
+            st.markdown("**DNA: average revenue per kit**")
+            dna_mode_label = st.radio(
+                "DNA value entry",
+                ["One overall value", "Segment-specific values"],
+                index=0
+                if stored.get("dna_mode") != DNA_VALUE_MODE_SEGMENT_SPECIFIC
+                else 1,
+                key="sva_dna_mode",
+            )
+            dna_mode = (
+                DNA_VALUE_MODE_OVERALL
+                if dna_mode_label == "One overall value"
+                else DNA_VALUE_MODE_SEGMENT_SPECIFIC
+            )
+            if dna_mode == DNA_VALUE_MODE_OVERALL:
+                stored_dna = stored.get("dna_value_by_outcome_id") or {}
+                default_overall = next(iter(stored_dna.values()), 0.0)
+                dna_overall_value = st.number_input(
+                    "Average revenue per kit (all DNA segments)",
+                    min_value=0.0,
+                    value=float(default_overall),
+                    key="sva_dna_overall",
+                )
+            else:
+                for oid in dna_target_ids:
+                    default_value = (stored.get("dna_value_by_outcome_id") or {}).get(
+                        oid, 0.0
+                    )
+                    dna_values[oid] = st.number_input(
+                        f"{outcome_labels.get(oid, oid)} ({oid})",
+                        min_value=0.0,
+                        value=float(default_value),
+                        key=f"sva_dna_{oid}",
+                    )
+
+        if not currency or len(currency) != 3:
+            st.warning(
+                "Enter a valid three-letter currency code to save value assumptions."
+            )
+            return
+
+        try:
+            assumptions = build_scenario_value_assumptions(
+                fh_value_by_outcome_id=fh_values,
+                dna_mode=dna_mode,
+                currency=currency,
+                dna_outcome_ids=dna_target_ids,
+                dna_overall_value=dna_overall_value,
+                dna_value_by_outcome_id=dna_values,
+            )
+        except ValueError as exc:
+            st.error(f"Value assumptions incomplete: {exc}")
+            return
+
+        if st.button("Save value assumptions", key="sva_save"):
+            set_state("scenario_value_assumptions", assumptions.to_dict())
+            st.success("Value assumptions saved with this scenario.")
+
+
+if objective == "expected_value" and _target_ids_for_value:
+    _render_scenario_value_assumptions_editor(
+        meta, _target_ids_for_value, value_currency
+    )
+
 # G2A.7a.10 (brief section 9, 11): one canonical OutcomeValueMapping drives
 # manual evaluation, both optimiser modes, and posterior uncertainty alike -
 # replacing the previous split where the objective resolved against
@@ -1549,6 +1679,28 @@ if hasattr(meta, "outcome_catalogue_at_fit") and meta.outcome_catalogue_at_fit:
 # segment-LTV adapter only when catalogue weights don't cover every target.
 value_mapping: OutcomeValueMapping | None = None
 if objective == "expected_value" and value_currency and _target_ids_for_value:
+    # WP2G (REQ-ECON-003 Requirement 5): an explicit, analyst-saved
+    # forward value assumption for these exact target outcomes takes
+    # precedence over every derived fallback below - never silently
+    # overridden by a catalogue-derived or legacy-segment-LTV value once
+    # the analyst has explicitly saved one.
+    _stored_scenario_value_assumptions = get_state("scenario_value_assumptions")
+    if _stored_scenario_value_assumptions:
+        try:
+            _scenario_value_assumptions = ScenarioValueAssumptions.from_dict(
+                _stored_scenario_value_assumptions
+            )
+            _assumptions_outcome_ids = set(
+                _scenario_value_assumptions.fh_value_by_outcome_id
+            ) | set(_scenario_value_assumptions.dna_value_by_outcome_id)
+            if (
+                _assumptions_outcome_ids == _target_ids_for_value
+                and _scenario_value_assumptions.currency == value_currency
+            ):
+                value_mapping = _scenario_value_assumptions.to_outcome_value_mapping()
+        except (TypeError, ValueError):
+            value_mapping = None
+
     # Fresh review finding: a stored value mapping (e.g. from an import) may
     # be a legitimately governed/curated mapping that isn't exactly
     # reproducible by either derivation path below (a custom mapping_id/
@@ -1561,25 +1713,33 @@ if objective == "expected_value" and value_currency and _target_ids_for_value:
     # selection), the stored mapping no longer describes this objective at
     # all, so re-deriving fresh below is correct, not a preservation
     # concern.
-    _stored_value_mapping_dict, _value_mapping_mapping_malformed = (
-        _validated_stored_mapping("value_mapping", label="value mapping")
-    )
-    if (
-        not _value_mapping_mapping_malformed
-        and _stored_value_mapping_dict
-        and set(_stored_value_mapping_dict.get("value_by_outcome_id") or {})
-        == _target_ids_for_value
-        and all(
-            currency == value_currency
-            for currency in (
-                _stored_value_mapping_dict.get("currency_by_outcome_id") or {}
-            ).values()
+    #
+    # WP2G: only reached when the explicit scenario_value_assumptions check
+    # above did not already resolve value_mapping - an explicitly saved
+    # forward assumption must never be silently clobbered by a stale
+    # leftover "value_mapping" from a previous rerun/import.
+    if value_mapping is None:
+        _stored_value_mapping_dict, _value_mapping_mapping_malformed = (
+            _validated_stored_mapping("value_mapping", label="value mapping")
         )
-    ):
-        try:
-            value_mapping = OutcomeValueMapping.from_dict(_stored_value_mapping_dict)
-        except (TypeError, ValueError):
-            value_mapping = None
+        if (
+            not _value_mapping_mapping_malformed
+            and _stored_value_mapping_dict
+            and set(_stored_value_mapping_dict.get("value_by_outcome_id") or {})
+            == _target_ids_for_value
+            and all(
+                currency == value_currency
+                for currency in (
+                    _stored_value_mapping_dict.get("currency_by_outcome_id") or {}
+                ).values()
+            )
+        ):
+            try:
+                value_mapping = OutcomeValueMapping.from_dict(
+                    _stored_value_mapping_dict
+                )
+            except (TypeError, ValueError):
+                value_mapping = None
     if value_mapping is None:
         _catalogue_target_weights = {
             oid: value_weights_by_outcome_id[oid]
@@ -1858,6 +2018,27 @@ def _render_steady_state_manual_tab():
         )
     total_label, total_value = _objective_totals[objective]
     st.metric(total_label, f"{total_value:,.0f}")
+    if objective == "expected_value" and value_mapping is not None:
+        with st.expander("Value assumptions used (forward, not historical)"):
+            st.caption(
+                "These are explicit, analyst-supplied future value "
+                "assumptions for this scenario - never derived or "
+                "extrapolated from historical valuation data."
+            )
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Outcome": outcome_labels.get(oid, oid),
+                            "outcome_id": oid,
+                            "Value per unit": value_mapping.value_by_outcome_id[oid],
+                            "Currency": value_mapping.currency_by_outcome_id[oid],
+                        }
+                        for oid in sorted(value_mapping.value_by_outcome_id)
+                    ]
+                ),
+                width="stretch",
+            )
 
     st.markdown("**Economics by month**")
     st.caption(

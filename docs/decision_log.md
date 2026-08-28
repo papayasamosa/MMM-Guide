@@ -8461,3 +8461,86 @@ per the business-decision brief's WP2F-implementation requirement).
 **Status:** WP2F implementation (core layer) complete pending CI. UI/
 AppTest/browser coverage for the waterfall chart follows in the same
 work package before merge.
+
+**Date:** 2026-08-28
+**Decision:** Implement Scenario Planner economic assumptions (WP2G,
+`REQ-ECON-003` Requirement 5 / `docs/wp2_outcome_valuation_decision_
+package.md` D4-A). Adds `core.planning.value.ScenarioValueAssumptions`
+and `build_scenario_value_assumptions()`, extending - not replacing -
+the existing `OutcomeValueMapping` mechanism Requirement 5 itself names
+as the base to extend. `ScenarioValueAssumptions` explicitly separates
+Family History LTR (per eligible FH outcome_id, restricted to whichever
+of `fh_gsa_outcome_ids`/`fh_signup_outcome_ids`/`fh_net_billthrough_
+outcome_ids` the fit's outcome catalogue actually supports) from DNA
+average revenue per kit, which requires an explicit `dna_mode` -
+`"overall"` (one value expanded across every DNA outcome_id, the
+expansion happening in exactly one place, never silently) or
+`"segment_specific"` (a genuine value per DNA outcome_id, with missing
+entries blocking rather than defaulting to 0.0). Both DNA
+representations are supported, as Requirement 5 requires, never just
+one. No field is ever pre-filled from historical valuation or from the
+fit-time `OutcomeDefinition.value_weight` catalogue config - every
+number input in the new Scenario Planner UI defaults to 0.0, forcing
+explicit analyst entry.
+
+Persistence: rather than embedding the assumption's content inside
+`core.optimization.scenario_to_dict`'s saved-scenario dict (a high-
+risk, invasive change to that module, and inconsistent with how every
+other governance dependency in this system - `model_approval`,
+`activity_definitions`, `counterfactual_policy`, the existing
+`value_mapping` itself - is persisted), `ScenarioValueAssumptions` is
+saved via the session-state key `"scenario_value_assumptions"`,
+travelling with the project bundle exactly like `value_mapping`/
+`currency_context` already do (`core.persistence`, PR 125A), and takes
+explicit precedence over every other `value_mapping` derivation path
+once saved (a new, first-checked branch in `08_Scenario_Planner.py`'s
+existing `value_mapping` resolution, gated so a saved assumption is
+never silently clobbered by a stale stored `"value_mapping"` from a
+previous rerun). Evaluation results disclose which value assumptions
+produced them via a new "Value assumptions used (forward, not
+historical)" expander, explicitly labelled as distinct from observed
+historical data (Requirement 5's "clearly and separately labelled...
+in every UI/report surface that shows both").
+
+FX/currency conversion remains untouched and unresolved (`REQ-ECON-002`
+Requirement 7 / decision package D7, Finance-blocked) -
+`ScenarioValueAssumptions` requires a single shared ISO-3 currency
+across every value it holds and never invents a conversion.
+
+**Alternatives considered:** embedding the assumption's full content
+directly inside `scenario_to_dict`/`scenario_from_dict` (rejected -
+`core/optimization.py` is a 3700+-line, heavily version-gated module,
+and every other project-level governance dependency there follows the
+"project singleton + fingerprint reference, verified on bundle import"
+pattern; a one-off embedded-content exception for this feature alone
+would be architecturally inconsistent for no reproducibility benefit,
+since the existing pattern already makes a saved scenario's frozen
+`predicted` results and its `value_mapping_fingerprint` travel and
+verify together); pre-filling the DNA/FH number inputs from the fit's
+`value_weight` catalogue config or from REQ-ECON-002's historical
+valuation catalogue (rejected - Requirement 5 explicitly forbids
+"a carried-forward historical rate... silently defaulted"); silently
+picking one DNA representation instead of requiring an explicit
+`dna_mode` (rejected - Requirement 5 explicitly requires both
+representations be supported, not just one).
+
+**Impact:** New `ScenarioValueAssumptions`/`build_scenario_value_
+assumptions`/`DNA_VALUE_MODE_OVERALL`/`DNA_VALUE_MODE_SEGMENT_SPECIFIC`
+in `ancestry_mmm/core/planning/value.py`. New `ancestry_mmm/tests/
+test_planning_value_scenario_assumptions.py` (16 tests). Modified
+`ancestry_mmm/pages/08_Scenario_Planner.py` (new "Economic value
+assumptions" editor and "Value assumptions used" provenance disclosure;
+new highest-precedence branch, gated by an explicit `if value_mapping
+is None:` check, in the existing `value_mapping` resolution) and
+`ancestry_mmm/tests/test_scenario_planner_apptest.py` (4 new tests).
+Full existing Scenario Planner AppTest suite (39 tests) and the
+deterministic browser-lifecycle suite re-run - no regressions.
+**Owner:** Modelling / Platform engineering (implemented autonomously,
+per the business-decision brief's WP2G requirement).
+**Status:** WP2G complete pending CI. This closes the originally-issued
+five-work-package economics sequence (WP2D-ui, WP2E, WP2F-design,
+WP2F-implementation, WP2G); `REQ-ECON-002`/`003`/`004`/`005`'s gap-table
+classification in `docs/specification_authority.md` is left unchanged
+by this PR (a full reclassification review across every sub-requirement
+was judged out of scope for an implementation PR and is left as a
+follow-up).
