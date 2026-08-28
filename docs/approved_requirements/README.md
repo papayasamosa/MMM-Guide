@@ -47,6 +47,7 @@ Coding agents must not independently interpret or reconcile the external Ancestr
 - `REQ-GRAPH-*` — graph-authoritative causal configuration
 - `REQ-SEARCH-*` — Search demand/delivery/spend/cap/organic-capture object separation, governed Search-intent taxonomy and term/query mapping, and multi-axis granularity eligibility (contribution/curve/economics/planning/optimisation are independently gated)
 - `REQ-SEO-*` — governed SEO visibility/ranking metric-definition and observation data shape, distinct from organic Search capture (causal role, estimand, and any controllable intervention remain separately deferred)
+- `REQ-ECON-*` — governed CPA/ROI arithmetic and value-join contract (what the value operand actually represents — FH projected LTR, DNA revenue, week/segment variation, FX-for-value, waterfall accounting — remains separately deferred)
 - `REQ-COVERAGE-*` — variable coverage, missingness-state, and mixed-frequency data authority
 - `REQ-DATAIN-*` — data input contract: logical source domains and cross-market activity identity
 - `REQ-ACTIVITY-*` — governed activity identity, reporting taxonomy, and funnel classification
