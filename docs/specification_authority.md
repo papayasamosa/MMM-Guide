@@ -555,7 +555,10 @@ Each row below is one of two distinct states, not to be conflated:
 | Governed Search-intent taxonomy, term/query mapping, and parent-child activity lineage (`REQ-SEARCH-004`) | Requirement exists but capability incomplete | Approved 2026-08-28 (Work Package 1). Target-state architecture contract only, extending `REQ-SEARCH-001`'s object-separation pattern to a governed `search_intent_group` taxonomy and raw-term/query mapping layer - blocked pending `docs/wp1_search_seo_granularity_decision_package.md`, which found the taxonomy's own content/ownership (`DD-020`) and every identification/promotion threshold (`MD-008A`, `VL-032`) undecided. Zero implementation yet; `core.search_objects`/`core.activities` carry no taxonomy or intent-group fields. |
 | Search granularity capability and multi-axis eligibility contract (`REQ-SEARCH-005`) | Requirement exists but capability incomplete | Approved 2026-08-28 (Work Package 1). Target-state architecture contract only, extending the existing single-valued `planning_eligibility` pattern to six independent boolean eligibility axes (model/contribution/curve/economics/planning/optimisation) at market x route x platform x parent-activity grain - blocked pending the same decision package, which found every promotion threshold for these axes undecided (`VL-032`, `PL-027`, `PL-028`). Zero implementation yet. |
 | Governed SEO visibility/ranking metric-definition and observation contract (`REQ-SEO-001`) | Requirement exists but capability incomplete | Approved 2026-08-28 (Work Package 1). Target-state architecture contract only for the data/provenance shape of an SEO visibility metric definition and its observations, distinct from organic Search capture - blocked pending the same decision package, which found SEO's causal role, estimand, transformation, and any controllable intervention all undecided (`MD-008C`, `VL-034`, `PL-028`, `FR-CAU-015`). Zero implementation yet; no SEO-visibility object exists anywhere in this repository. |
-| Time/segment-varying outcome valuation, joined ROI/value economics, and economic waterfall decomposition (FH projected LTR, DNA revenue) | No approved requirement/decision yet | No indexed record exists for the value-input architecture itself. `REQ-ECON-001` (approved 2026-08-28) reconciles only the separable, already-unambiguous CPA/ROI arithmetic and value-join principle - see the "already implemented" section below. `docs/wp2_outcome_valuation_gap_analysis.md` and `docs/wp2_outcome_valuation_decision_package.md` found LTR's definition and FH-outcome attachment, DNA revenue's attachment to orders/kits, missing-week imputation, future-value extrapolation, the waterfall's accounting method, value-side FX policy (distinct from the already-approved spend-side `REQ-FX-001`-`006`), aggregation weighting for arbitrary reporting periods, and value-uncertainty treatment all undecided, with no PRD passage anywhere defining most of them. |
+| Governed FH/DNA weekly aggregate valuation input contract (`REQ-ECON-002`) | Requirement exists but capability incomplete | Approved 2026-08-28, per the "Outcome valuation and time-varying ROI: approved business decisions" brief. Target-state architecture contract only for the market x week x segment aggregate-value input (FH LTR, DNA revenue), denominator linkage, currency-identification metadata, fail-closed missingness, and versioned provenance - blocked pending WP2A implementation. Zero implementation yet; the exact FH denominator outcome_id remains a per-project reconciliation task (Requirement 3), and any FX conversion policy remains Finance-owned and blocked. |
+| Historical valuation rate-derivation, posterior join, and forward-assumption contract (`REQ-ECON-003`) | Requirement exists but capability incomplete | Approved 2026-08-28, same brief. Target-state contract for deriving a weekly value-per-outcome rate and joining it to posterior incremental outcomes at draw level before aggregation, plus the analogous explicit-assumption contract for Scenario Planner - blocked pending WP2B/WP2C/WP2G implementation. Zero implementation yet. |
+| Historical economic reporting period, aggregation, comparison, and dimension contract (`REQ-ECON-004`) | Requirement exists but capability incomplete | Approved 2026-08-28, same brief. Target-state contract for month/quarter/year/custom-range reporting, calendar-quarter convention, actual-weeks-only partial periods, explicit user-selected period comparison, and the Total-Product-Segment-Funnel-Channel reporting hierarchy gated by existing attribution support - blocked pending WP2D/WP2E implementation. Explicitly excludes the period-over-period contribution waterfall's computation method (see next row). Zero implementation yet. |
+| Period-over-period contribution-waterfall computation method, and value/revenue FX conversion policy | No approved requirement/decision yet | Two distinct items remain genuinely open after the 2026-08-28 business-decision update (`docs/wp2_outcome_valuation_decision_package.md`): the waterfall's scope is resolved (an outcome-volume contribution bridge, not an economic decomposition - see `REQ-ECON-004`'s "Explicitly not covered"), but its exact allocation/ordering method is gated behind a required calculation/design note (WP2F) proven on deterministic test data before any further authority record or UI code; and FX conversion policy for a value/revenue series remains entirely Finance-owned and blocked behind `docs/wp7_governed_fx_finance_decision_package.md`, distinct from the already-approved spend-side `REQ-FX-001`-`006`. |
 
 ## Current analyst-decision overrides to historical gap rows
 
@@ -598,9 +601,11 @@ prior for the current UK Model A candidate), `REQ-HIERARCHY-001`
 candidate), `REQ-FX-001` through `REQ-FX-006` (governed FX
 translation architecture), `REQ-SEARCH-004`, `REQ-SEARCH-005`, and
 `REQ-SEO-001` (Search-granularity and SEO-visibility governed
-architecture), and `REQ-ECON-001` (governed CPA/ROI arithmetic and
-value-join contract) are approved, indexed requirement records with
-substantive implementation.
+architecture), `REQ-ECON-001` (governed CPA/ROI arithmetic and
+value-join contract), and `REQ-ECON-002` through `REQ-ECON-004`
+(governed FH/DNA weekly valuation input, rate-derivation/posterior-join,
+and reporting-period/aggregation/comparison contracts) are approved,
+indexed requirement records with substantive implementation.
 None is a gap requiring a new decision record — each has an explicit,
 narrower capability boundary documented in its own record:
 
@@ -916,3 +921,29 @@ narrower capability boundary documented in its own record:
   week/segment variation, FX-for-value policy, or any waterfall
   accounting method — `docs/wp2_outcome_valuation_decision_package.md`
   collects those open questions.
+- `REQ-ECON-002` (`docs/approved_requirements/REQ-ECON-002.md`, approved
+  2026-08-28): reconciles the business-approved governed FH/DNA weekly
+  aggregate valuation input contract — market x week x segment aggregate
+  monetary totals (FH LTR, DNA revenue), explicit non-defaulted
+  denominator linkage, mandatory never-inferred currency-identification
+  metadata, fail-closed missingness with an explicit zero-denominator
+  carve-out, and versioned/provenanced source data. Target-state
+  contract only, with zero implementation (WP2A). Does not approve the
+  specific FH denominator outcome_id for any given project, or any FX
+  conversion policy.
+- `REQ-ECON-003` (`docs/approved_requirements/REQ-ECON-003.md`, approved
+  2026-08-28): reconciles the weekly rate-derivation formula
+  (aggregate value / denominator count), its draw-level join to
+  posterior incremental outcomes before temporal aggregation, the
+  fixed-value/posterior-only uncertainty treatment, and the analogous
+  explicit-assumption contract for Scenario Planner forward valuation.
+  Target-state contract only, with zero implementation (WP2B/WP2C/WP2G).
+- `REQ-ECON-004` (`docs/approved_requirements/REQ-ECON-004.md`, approved
+  2026-08-28): reconciles the historical economic reporting-period
+  contract — monthly/quarterly/yearly/custom-range grains, standard
+  calendar quarters, actual-weeks-only partial periods (never scaled or
+  annualised), explicit user-selected period comparison, and the
+  Total-Product-Segment-Funnel-Channel reporting-dimension hierarchy
+  gated by existing attribution support. Target-state contract only,
+  with zero implementation (WP2D/WP2E). Explicitly excludes the
+  contribution-waterfall's computation method.

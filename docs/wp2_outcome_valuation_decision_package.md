@@ -1,7 +1,20 @@
 # Outcome valuation and joined-ROI decision package
 
-Status: decision support only. No code changes accompany this package; no
-candidate approach below is enabled, selected, or implemented by it.
+Status (2026-08-28, original publication): decision support only. No code
+changes accompany this package; no candidate approach below is enabled,
+selected, or implemented by it. This is the historical record of what was
+open at first publication and is not rewritten.
+
+**Status (2026-08-28, business-decision update):** the analyst has since
+reviewed this package and approved business decisions closing D1, D2, D3,
+D4, D6, D8, D9, and D10 — see "## Business decisions approved (2026-08-28)"
+below for the resolutions, each reconciled into `docs/approved_
+requirements/REQ-ECON-002.md`, `REQ-ECON-003.md`, and `REQ-ECON-004.md`.
+**D5 (waterfall computation method) and D7 (FX conversion policy) remain
+open** — D5 pending a required calculation/design note, D7 pending
+Finance approval via `docs/wp7_governed_fx_finance_decision_package.md`.
+The D1-D10 analysis below is preserved as the record of what was
+open before this update.
 
 ## Why this package exists
 
@@ -52,15 +65,16 @@ implemented, this is reconciled into approved authority via
 open — is what the *value* operand itself is (D1-D3 below), not the
 arithmetic relating it to cost.
 
-One terminology note carried forward, not resolved: the PRD's own
-formula, despite being labelled "ROI," is mathematically identical to what
-marketing practice usually calls ROAS (return on ad spend), not the
-finance convention of net return on investment. `REQ-ECON-001` reconciles
-the PRD's formula under the PRD's own name; whether the eventual UI/report
-labelling should say "ROI" or "ROAS" (or both, distinctly) is folded into
-D6 (waterfall/decomposition labelling) and D11 (reporting-period/YoY
-labelling) below, since it is a presentation question, not an arithmetic
-one.
+One terminology note, now resolved by the 2026-08-28 business-decision
+brief rather than left open: the PRD's own formula, despite being
+labelled "ROI," is mathematically identical to what marketing practice
+usually calls ROAS (return on ad spend), not the finance convention of
+net return on investment. `REQ-ECON-001` reconciles the PRD's formula
+under the PRD's own name. The brief's item 11 settles the presentation
+question this note originally deferred (previously miscited here as
+"D6"/"D11", corrected): the label stays "ROI," presented monetarily
+(e.g. "£2.50 returned per £1 spent") rather than as a bare multiplier —
+see `REQ-ECON-001` Requirement 7.
 
 ## The PRD's own decision registers already flag the remaining items as open
 
@@ -328,25 +342,170 @@ This package does not choose a standard-period set, and does not assert
 that the four IDs are or are not the same decision — that determination
 is itself left to the reviewer.
 
+## Business decisions approved (2026-08-28)
+
+Recorded from the business-decision brief "Outcome valuation and
+time-varying ROI: approved business decisions." Each resolution below is
+reconciled into an approved requirement record; this package is not
+itself the authority for the resolved behaviour — the cited `REQ-ECON-*`
+record is.
+
+### D1 — resolved: `REQ-ECON-002` Requirements 2-3
+
+FH projected LTR is supplied as an aggregate monetary total by `market ×
+week × FH segment` (New, Winback, Cross-sell where present), summed
+upstream from a separate, authoritative survival-analysis methodology
+this application never reproduces or modifies. Neither candidate D1-A
+nor D1-B nor D1-C is chosen wholesale: the value attaches to **whichever
+existing FH acquisition/bill-through outcome the supplied LTR cohort
+actually corresponds to**, reconciled per project at implementation time
+via an explicit, non-defaulted `denominator_outcome_id` reference — GSA
+is explicitly not to be substituted merely because it is available, and
+NBT is not redefined as a value layer (AGENTS.md's existing constraint
+is preserved; NBT's *count* may still serve as a denominator like any
+other approved FH outcome, without becoming "a value layer" itself). If
+no existing approved FH outcome genuinely corresponds to the supplied
+cohort for a given project, implementation must stop and report the
+conflict rather than force a fit.
+
+### D2 — resolved: `REQ-ECON-002` Requirements 4-5
+
+DNA revenue is an aggregate monetary total by `market × week × DNA
+segment`, denominated by DNA kit orders (not per-kit). Initial
+segmentation is New versus Existing where supportable (closest to
+candidate D2-A, but not fixed to exactly `dna_customer_relationship`
+alone) — finer segmentation (sell/activate) is explicitly not required
+where source data cannot support it, and the contract remains compatible
+with the full governed `segment_dimension` vocabulary rather than
+hard-coding the two initial labels.
+
+### D3 — resolved: `REQ-ECON-002` Requirement 8 (candidate D3-A, with a carve-out)
+
+Missing valuation data fails closed — no forward-fill, no interpolation,
+matching candidate D3-A. Refined beyond D3-A's original framing: a
+genuine zero denominator/outcome count is explicitly not treated as
+missing or corrupt — it contributes zero incremental economic value when
+the corresponding modelled incremental outcome is also structurally/
+observationally zero. Any other case requiring a valuation rate from a
+zero/missing denominator must be surfaced, never guessed.
+
+### D4 — resolved: `REQ-ECON-003` Requirement 5 (candidate D4-A)
+
+No automatic extrapolation of historical economic values. Scenario
+Planner requires an explicit future value assumption (FH: LTR per
+relevant FH outcome, preferably by segment, restricted to whichever
+subscription/GSA/bill-through relationship existing governed outcome
+contracts make valid; DNA: an assumed average revenue per kit, either
+segment-specific or one overall value across eligible segments),
+persisted as part of the scenario definition and clearly distinguished
+from observed historical data.
+
+### D5 — scope resolved; computation method still open, gated behind a required design note
+
+The requested "waterfall" is confirmed to be a **period-over-period
+outcome-volume contribution bridge** (e.g. 10,000 sales in Period A to
+12,000 in Period B, decomposed by model-supported components), **not**
+an incremental-value-minus-cost or FX/mix economic decomposition. This
+resolves the D5/D10 ambiguity between an outcome-volume bridge and an
+economic (CPA/ROI/FX) decomposition in favour of the former — none of
+D5-A/B/C (which were framed around an economic decomposition) is
+selected as originally posed. Desired contributors include model-
+supported components — channels, and non-media/contextual effects
+(base/intercept, seasonality, controls/context, residual/unexplained) —
+wherever the model can legitimately decompose them; the exact
+allocation/ordering **method** that makes such a bridge mathematically
+reconcile is explicitly **not** approved by this update. Per the
+business-decision brief: *"Do not implement the waterfall until you have
+documented exactly how the existing posterior contribution artefacts can
+produce a mathematically reconciling Period A → Period B bridge... Create
+a focused calculation/design note first and prove the bridge reconciles
+on deterministic test data before implementing UI."* That design note is
+a required deliverable of WP2F, not of this package, and no `REQ-ECON-*`
+record covers the waterfall's computation method until it exists and is
+proven.
+
+### D6 — resolved: `REQ-ECON-004` Requirement 3 (a variant of candidate D6-B)
+
+Partial reporting periods use the actual included weeks — never scaled
+or annualised to a full period. This is a stricter, simpler rule than
+either original candidate: no day-overlap fractional splitting (D6-A)
+and no majority/tie-break whole-week assignment ambiguity (D6-B) — a
+week belongs to the period its canonical week falls in, full stop, and a
+partial period simply reports its actual weeks' sum.
+
+### D7 — remains open, Finance-owned, blocked
+
+FX conversion policy for value/revenue is explicitly **not** decided by
+the business-decision brief, which requires reconciling it with
+`REQ-FX-001`-`006` and `docs/wp7_governed_fx_finance_decision_package.md`
+rather than inventing it now. What the brief does authorise is a
+**FX-neutral interface**: every monetary input must carry explicit,
+never-inferred currency-identification metadata (`REQ-ECON-002`
+Requirement 7), and the architecture must be capable of local-currency
+reporting, translated reporting, and eventually both weekly and annual
+constant-currency conventions — but which convention, which rate source,
+override policy, and reporting-currency default remain exactly as open
+as before, blocked pending Finance approval. Neither D7-A nor D7-B is
+chosen.
+
+### D8 — resolved: `REQ-ECON-003` Requirement 4 (candidate D8-A)
+
+Supplied historical LTR/revenue are fixed business inputs with no
+uncertainty of their own. Only MMM posterior draw uncertainty propagates
+through the join (`incremental_outcome_draw × fixed_weekly_rate`),
+summarised via the existing governed posterior credible-interval
+convention (`core.uncertainty.summarize_distribution`) — no new
+standard-deviation-based interval is introduced.
+
+### D9 — resolved: `REQ-ECON-002` Requirement 1 (candidate D9-A, generalised)
+
+Both FH LTR and DNA revenue belong in the governed Outcomes source-pack
+domain, represented as distinct economic outcome/value measures using
+the existing governed outcome-data architecture — no new fifth domain.
+The PRD's `value_rule_id`/`bridge_outcome_relationship` schema fragment
+remains unpopulated; this repository's own governed contract supersedes
+it rather than waiting for a PRD definition that does not exist.
+
+### D10 — resolved: `REQ-ECON-004` Requirements 1-2, and by D5's scope resolution
+
+Standard reporting periods are monthly, quarterly, yearly, and total
+selected date range, using calendar years and standard calendar quarters
+(Q1 Jan-Mar through Q4 Oct-Dec) — not a fiscal/rolling-period enum as
+`RP-005` alone might have suggested. Explicit user-selected period
+comparison (e.g. Q1 2025 vs. Q1 2026) replaces any automatic
+previous-period comparison. The broader question of whether the PRD's
+four independently-worded "YoY decomposition method" items (Part 3 item
+18, `VL-019`, `RP-013`, `API-018`) are the same decision is resolved by
+D5's scope clarification: the capability actually being built is the
+outcome-volume contribution bridge, not a general economic YoY
+decomposition — the four PRD items' broader economic-decomposition scope
+remains unaddressed by this workstream and is not claimed to be resolved.
+
 ## What this package does not decide
 
-- Every item D1 through D10 above.
-- The ROI/CPA arithmetic formula itself — that is resolved, not
-  decision-bound (see D0 and `REQ-ECON-001`).
+- **D5's exact waterfall computation/allocation method** — gated behind
+  a required calculation/design note (WP2F), proven on deterministic
+  test data, before any further authority record or UI code.
+- **D7, FX conversion policy in full** — remains entirely Finance-owned
+  and blocked behind `docs/wp7_governed_fx_finance_decision_package.md`.
+  Only the FX-neutral currency-identification interface is authorised
+  (`REQ-ECON-002` Requirement 7).
 - Whether this capability is scheduled ahead of, or behind, any other
-  open work-package item — this package only supplies the missing
-  decision-support document.
+  open work-package item.
 - Any `core`, `application`, or `pages` code change — none accompanies
-  this package.
+  this package or its 2026-08-28 update; implementation proceeds through
+  the separate WP2A-WP2G sequence, each its own reviewed PR.
 
 ## Owner and status
 
-**Owner:** Product/Finance (LTR and DNA-revenue definitions, FX-for-value
-policy, waterfall labelling), Modelling (imputation, extrapolation,
-uncertainty treatment, aggregation weighting), Platform engineering
-(source-domain classification, architecture once decisions land).
+**Owner:** Finance (business ownership of FH LTR and DNA revenue; FX
+policy under D7), Analytics (production of the underlying valuation
+numbers), Product (reporting-dimension and comparison scope),
+Modelling/Platform engineering (architecture and implementation once
+each decision lands, and the D5 design note).
 
-**Status:** Decision-support package only. `docs/wp2_outcome_valuation_
-gap_analysis.md`'s proposed architecture remains a proposal pending review
-of this package. `REQ-ECON-001` is unaffected by this package's open
-items — it is fully resolved on its own, narrower scope.
+**Status:** D1-D4, D6, D8, D9, D10 resolved and reconciled into
+`REQ-ECON-002`/`REQ-ECON-003`/`REQ-ECON-004` (2026-08-28). D5 (waterfall
+method) and D7 (FX policy) remain open. `REQ-ECON-001` was, and remains,
+unaffected by any item in this package — it was always resolved on its
+own, narrower arithmetic scope.

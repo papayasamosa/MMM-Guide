@@ -8007,3 +8007,94 @@ SEO-visibility-shape layers; every causal, statistical, business, and
 threshold choice remains open pending
 `docs/wp1_search_seo_granularity_decision_package.md`. Work Package 7 is
 now fully reconciled (FX half: PR #327; Search/SEO half: this record).
+
+**Date:** 2026-08-28
+**Decision:** Reconcile the analyst-approved business decisions in
+"Outcome valuation and time-varying ROI: approved business decisions"
+into repository authority, closing most of `docs/wp2_outcome_valuation_
+decision_package.md`'s D1-D10 (the decision package created alongside
+`REQ-ECON-001` earlier in this same work). New `docs/approved_
+requirements/REQ-ECON-002.md` (governed FH/DNA weekly aggregate
+valuation input contract: market x week x segment aggregate monetary
+totals, explicit non-defaulted denominator linkage, mandatory
+never-inferred currency metadata, fail-closed missingness with an
+explicit zero-denominator carve-out, versioned/provenanced source data),
+`REQ-ECON-003.md` (weekly rate-derivation, draw-level posterior join
+before temporal aggregation, fixed-value/posterior-only uncertainty, and
+the analogous Scenario Planner forward-assumption contract), and
+`REQ-ECON-004.md` (monthly/quarterly/yearly/custom-range reporting,
+standard calendar quarters, actual-weeks-only partial periods, explicit
+user-selected period comparison, and the Total-Product-Segment-Funnel-
+Channel dimension hierarchy gated by existing attribution support) close
+D1, D2, D3, D4, D6, D8, D9, and D10. `REQ-ECON-001.md` is revised
+(Requirement 7 added: monetary ROI presentation, e.g. "£2.50 returned
+per £1 spent," reconfirming rather than changing its original
+Requirements 1-6) - a dated revision, not a silent rewrite, per this
+record's own precedent. D5 (the waterfall's exact computation method)
+and D7 (FX conversion policy) remain explicitly open: the business
+decision clarified the waterfall's *scope* (a period-over-period
+outcome-volume contribution bridge, not an economic decomposition) but
+required a proven calculation/design note before any method is approved
+or implemented (WP2F); FX conversion policy remains entirely
+Finance-owned, blocked behind `docs/wp7_governed_fx_finance_decision_
+package.md`, with only currency-identification metadata (never
+conversion) authorised now.
+
+Authority for closing these items comes directly from the supplied
+business-decision brief, which states each decision in unambiguous,
+non-optional business language ("the governed calculation remains...",
+"do NOT extrapolate...", "must fail closed...") rather than posing
+alternatives - this reconciliation records those decisions verbatim
+rather than selecting among options itself. Where the brief itself
+still declines to decide (the FH denominator's exact outcome_id; FX
+policy; the waterfall's method), this reconciliation preserves that
+by requiring an explicit, non-defaulted reference or a further gated
+artefact rather than inventing an answer.
+
+**Alternatives considered:** treating the brief's clear business language
+as merely another decision-package candidate requiring further review
+(rejected - the brief explicitly states "do not reinterpret these
+decisions," and its language is unconditional, not framed as options);
+folding all three new records into a single `REQ-ECON-002` covering the
+whole input-through-reporting pipeline (rejected - input contract, engine
+contract, and reporting contract have different owners, different
+dependent PRs in the WP2A-WP2G sequence, and different future amendment
+surfaces, mirroring why `REQ-SEARCH-001`/`REQ-SEARCH-002` and the four
+`REQ-SCENGINE-*` records were each kept separate); silently editing
+`REQ-ECON-001`'s original text to add the presentation requirement
+(rejected - this repository's established pattern, e.g. `REQ-CURVE-001`'s
+revision history, is a dated, explicit revision that never erases what
+was originally approved); guessing the FH denominator outcome_id from
+the phrase "acquisition/bill-through outcome" (rejected - the brief
+explicitly requires reconciling this "before implementing," naming it as
+a reconciliation task, not a decision already made, and explicitly
+forbids defaulting to GSA).
+
+**Impact:** New `docs/approved_requirements/REQ-ECON-002.md`,
+`REQ-ECON-003.md`, `REQ-ECON-004.md`. Modified:
+`docs/approved_requirements/REQ-ECON-001.md` (revision: Requirement 7
+added, "Out of scope" section updated to reflect resolution status,
+"Unresolved decisions" narrowed to D5/D7), `docs/wp2_outcome_valuation_
+decision_package.md` (new "Business decisions approved" section per
+D-item, status banners updated, a pre-existing D0 mislabelling
+corrected), `docs/wp2_outcome_valuation_gap_analysis.md` (pointer note
+only, preserved as evidence base), `docs/specification_authority.md`
+(gap-table row for the value-input architecture replaced by three
+"capability incomplete" rows for the new records plus one narrower row
+for the still-open waterfall-method/FX-policy pair; three new
+"already implemented" bullets), `docs/approved_requirements/index.json`
+(3 new entries), `ancestry_mmm/tests/test_outcome_valuation_roi_
+authority_reconciliation.py` (new coverage for the three records, and a
+corrected assertion for the now-narrower remaining gap row). No
+`ancestry_mmm/core`, `application`, or `pages` code changed - this PR is
+authority-only, per the governing brief's explicit "First update the WP2
+decision package and repository authority... Then implement this
+capability in small PRs" sequencing. WP2A (governed historical economic
+input contract and validation) is the next, separately-scoped PR.
+**Owner:** Finance (business ownership of FH LTR/DNA revenue and FX
+policy) / Analytics (valuation data production) / Modelling / Platform
+engineering (architecture reconciliation, implemented autonomously).
+**Status:** D1-D4, D6, D8-D10 resolved and reconciled. D5 (waterfall
+method) and D7 (FX policy) remain open, D5 gated behind a required
+design note and D7 behind Finance approval. Implementation proceeds
+next via WP2A.
