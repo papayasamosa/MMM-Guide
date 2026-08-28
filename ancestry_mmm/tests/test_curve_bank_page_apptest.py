@@ -943,6 +943,41 @@ def test_monetary_official_curve_does_not_show_blocked_caption(monkeypatch, tmp_
     )
 
 
+def test_channel_viewer_selector_uses_governed_activity_label_display_only():
+    """UI-WP7: the channel response-curve viewer's selector must prefer the
+    governed activity's reporting channel over the raw model-input column
+    name, while the underlying selected value used to drive the curve
+    computation remains the raw column (`meta.channels` entry) - display
+    only, never a persisted/identity change."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_consistent_session_state(
+        at,
+        activities=[
+            ActivityDefinition(
+                activity_id="tv-paid",
+                channel="Linear_TV",
+                activity_ownership="paid",
+                model_role="intervention",
+                economic_treatment="paid_media_cost",
+                planning_eligibility="optimisable",
+                source="media plan",
+                model_input_column="TV_Brand",
+            )
+        ],
+    )
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+
+    channel_boxes = [box for box in at.selectbox if box.label == "Channel"]
+    assert channel_boxes, "expected a Channel selector on the curve viewer"
+    for box in channel_boxes:
+        assert "Linear TV" in box.options
+        assert "TV_Brand" not in box.options
+        # The raw model-input column name remains the actual selected value
+        # driving computation - only its displayed label changed.
+        assert box.value == "TV_Brand"
+
+
 def test_results_dashboard_separates_summary_and_exploratory_curve_context():
     """Phase 5: the results page surfaces the decision context before the
     detailed tables while keeping exploratory curves distinct from official
