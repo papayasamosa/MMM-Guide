@@ -1418,6 +1418,7 @@
       "status": "approved_for_implementation",
       "record_path": "docs/approved_requirements/REQ-ECON-004.md",
       "affected_modules": [
+        "ancestry_mmm/core/outcome_valuation_periods.py",
         "ancestry_mmm/core/reporting_rollups.py",
         "ancestry_mmm/core/outcome_group_totals.py",
         "ancestry_mmm/pages/07_Results_Curve_Bank.py"
@@ -1432,7 +1433,10 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
         "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_004_indexed_and_classified_incomplete",
         "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_004_forbids_partial_period_scaling",
-        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_004_excludes_the_waterfall"
+        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_004_excludes_the_waterfall",
+        "ancestry_mmm/tests/test_outcome_valuation_periods.py::TestCalendarLabels::test_quarter_label_matches_ancestry_standard_calendar_quarters",
+        "ancestry_mmm/tests/test_outcome_valuation_periods.py::TestResolveWeeksForCalendarPeriod::test_partial_period_returns_only_actual_available_weeks",
+        "ancestry_mmm/tests/test_outcome_valuation_periods.py::TestResolveWeeksForCustomRange::test_partial_overlap_returns_only_available_weeks"
       ]
     }
   ]

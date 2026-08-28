@@ -8271,3 +8271,54 @@ per `REQ-ECON-003`).
 Results UI) is next, or WP2G (Scenario Planner forward-assumption
 contract) if UI work is deferred - the governing brief's proposed
 sequence lists WP2D next.
+
+**Date:** 2026-08-28
+**Decision:** Split WP2D into a core reporting-period-resolution PR
+(this one) and a separate, future-scoped Results UI PR, rather than
+implementing both in one PR as WP2D's own description bundles them.
+New `ancestry_mmm/core/outcome_valuation_periods.py` implements the
+week-resolution half of `REQ-ECON-003` Requirements 1-3:
+`resolve_weeks_for_calendar_period` (month/quarter/year, using Ancestry's
+standard calendar quarters - Q1 Jan-Mar through Q4 Oct-Dec, no fiscal
+offset), `resolve_weeks_for_custom_range` (an arbitrary user-selected
+date range, inclusive of both ends), and `distinct_calendar_periods`
+(the real period set a selector would offer, derived from the actual
+calendar rather than a hard-coded range). Every function filters an
+already-supplied set of available weeks - none of them ever fabricates,
+scales, or annualises a week that is not already present, satisfying
+the business decision's explicit "partial selected periods must use the
+actual included weeks" requirement structurally, not just by
+convention. Aggregating the resolved weeks' economics remains
+`core.outcome_valuation_attribution`'s job (WP2C) - this module resolves
+scope only, and performs no aggregation itself.
+
+**Alternatives considered:** implementing the full WP2D scope (period
+resolution, the Total/Product/Segment/Funnel/Channel dimension gating,
+and the Results UI wiring) in one PR, matching the governing brief's own
+WP2D description literally (rejected - AGENTS.md's own "Keep PRs narrow.
+Do not mix model-algebra changes with a large UI redesign" applies
+directly here, and every prior work package in this workstream (WP2A-C)
+was already kept narrower than its originating brief paragraph by
+splitting input contract, rate engine, and posterior join into separate
+PRs - this is a continuation of that established pattern, not a
+deviation from it); reusing `REQ-SCEN-002`'s `calendar_day_overlap_v1`
+day-overlap convention for period roll-up (rejected per `REQ-ECON-004`
+Requirement 3's own text - the business decision explicitly forbids
+scaling or annualising a partial period, which day-overlap allocation
+would effectively do by fractionally splitting boundary weeks; whole-week
+membership by calendar label is the correct, simpler rule for this
+direction).
+
+**Impact:** New `ancestry_mmm/core/outcome_valuation_periods.py`,
+`ancestry_mmm/tests/test_outcome_valuation_periods.py` (26 tests).
+Modified: `docs/approved_requirements/REQ-ECON-004.md` (Affected
+modules/Required tests/Migration impact updated),
+`docs/approved_requirements/index.json` (3 new required_tests entries),
+`docs/specification_authority.md` (REQ-ECON-004's gap-table row
+updated). Mypy baseline unchanged at 225. No other `core`,
+`application`, or `pages` code changed - no UI work in this PR.
+**Owner:** Modelling / Platform engineering (implemented autonomously,
+per `REQ-ECON-004`).
+**Status:** WP2D-core complete and merged pending CI. The Results UI
+half of WP2D, the dimension-gating logic, and WP2E's explicit
+period-comparison orchestration remain as separate, future-scoped work.

@@ -122,13 +122,25 @@ computation.
 
 ## Affected modules
 
-None yet — target-state contract only. Anticipated future affected
-modules (WP2D/WP2E, not created by this record):
-`ancestry_mmm/core/reporting_rollups.py`, `ancestry_mmm/core/outcome_group_totals.py`
-(a new calendar-period aggregation function, analogous to but distinct
-from these modules' existing outcome-group aggregation);
-`ancestry_mmm/pages/07_Results_Curve_Bank.py` (period selector, comparison
-view).
+**WP2D-core delivered (2026-08-28):** `ancestry_mmm/core/outcome_valuation_periods.py`
+(new module) implements Requirements 1-3's week-resolution half —
+`resolve_weeks_for_calendar_period` (month/quarter/year, standard
+calendar quarters), `resolve_weeks_for_custom_range` (arbitrary selected
+date range), and `distinct_calendar_periods` (the real, non-fabricated
+period set a selector would offer) — each returning only weeks already
+present in the caller-supplied calendar, never scaled, annualised, or
+fabricated for a partial period. Aggregating the resolved weeks'
+economics remains `core.outcome_valuation_attribution`'s job
+(REQ-ECON-003, WP2C) — this module performs no aggregation itself; it
+only resolves which weeks are in scope.
+
+Not yet delivered (WP2D-ui/WP2E, not created by this delivery):
+Requirement 5's reporting-dimension hierarchy gating, the Results UI
+period selector and comparison view
+(`ancestry_mmm/pages/07_Results_Curve_Bank.py`), and any wiring into
+`ancestry_mmm/core/reporting_rollups.py`/`ancestry_mmm/core/outcome_group_totals.py`.
+Requirement 4's explicit user-selected period *comparison* orchestration
+(as opposed to single-period resolution, delivered here) remains WP2E.
 
 ## Required tests
 
@@ -142,11 +154,15 @@ view).
 - `ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_004_indexed_and_classified_incomplete`
 - `ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_004_forbids_partial_period_scaling`
 - `ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_004_excludes_the_waterfall`
+- `ancestry_mmm/tests/test_outcome_valuation_periods.py::TestCalendarLabels::test_quarter_label_matches_ancestry_standard_calendar_quarters`
+- `ancestry_mmm/tests/test_outcome_valuation_periods.py::TestResolveWeeksForCalendarPeriod::test_partial_period_returns_only_actual_available_weeks`
+- `ancestry_mmm/tests/test_outcome_valuation_periods.py::TestResolveWeeksForCustomRange::test_partial_overlap_returns_only_available_weeks`
 
 ## Migration impact
 
-None. No schema, persisted artefact, or application code changes as a
-result of this record.
+None. `outcome_valuation_periods.py` is an entirely new, additive
+module. No existing schema, persisted artefact, or application code
+changed.
 
 ## Unresolved decisions
 
