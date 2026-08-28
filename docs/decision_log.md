@@ -8098,3 +8098,62 @@ engineering (architecture reconciliation, implemented autonomously).
 method) and D7 (FX policy) remain open, D5 gated behind a required
 design note and D7 behind Finance approval. Implementation proceeds
 next via WP2A.
+
+**Date:** 2026-08-28
+**Decision:** Implement WP2A (governed historical economic input
+contract and validation) against `REQ-ECON-002`, the first
+implementation PR of the outcome-valuation workstream. New
+`ancestry_mmm/core/outcome_valuation.py`: `WeeklyOutcomeValuationRecord`
+(one governed `market x week x segment` FH-LTR-or-DNA-revenue cell, with
+mandatory ISO-3 currency whenever a value is present, an explicit
+non-defaulted `denominator_outcome_id`, and `quality_status` drawn from
+`core.coverage`'s existing canonical missingness vocabulary rather than
+a bespoke boolean); `validate_weekly_outcome_valuation_catalogue`
+(duplicate-cell, unresolved-denominator, non-count-denominator, and
+mixed-currency checks across a supplied catalogue);
+`cross_validate_against_observed_denominator` (the explicit zero/zero
+carve-out - a genuinely zero observed denominator paired with a
+genuinely zero or absent supplied value is not flagged, while every
+other missing-value or value/denominator inconsistency is surfaced
+against already-ingested observed outcome data, never guessed).
+
+No Results UI, Data Upload UI, or project-bundle persistence wiring
+accompanies this PR - deliberately narrower than `REQ-ECON-002`'s full
+anticipated scope, per the governing brief's "small, independently
+merged work packages" instruction and its own explicit "No Results UI
+in this PR" for WP2A. `REQ-ECON-002`'s "Affected modules"/"Capability
+status" sections are updated to record what WP2A actually delivered
+versus what remains (persistence/staleness wiring, Data Upload UI).
+
+**Alternatives considered:** folding FH and DNA valuation into a single
+polymorphic record type without a `valuation_kind` discriminator
+(rejected - `REQ-ECON-002` Requirement 1 requires them structurally
+separate, mirroring `REQ-SEARCH-003`'s FH/DNA identity-separation
+precedent, and a shared record risks exactly the kind of silent
+conflation the business decision brief forbids); inventing the exact
+FH denominator outcome_id from the phrase "acquisition/bill-through
+outcome" so the module could ship with a working default (rejected -
+`REQ-ECON-002` Requirement 3 explicitly requires this to be an
+explicit, non-defaulted per-project reference, enforced here as a
+hard `ValueError` on a blank reference, never a convenience default);
+treating "estimated"/"modelled" `quality_status` values as denoting an
+absent record (rejected - both carry a real number under the shared
+`REQ-COVERAGE-001` vocabulary, even though the business decision's
+fail-closed policy means production FH/DNA data is not expected to
+legitimately use them - collapsing them into "absent" would have been
+inventing a narrower, bespoke vocabulary instead of reusing the
+existing one intact).
+
+**Impact:** New `ancestry_mmm/core/outcome_valuation.py`,
+`ancestry_mmm/tests/test_outcome_valuation.py` (34 tests). Modified:
+`docs/approved_requirements/REQ-ECON-002.md` (Capability status,
+Affected modules, Required tests, Migration impact sections updated to
+record WP2A's delivery), `docs/approved_requirements/index.json` (4
+new required_tests entries), `docs/specification_authority.md`
+(REQ-ECON-002's gap-table row updated). Mypy baseline unchanged at 225
+(the new module introduces zero new errors). No other `core`,
+`application`, or `pages` code changed.
+**Owner:** Modelling / Platform engineering (implemented autonomously,
+per `REQ-ECON-002`).
+**Status:** WP2A complete and merged pending CI. WP2B (canonical
+historical valuation engine, `REQ-ECON-003`) is next.
