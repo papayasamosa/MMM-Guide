@@ -74,6 +74,13 @@ def init_session_state():
         "media_input_support": [],
         "monetary_spend_support": [],
         "activity_definitions": [],
+        # WP2D-ui: the governed weekly outcome-valuation catalogue
+        # (core.outcome_valuation.WeeklyOutcomeValuationRecord, REQ-ECON-002)
+        # feeding historical Results economic reporting. Append/edit only via
+        # the Results page's own editor, which re-validates the whole
+        # catalogue (validate_weekly_outcome_valuation_catalogue) before
+        # persisting - never silently accepted.
+        "outcome_valuation_records": [],
         # Canonical standard source-pack adoption remains separate from the
         # exploratory transformed frame. Activity model inputs are wide only
         # at their explicit model-input boundary; context remains native tidy

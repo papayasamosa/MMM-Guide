@@ -15,7 +15,9 @@ from ancestry_mmm.utils import (
     curve_bank_dir,
     curve_artifact_store_dir,
     dataframe_column_config,
+    format_currency,
     format_date,
+    format_roi_statement,
     readable_label,
     model_input_display_label,
 )
@@ -125,6 +127,30 @@ from ancestry_mmm.application.curve_annotations import (
     annotation_from_legacy_curve,
     annotation_from_official_support,
 )
+from ancestry_mmm.core.coverage import COVERAGE_STATES
+from ancestry_mmm.core.outcome_valuation import (
+    VALUATION_KIND_DNA_REVENUE,
+    VALUATION_KIND_FH_LTR,
+    VALUATION_KINDS,
+    WeeklyOutcomeValuationRecord,
+    validate_weekly_outcome_valuation_catalogue,
+)
+from ancestry_mmm.core.outcome_valuation_periods import (
+    PERIOD_GRAIN_CUSTOM,
+    PERIOD_GRAIN_MONTH,
+    PERIOD_GRAIN_QUARTER,
+    PERIOD_GRAIN_WEEK,
+    PERIOD_GRAIN_YEAR,
+    distinct_calendar_periods,
+)
+from ancestry_mmm.core.outcome_valuation_reporting import (
+    OutcomeValuationReportingCoverageError,
+    available_weeks_for_market,
+)
+from ancestry_mmm.application.outcome_valuation_reporting_service import (
+    HistoricalOutcomeValuationRequest,
+    OutcomeValuationReportingService,
+)
 
 
 _EFFECT_TYPE_LABELS = {
@@ -158,6 +184,322 @@ def _outcome_display_labels(outcome_definitions):
         return label
 
     return {outcome.outcome_id: _label(outcome) for outcome in outcome_definitions}
+
+
+_EV_VALUATION_KIND_LABELS = {
+    "Family History (projected LTR)": VALUATION_KIND_FH_LTR,
+    "DNA (kit revenue)": VALUATION_KIND_DNA_REVENUE,
+}
+_EV_GRAIN_LABELS = {
+    "Week": PERIOD_GRAIN_WEEK,
+    "Month": PERIOD_GRAIN_MONTH,
+    "Quarter": PERIOD_GRAIN_QUARTER,
+    "Year": PERIOD_GRAIN_YEAR,
+    "Custom range": PERIOD_GRAIN_CUSTOM,
+}
+
+
+def _outcome_valuation_editor_df(records):
+    columns = [
+        "valuation_kind",
+        "market",
+        "week",
+        "segment",
+        "denominator_outcome_id",
+        "quality_status",
+        "aggregate_value",
+        "currency",
+    ]
+    if not records:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(
+        [
+            {
+                "valuation_kind": r.valuation_kind,
+                "market": r.market,
+                "week": r.week,
+                "segment": r.segment,
+                "denominator_outcome_id": r.denominator_outcome_id,
+                "quality_status": r.quality_status,
+                "aggregate_value": r.aggregate_value,
+                "currency": r.currency,
+            }
+            for r in records
+        ]
+    )
+
+
+def _render_outcome_valuation_catalogue_editor(meta, outcome_definitions, records):
+    """The governed weekly outcome-valuation catalogue editor
+    (REQ-ECON-002). Fail-closed: an edited catalogue is only persisted to
+    session state once every row constructs a valid
+    `WeeklyOutcomeValuationRecord` AND the whole catalogue passes
+    `validate_weekly_outcome_valuation_catalogue` - otherwise the prior,
+    already-governed catalogue is left untouched and every issue is
+    shown."""
+    st.caption(
+        "One row per valuation kind / market / week / segment cell. "
+        "Family History rows value projected LTR against an approved "
+        "outcome (e.g. sign-ups); DNA rows value revenue against an "
+        "approved outcome (e.g. kit sales). Leave 'Value' blank only for "
+        "a quality status that denotes a genuinely absent value."
+    )
+    edited_df = st.data_editor(
+        _outcome_valuation_editor_df(records),
+        num_rows="dynamic",
+        key="outcome_valuation_records_editor",
+        column_config={
+            "valuation_kind": st.column_config.SelectboxColumn(
+                "Valuation kind", options=list(VALUATION_KINDS), required=True
+            ),
+            "market": st.column_config.SelectboxColumn(
+                "Market", options=list(meta.markets), required=True
+            ),
+            "week": st.column_config.TextColumn("Week (YYYY-MM-DD)", required=True),
+            "segment": st.column_config.TextColumn("Segment", required=True),
+            "denominator_outcome_id": st.column_config.SelectboxColumn(
+                "Denominator outcome",
+                options=list(meta.outcome_ids),
+                required=True,
+            ),
+            "quality_status": st.column_config.SelectboxColumn(
+                "Quality status",
+                options=list(COVERAGE_STATES),
+                required=True,
+            ),
+            "aggregate_value": st.column_config.NumberColumn("Value", min_value=0.0),
+            "currency": st.column_config.TextColumn("Currency (ISO-3)"),
+        },
+    )
+    if st.button("Validate and save catalogue", key="outcome_valuation_save"):
+        build_errors: list[str] = []
+        candidate_records: list[WeeklyOutcomeValuationRecord] = []
+        for idx, row in edited_df.reset_index(drop=True).iterrows():
+            if (
+                not row.get("valuation_kind")
+                or not row.get("market")
+                or not row.get("week")
+            ):
+                continue  # a still-blank new row, not a submitted record
+            agg_value = row.get("aggregate_value")
+            agg_value = None if pd.isna(agg_value) else float(agg_value)
+            currency = row.get("currency")
+            currency = None if pd.isna(currency) or not currency else str(currency)
+            try:
+                candidate_records.append(
+                    WeeklyOutcomeValuationRecord(
+                        valuation_kind=str(row["valuation_kind"]),
+                        market=str(row["market"]),
+                        week=str(row["week"]),
+                        segment=str(row["segment"]),
+                        denominator_outcome_id=str(row["denominator_outcome_id"]),
+                        quality_status=str(row["quality_status"]),
+                        aggregate_value=agg_value,
+                        currency=currency,
+                    )
+                )
+            except ValueError as exc:
+                build_errors.append(f"Row {idx}: {exc}")
+        issues = build_errors + validate_weekly_outcome_valuation_catalogue(
+            candidate_records, outcome_definitions
+        )
+        if issues:
+            for issue in issues:
+                st.error(issue)
+        else:
+            set_state(
+                "outcome_valuation_records",
+                [r.to_dict() for r in candidate_records],
+            )
+            st.success(f"Saved {len(candidate_records)} valuation record(s).")
+            st.rerun()
+
+
+def _render_economic_valuation_reporting(meta, trace, frame, records):
+    """Historical ROI/incremental-value reporting (WP2D-ui). Routes every
+    calculation through `OutcomeValuationReportingService` - one join
+    path, never a shortcut computed directly in this page."""
+    c1, c2 = st.columns(2)
+    report_market = c1.selectbox("Market", meta.markets, key="ev_report_market")
+    valuation_kind_label = c2.selectbox(
+        "Valuation kind",
+        list(_EV_VALUATION_KIND_LABELS),
+        key="ev_report_kind",
+    )
+    valuation_kind = _EV_VALUATION_KIND_LABELS[valuation_kind_label]
+
+    segment_options = sorted(
+        {
+            r.segment
+            for r in records
+            if r.market == report_market and r.valuation_kind == valuation_kind
+        }
+    )
+    if not segment_options:
+        render_empty_state(
+            f"No governed '{valuation_kind_label}' valuation records for "
+            f"market '{report_market}' yet - add catalogue rows above for "
+            "this market and valuation kind before reporting ROI."
+        )
+        return
+    report_segment = st.selectbox("Segment", segment_options, key="ev_report_segment")
+
+    denominator_ids = sorted(
+        {
+            r.denominator_outcome_id
+            for r in records
+            if r.market == report_market
+            and r.valuation_kind == valuation_kind
+            and r.segment == report_segment
+        }
+    )
+
+    try:
+        available_weeks = available_weeks_for_market(frame, meta, report_market)
+    except OutcomeValuationReportingCoverageError as exc:
+        st.error(str(exc))
+        return
+
+    c3, c4 = st.columns(2)
+    grain_label = c3.selectbox("Period", list(_EV_GRAIN_LABELS), key="ev_report_grain")
+    grain = _EV_GRAIN_LABELS[grain_label]
+
+    period_label = None
+    custom_start = None
+    custom_end = None
+    if grain == PERIOD_GRAIN_WEEK:
+        period_label = c4.selectbox(
+            "Week",
+            available_weeks,
+            index=len(available_weeks) - 1,
+            key="ev_report_week",
+        )
+    elif grain == PERIOD_GRAIN_CUSTOM:
+        d1, d2 = st.columns(2)
+        custom_start = d1.selectbox(
+            "From week", available_weeks, key="ev_report_custom_start"
+        )
+        custom_end = d2.selectbox(
+            "To week",
+            available_weeks,
+            index=len(available_weeks) - 1,
+            key="ev_report_custom_end",
+        )
+    else:
+        period_options = distinct_calendar_periods(available_weeks, grain)
+        if not period_options:
+            render_empty_state(
+                f"No {grain_label.lower()}s are available for market "
+                f"'{report_market}' yet."
+            )
+            return
+        period_label = c4.selectbox(
+            grain_label,
+            period_options,
+            index=len(period_options) - 1,
+            key="ev_report_period",
+        )
+
+    st.markdown("#### Reporting dimension")
+    dim1, dim2 = st.columns(2)
+    dimension = dim1.radio(
+        "Break out by",
+        ["Total (all media)", "Single channel"],
+        key="ev_report_dimension",
+    )
+    channel = None
+    if dimension == "Single channel":
+        channel = dim2.selectbox("Channel", meta.channels, key="ev_report_channel")
+    st.caption(
+        "Funnel-stage breakdown is not yet available for economic "
+        "reporting - only Total and single-channel views are currently "
+        "governed (REQ-ECON-003/004)."
+    )
+
+    request = HistoricalOutcomeValuationRequest(
+        market=report_market,
+        grain=grain,
+        trace=trace,
+        frame=frame,
+        meta=meta,
+        outcome_ids=denominator_ids,
+        segment=report_segment,
+        valuation_kind=valuation_kind,
+        weekly_valuation_records=records,
+        channel=channel,
+        period_label=period_label,
+        custom_range_start=custom_start,
+        custom_range_end=custom_end,
+    )
+    with st.spinner("Computing posterior incremental value..."):
+        result = OutcomeValuationReportingService().evaluate_period(request)
+
+    if result.errors:
+        for error in result.errors:
+            st.error(error)
+        return
+
+    attribution = result.attribution
+    st.caption(
+        f"{len(result.resolved_weeks)} week(s) covered: "
+        f"{result.resolved_weeks[0]} to {result.resolved_weeks[-1]}."
+    )
+    m1, m2, m3 = st.columns(3)
+    m1.metric(
+        "Incremental value",
+        format_currency(attribution.incremental_value_mean, attribution.currency),
+    )
+    m2.metric(
+        "Attributable spend",
+        format_currency(attribution.spend, attribution.currency)
+        if attribution.spend is not None
+        else "-",
+    )
+    roi_statement = format_roi_statement(attribution.roi_mean, attribution.currency)
+    m3.metric("ROI", roi_statement if roi_statement else "Not available")
+
+    with st.expander("Posterior uncertainty and detail"):
+        st.write(
+            f"{attribution.credible_mass:.0%} credible interval: "
+            f"{format_currency(attribution.incremental_value_lower, attribution.currency)} "
+            f"to {format_currency(attribution.incremental_value_upper, attribution.currency)} "
+            f"({attribution.incremental_value_n_draws} posterior draws)."
+        )
+        if attribution.roi_mean is not None:
+            st.write(
+                f"ROI {attribution.credible_mass:.0%} credible interval: "
+                f"{attribution.roi_lower:.2f}x to {attribution.roi_upper:.2f}x."
+            )
+        else:
+            st.caption(
+                "ROI is not shown - attributable spend for this selection "
+                "is zero or unavailable."
+            )
+
+
+def _render_economic_valuation_section(meta, trace, frame, outcome_definitions):
+    st.markdown("---")
+    st.markdown("## Economic outcome valuation & ROI")
+    st.caption(
+        "Historical incremental value and ROI, joined from the governed "
+        "weekly outcome-valuation catalogue (REQ-ECON-002/003/004) - never "
+        "a raw outcome count presented as money."
+    )
+    records = [
+        WeeklyOutcomeValuationRecord.from_dict(item)
+        for item in (get_state("outcome_valuation_records") or [])
+    ]
+    with st.expander("Governed valuation catalogue (Finance-supplied inputs)"):
+        _render_outcome_valuation_catalogue_editor(meta, outcome_definitions, records)
+
+    if not records:
+        render_empty_state(
+            "No governed outcome-valuation records yet. Add rows to the "
+            "catalogue above to enable historical ROI reporting."
+        )
+        return
+
+    _render_economic_valuation_reporting(meta, trace, frame, records)
 
 
 def _display_outcome(value, outcome_labels):
@@ -1396,6 +1738,8 @@ else:
 # no single market to attribute it to at save time (see docs/decision_log.md);
 # the viewer above still shows media-unit context for a chosen reference
 # market, it just isn't persisted to the curve bank for a shared curve.
+_render_economic_valuation_section(meta, trace, frame, outcome_definitions)
+
 st.markdown("---")
 st.markdown("## Saved parameter snapshots")
 st.caption(

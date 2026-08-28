@@ -9,8 +9,11 @@ import pandas as pd
 
 from ancestry_mmm.utils.display import (
     DATE_COLUMN_FORMAT,
+    currency_symbol,
+    format_currency,
     format_date,
     format_number,
+    format_roi_statement,
     readable_label,
     readable_labels,
     model_input_display_label,
@@ -83,6 +86,56 @@ class TestFormatNumber:
 
     def test_bool_is_not_formatted_as_number(self):
         assert format_number(True) == "True"
+
+
+class TestCurrencySymbol:
+    def test_known_codes(self):
+        assert currency_symbol("GBP") == "£"
+        assert currency_symbol("USD") == "$"
+        assert currency_symbol("EUR") == "€"
+
+    def test_case_insensitive(self):
+        assert currency_symbol("gbp") == "£"
+
+    def test_unknown_code_falls_back_to_code_itself(self):
+        assert currency_symbol("NZD") == "NZD "
+
+    def test_empty_or_none_is_empty_string(self):
+        assert currency_symbol("") == ""
+        assert currency_symbol(None) == ""
+
+
+class TestFormatCurrency:
+    def test_formats_with_symbol_and_thousands_separator(self):
+        assert format_currency(1234.5, "GBP") == "£1,234.50"
+
+    def test_unknown_currency_falls_back_to_code_prefix(self):
+        assert format_currency(10, "NZD") == "NZD 10.00"
+
+    def test_none_is_empty_string(self):
+        assert format_currency(None, "GBP") == ""
+
+    def test_nan_is_empty_string(self):
+        assert format_currency(float("nan"), "GBP") == ""
+
+    def test_does_not_mutate_input(self):
+        value = 42.0
+        format_currency(value, "GBP")
+        assert value == 42.0
+
+
+class TestFormatRoiStatement:
+    def test_typical_roi(self):
+        assert format_roi_statement(2.5, "GBP") == "£2.50 returned per £1 spent"
+
+    def test_none_roi_is_empty_string(self):
+        assert format_roi_statement(None, "GBP") == ""
+
+    def test_nan_roi_is_empty_string(self):
+        assert format_roi_statement(float("nan"), "GBP") == ""
+
+    def test_unknown_currency_falls_back_to_code_prefix(self):
+        assert format_roi_statement(1.5, "NZD") == "NZD 1.50 returned per NZD 1 spent"
 
 
 class TestReadableLabel:

@@ -174,6 +174,64 @@ def format_number(value: Any) -> str:
     return str(value)
 
 
+_CURRENCY_SYMBOLS = {
+    "GBP": "£",
+    "USD": "$",
+    "EUR": "€",
+    "AUD": "A$",
+    "CAD": "C$",
+}
+
+
+def currency_symbol(currency_code: Any) -> str:
+    """ISO-4217 currency code -> display symbol, e.g. `"GBP"` -> `"£"`.
+
+    Falls back to the code itself plus a space (e.g. `"NZD "`) for any
+    code this app has no symbol mapping for - never guesses a symbol for
+    an unrecognised currency.
+    """
+    if not currency_code:
+        return ""
+    code = str(currency_code).upper()
+    return _CURRENCY_SYMBOLS.get(code, f"{code} ")
+
+
+def format_currency(value: Any, currency_code: Any) -> str:
+    """Format a monetary amount with its currency symbol and thousands
+    separators, e.g. `format_currency(1234.5, "GBP")` -> `"£1,234.50"`.
+
+    Returns "" for a missing value, mirroring `format_number`. Never
+    infers or defaults `currency_code` - an empty/None code falls back
+    to a bare number, never a fabricated symbol.
+    """
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return f"{currency_symbol(currency_code)}{float(value):,.2f}"
+
+
+def format_roi_statement(roi: Any, currency_code: Any) -> str:
+    """ "£2.50 returned per £1 spent" style ROI statement.
+
+    Returns "" for a missing/None `roi` (e.g. no spend to divide by,
+    REQ-ECON-001's "ROI never requires a value operand for CPA but
+    always does for ROI") - never fabricates a ratio.
+    """
+    if roi is None:
+        return ""
+    try:
+        if pd.isna(roi):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    symbol = currency_symbol(currency_code)
+    return f"{symbol}{float(roi):,.2f} returned per {symbol}1 spent"
+
+
 def readable_label(name: Any) -> str:
     """Technical column/key name -> human-readable label (spaces, not underscores).
 
