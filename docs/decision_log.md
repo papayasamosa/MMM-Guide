@@ -8322,3 +8322,83 @@ per `REQ-ECON-004`).
 **Status:** WP2D-core complete and merged pending CI. The Results UI
 half of WP2D, the dimension-gating logic, and WP2E's explicit
 period-comparison orchestration remain as separate, future-scoped work.
+
+**Date:** 2026-08-28
+**Decision:** Produce the required calculation/design note for WP2F
+(the period-over-period contribution waterfall) before any runtime code
+or UI, per the business-decision brief's explicit instruction. New
+`docs/wp2f_contribution_waterfall_design_note.md` proves that every
+additive term in the fitted model's `eta` equation
+(`intercept + eta_market + eta_trend + eta_season + eta_channels +
+eta_promo + eta_controls`, `core/hierarchical_model.py:1225-1232`) is
+already a named quantity, and that decomposing `mu = exp(eta)` via a
+**generalisation of the already-shipped, already-tested Shapley
+convention** (`core.attribution.compute_shapley_contributions`) to
+treat every genuinely time-varying term (trend, seasonality, promotions,
+controls, channels) as a co-equal player - instead of lumping them into
+one opaque "baseline," as the existing single-period `contribution_
+waterfall` does today - reconciles exactly to `Outcome_B - Outcome_A`
+for two selected periods. `intercept` and market offset are proven,
+not assumed, to contribute exactly zero to any such delta (they are
+time-invariant for a fixed market/outcome, confirmed independently by
+`REQ-BASELINE-001`'s own recorded gap that this repository's production
+model has no time-varying baseline capability today) - both are fused
+into a shared, period-invariant Shapley reference point rather than
+computed as a "proven-zero" runtime check. No residual/unexplained term
+is mathematically required, since the player list is exhaustive over
+the model's own additive structure - one is retained only as an
+internal, fail-closed reconciliation diagnostic. The note proves the
+reconciliation invariant holds exactly regardless of Monte Carlo
+permutation-sample size (a telescoping-sum argument, not an empirical
+claim), with fully worked deterministic numeric examples using
+`n_permutations = 1`.
+
+New `REQ-ECON-005` reconciles these determinations into approved
+authority, resolving D5 of `docs/wp2_outcome_valuation_decision_
+package.md` (only D7, FX policy, remains open). No decision package was
+required: `REQ-CURVE-001`'s own Approved Decision 3 already anticipates
+"Shapley... component decompositions remain available as future
+alternatives, each requiring its own approval" - reviewing and merging
+this design note is that approval, for a technical design determination
+the business-decision brief explicitly asked this note to resolve, not
+a business/statistical policy question.
+
+**Alternatives considered:** treating the existing `contribution_
+waterfall`'s undifferentiated "Baseline" row as sufficient and only
+Shapley-decomposing channels for the bridge (rejected - the brief
+explicitly requires determining seasonality/controls/intercept
+separately "where applicable," and lumping them would fail to identify
+that intercept/market are provably zero-delta rather than merely small);
+building the bridge from raw observed outcome or posterior-predictive
+draws instead of posterior expected outcome (`mu`) (rejected - both
+introduce an irreducible Negative-Binomial sampling-noise residual that
+cannot be decomposed into named business components, which is exactly
+the invented-residual outcome the brief's design-note requirement was
+meant to avoid); modifying `compute_shapley_contributions` in place to
+add the new players (rejected - the design note recommends a new,
+parallel function so the existing, approved, tested channel-only
+decomposition remains completely unchanged for its current callers,
+consistent with this repository's "don't touch what's already shipped
+and tested unless required" discipline); treating this as requiring a
+decision package (rejected - see `REQ-ECON-005`'s "Approval basis"
+section; every question was resolved by mathematical necessity or by
+minimal, documented generalisation of already-approved machinery, not
+by inventing a new business/statistical rule).
+
+**Impact:** New `docs/wp2f_contribution_waterfall_design_note.md`,
+`docs/approved_requirements/REQ-ECON-005.md`. Modified: `docs/wp2_
+outcome_valuation_decision_package.md` (D5 marked resolved, status
+banners updated), `docs/approved_requirements/REQ-ECON-001.md` and
+`REQ-ECON-004.md` (D5/waterfall references updated to point at
+`REQ-ECON-005`, dated update notes added without rewriting original
+text), `docs/specification_authority.md` (the combined waterfall+FX gap
+row split into a `REQ-ECON-005` "capability incomplete" row and a
+narrower FX-only row; new "already implemented" bullet),
+`docs/approved_requirements/index.json` (1 new entry). No `core`,
+`application`, or `pages` code changed - this PR is design-note-only,
+per the governing brief's explicit "Do not implement waterfall runtime
+code or UI in this PR."
+**Owner:** Modelling / Platform engineering (implemented autonomously,
+per the business-decision brief's WP2F-design requirement).
+**Status:** WP2F-design complete and merged pending CI. WP2D-ui
+(historical Results UI) is next per the brief's stated sequence.

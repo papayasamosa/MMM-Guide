@@ -1,8 +1,9 @@
 """Anti-drift tests for the outcome-valuation/joined-ROI authority,
 architecture, and gap-analysis package: `REQ-ECON-001` through
-`REQ-ECON-004` and the companion
+`REQ-ECON-005` and the companion
 `docs/wp2_outcome_valuation_gap_analysis.md` /
-`docs/wp2_outcome_valuation_decision_package.md`.
+`docs/wp2_outcome_valuation_decision_package.md` /
+`docs/wp2f_contribution_waterfall_design_note.md`.
 
 `REQ-ECON-001` reconciles an already-true, already-implemented fact (the
 existing CPA/ROI arithmetic and value-join principle) rather than a
@@ -10,17 +11,18 @@ target-state contract — mirroring `REQ-ENGINE-001`'s precedent. It
 carries no row of its own in the implementation-gaps table.
 
 `REQ-ECON-002` (input contract), `REQ-ECON-003` (rate-derivation/
-posterior-join contract), and `REQ-ECON-004` (reporting-period/
-aggregation/comparison contract) reconcile the 2026-08-28 business-
-decision brief "Outcome valuation and time-varying ROI: approved
-business decisions," which closed most of the original decision
-package's D1-D10. Each target-state record carries its own gaps-table
-row ("Requirement exists but capability incomplete"), since none has
-been implemented yet (WP2A-WP2E remain future PRs). Only two items
-remain genuinely unresolved after the business-decision update — the
-waterfall's exact computation method (D5) and FX conversion policy (D7)
-— and they share one narrower gap-table row, since neither is covered
-by any `REQ-ECON-*` record.
+posterior-join contract), `REQ-ECON-004` (reporting-period/aggregation/
+comparison contract), and `REQ-ECON-005` (period-over-period
+contribution-waterfall design contract) reconcile the 2026-08-28
+business-decision brief "Outcome valuation and time-varying ROI:
+approved business decisions" and its required WP2F design note, closing
+all of the original decision package's D1-D10 except D7. Each
+target-state record carries its own gaps-table row ("Requirement exists
+but capability incomplete"), since none has been implemented yet
+(WP2A-WP2G remain future PRs, except WP2F-design itself, which is this
+design note). Only FX conversion policy (D7) remains genuinely
+unresolved after these updates, and it carries its own narrower gap-table
+row, since no `REQ-ECON-*` record covers it.
 """
 
 import json
@@ -31,8 +33,14 @@ INDEX_PATH = REPO_ROOT / "docs" / "approved_requirements" / "index.json"
 AUTHORITY_PATH = REPO_ROOT / "docs" / "specification_authority.md"
 GAP_ANALYSIS_PATH = REPO_ROOT / "docs" / "wp2_outcome_valuation_gap_analysis.md"
 DECISION_PACKAGE_PATH = REPO_ROOT / "docs" / "wp2_outcome_valuation_decision_package.md"
+DESIGN_NOTE_PATH = REPO_ROOT / "docs" / "wp2f_contribution_waterfall_design_note.md"
 
-TARGET_STATE_RECORD_IDS = ("REQ-ECON-002", "REQ-ECON-003", "REQ-ECON-004")
+TARGET_STATE_RECORD_IDS = (
+    "REQ-ECON-002",
+    "REQ-ECON-003",
+    "REQ-ECON-004",
+    "REQ-ECON-005",
+)
 
 
 def _load_index() -> dict:
@@ -136,9 +144,9 @@ class TestOutcomeValuationAuthority:
             "REQ-ECON-001"
         )
 
-    # -- REQ-ECON-002/003/004 (target-state, each its own gap row) ------
+    # -- REQ-ECON-002/003/004/005 (target-state, each its own gap row) --
 
-    def test_all_three_target_state_records_indexed_and_files_exist(self):
+    def test_all_four_target_state_records_indexed_and_files_exist(self):
         data = _load_index()
         for requirement_id in TARGET_STATE_RECORD_IDS:
             req = _find_requirement(data, requirement_id)
@@ -158,7 +166,11 @@ class TestOutcomeValuationAuthority:
         row = _gap_row_for("REQ-ECON-004")
         assert row[1] == "Requirement exists but capability incomplete", row
 
-    def test_all_three_target_state_records_named_in_implemented_section(self):
+    def test_req_econ_005_indexed_and_classified_incomplete(self):
+        row = _gap_row_for("REQ-ECON-005")
+        assert row[1] == "Requirement exists but capability incomplete", row
+
+    def test_all_four_target_state_records_named_in_implemented_section(self):
         content = AUTHORITY_PATH.read_text()
         implemented_section = content.split(
             "## Approved requirement records already implemented", 1
@@ -206,35 +218,59 @@ class TestOutcomeValuationAuthority:
         assert "Explicitly not covered" in normalised
         assert "gated behind a required design note" in normalised
 
-    def test_all_three_target_state_records_reference_the_decision_package(self):
+    def test_all_four_target_state_records_reference_the_decision_package(self):
         for requirement_id in TARGET_STATE_RECORD_IDS:
             assert "wp2_outcome_valuation_decision_package.md" in _record_text(
                 requirement_id
             )
 
-    # -- The narrower remaining gap row (waterfall method + FX policy) --
+    def test_req_econ_005_resolves_d5_without_a_residual(self):
+        """Guards against a future edit reintroducing a residual/
+        unexplained bar — the design note proves none is required
+        because the player list is exhaustive over the model's own
+        additive eta structure."""
+        normalised = " ".join(_record_text("REQ-ECON-005").split())
+        assert "No residual/unexplained term is required" in normalised
+        assert "excluded from the bridge by construction" in normalised
 
-    def test_remaining_waterfall_and_fx_gap_has_its_own_unresolved_row(self):
-        """After the business-decision update, only the waterfall's exact
-        computation method and FX conversion policy remain genuinely
-        unresolved. This row must stay classified 'No approved
-        requirement/decision yet' since no REQ-ECON-* record covers
-        either."""
-        gap_rows = _markdown_table_rows(_gaps_section())
-        matching = [
-            row
-            for row in gap_rows
-            if "waterfall" in row[0].lower() and "fx" in row[0].lower()
-        ]
-        assert matching, (
-            "no gaps-table row found for the waterfall-method/FX-policy gap"
+    def test_design_note_proves_reconciliation_is_order_independent(self):
+        """Guards against a future edit weakening the design note's
+        central mathematical claim - reconciliation must be proven exact
+        regardless of Monte Carlo permutation-sample size, not merely
+        empirically observed to usually hold."""
+        text = DESIGN_NOTE_PATH.read_text()
+        normalised = " ".join(text.split())
+        assert (
+            "the reconciliation invariant holds exactly for `n_permutations = 1`"
+            in normalised
         )
+        assert "np.testing.assert_allclose(..., rtol=1e-5, atol=1e-6)" in normalised
+
+    # -- The narrower remaining gap row (FX policy only) -----------------
+
+    def test_fx_policy_gap_has_its_own_unresolved_row(self):
+        """After the business-decision update and the WP2F design note,
+        only FX conversion policy (D7) remains genuinely unresolved.
+        This row must stay classified 'No approved requirement/decision
+        yet' since no REQ-ECON-* record covers it."""
+        gap_rows = _markdown_table_rows(_gaps_section())
+        matching = [row for row in gap_rows if "fx conversion policy" in row[0].lower()]
+        assert matching, "no gaps-table row found for the FX-policy gap"
         for row in matching:
             assert row[1] == "No approved requirement/decision yet", (
-                f"waterfall/FX gap row is classified {row[1]!r}, expected "
+                f"FX-policy gap row is classified {row[1]!r}, expected "
                 f"'No approved requirement/decision yet': {row}"
             )
-            assert "wp2_outcome_valuation_decision_package.md" in row[2]
+            assert "wp7_governed_fx_finance_decision_package.md" in row[2]
+
+    def test_waterfall_no_longer_has_an_unresolved_gap_row(self):
+        """The waterfall's own row must now be classified 'capability
+        incomplete' (REQ-ECON-005 exists), never still listed as
+        unresolved alongside FX policy."""
+        gap_rows = _markdown_table_rows(_gaps_section())
+        for row in gap_rows:
+            if "waterfall" in row[0].lower():
+                assert row[1] == "Requirement exists but capability incomplete", row
 
     # -- Decision package: business decisions recorded -------------------
 
@@ -250,15 +286,11 @@ class TestOutcomeValuationAuthority:
                 f"decision package does not record a resolution heading for {closed_item}"
             )
 
-    def test_decision_package_leaves_d5_and_d7_open(self):
-        normalised = " ".join(DECISION_PACKAGE_PATH.read_text().split())
-        assert (
-            "D5 (waterfall computation method) and D7 (FX conversion policy) remain"
-            in normalised
-        )
-        assert (
-            "D7" in normalised and "remains open, Finance-owned, blocked" in normalised
-        )
+    def test_decision_package_d5_resolved_only_d7_remains_open(self):
+        normalised = " ".join(DECISION_PACKAGE_PATH.read_text(encoding="utf-8").split())
+        assert "D5 (waterfall computation method) is now also resolved" in normalised
+        assert "Only D7 (FX conversion policy) remains open" in normalised
+        assert "remains open, Finance-owned, blocked" in normalised
 
     def test_decision_package_original_analysis_not_rewritten(self):
         """The original D1-D10 candidate analysis and PRD-citation block

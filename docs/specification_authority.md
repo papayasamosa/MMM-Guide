@@ -558,7 +558,8 @@ Each row below is one of two distinct states, not to be conflated:
 | Governed FH/DNA weekly aggregate valuation input contract (`REQ-ECON-002`) | Requirement exists but capability incomplete | Approved 2026-08-28, per the "Outcome valuation and time-varying ROI: approved business decisions" brief. WP2A (2026-08-28) delivered the core contract: `core.outcome_valuation.WeeklyOutcomeValuationRecord`, catalogue validation, and the observed-denominator cross-validation carve-out for genuine zero/zero cells. Not yet implemented: project-bundle persistence/staleness wiring and the Data Upload UI. The exact FH denominator outcome_id remains a per-project reconciliation task (Requirement 3, enforced fail-closed by the code, never defaulted), and any FX conversion policy remains Finance-owned and blocked. |
 | Historical valuation rate-derivation, posterior join, and forward-assumption contract (`REQ-ECON-003`) | Requirement exists but capability incomplete | Approved 2026-08-28, same brief. WP2B delivered Requirements 1-2 (rate derivation with the zero-denominator carve-out). WP2C (2026-08-28) delivered Requirements 3-4: `core.outcome_valuation_attribution` performs the draw-level, weekly-grain join strictly before aggregation (a dedicated test proves this differs from the forbidden aggregate-then-average-rate shortcut whenever rates vary by week) and summarises incremental-value/ROI posterior uncertainty via the existing `core.uncertainty.summarize_distribution` credible-interval convention. Not yet implemented: Requirement 5's Scenario Planner forward-assumption contract (WP2G), and wiring the new artefact into the existing `core.canonical_curves`/`core.attribution`/`core.optimization` CPA/ROI call sites. |
 | Historical economic reporting period, aggregation, comparison, and dimension contract (`REQ-ECON-004`) | Requirement exists but capability incomplete | Approved 2026-08-28, same brief. WP2D-core (2026-08-28) delivered the week-resolution half of Requirements 1-3: `core.outcome_valuation_periods` resolves month/quarter/year/custom-range week sets from an existing calendar, using standard calendar quarters, never fabricating or scaling a partial period's weeks. Not yet implemented: the Results UI period selector/comparison view (WP2D-ui/WP2E), the Total-Product-Segment-Funnel-Channel dimension-gating logic, and wiring into `core.reporting_rollups`/`core.outcome_group_totals`. Explicitly excludes the period-over-period contribution waterfall's computation method (see next row). |
-| Period-over-period contribution-waterfall computation method, and value/revenue FX conversion policy | No approved requirement/decision yet | Two distinct items remain genuinely open after the 2026-08-28 business-decision update (`docs/wp2_outcome_valuation_decision_package.md`): the waterfall's scope is resolved (an outcome-volume contribution bridge, not an economic decomposition - see `REQ-ECON-004`'s "Explicitly not covered"), but its exact allocation/ordering method is gated behind a required calculation/design note (WP2F) proven on deterministic test data before any further authority record or UI code; and FX conversion policy for a value/revenue series remains entirely Finance-owned and blocked behind `docs/wp7_governed_fx_finance_decision_package.md`, distinct from the already-approved spend-side `REQ-FX-001`-`006`. |
+| Period-over-period contribution-waterfall design contract (`REQ-ECON-005`) | Requirement exists but capability incomplete | Approved 2026-08-28 (WP2F-design), per `docs/wp2f_contribution_waterfall_design_note.md`. Target-state design contract only: a generalised Shapley decomposition over the model's genuinely time-varying `eta` terms (trend, seasonality, promotions, controls, channels), with intercept/market offset excluded by construction (proven time-invariant for a fixed market/outcome) and no residual/unexplained term required. Zero implementation yet; the design note's §14 previews the extraction/decomposition/orchestration functions WP2F implementation must build. Unavailable for Candidate A Search fits (existing, unchanged exclusion). |
+| Value/revenue FX conversion policy | No approved requirement/decision yet | Remains entirely Finance-owned and blocked behind `docs/wp7_governed_fx_finance_decision_package.md`, distinct from the already-approved spend-side `REQ-FX-001`-`006`. Only the FX-neutral currency-identification interface is authorised (`REQ-ECON-002` Requirement 7). |
 
 ## Current analyst-decision overrides to historical gap rows
 
@@ -602,10 +603,12 @@ candidate), `REQ-FX-001` through `REQ-FX-006` (governed FX
 translation architecture), `REQ-SEARCH-004`, `REQ-SEARCH-005`, and
 `REQ-SEO-001` (Search-granularity and SEO-visibility governed
 architecture), `REQ-ECON-001` (governed CPA/ROI arithmetic and
-value-join contract), and `REQ-ECON-002` through `REQ-ECON-004`
+value-join contract), `REQ-ECON-002` through `REQ-ECON-004`
 (governed FH/DNA weekly valuation input, rate-derivation/posterior-join,
-and reporting-period/aggregation/comparison contracts) are approved,
-indexed requirement records with substantive implementation.
+and reporting-period/aggregation/comparison contracts), and
+`REQ-ECON-005` (period-over-period contribution waterfall design
+contract) are approved, indexed requirement records with substantive
+implementation.
 None is a gap requiring a new decision record — each has an explicit,
 narrower capability boundary documented in its own record:
 
@@ -947,3 +950,12 @@ narrower capability boundary documented in its own record:
   gated by existing attribution support. Target-state contract only,
   with zero implementation (WP2D/WP2E). Explicitly excludes the
   contribution-waterfall's computation method.
+- `REQ-ECON-005` (`docs/approved_requirements/REQ-ECON-005.md`, approved
+  2026-08-28): reconciles `docs/wp2f_contribution_waterfall_design_
+  note.md`'s determinations for the period-over-period contribution
+  waterfall — a generalised Shapley decomposition over the model's
+  genuinely time-varying `eta` terms, intercept/market offset excluded
+  by construction, no residual term required, reconciliation proven
+  exact regardless of Monte Carlo sample size. Target-state design
+  contract only, with zero implementation (WP2F implementation).
+  Unavailable for Candidate A Search fits.
