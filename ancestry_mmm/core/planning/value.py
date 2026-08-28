@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass
-from typing import Any, Iterable, Mapping, Optional, Tuple
+from typing import Any, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -1005,6 +1005,184 @@ class OutcomeValueMapping:
             mapping_id="legacy_segment_ltv_migration",
             source="legacy_segment_ltv_migration",
         )
+
+
+# ---------------------------------------------------------------------------
+# Scenario forward-value assumptions (REQ-ECON-003 Requirement 5, WP2G)
+# ---------------------------------------------------------------------------
+
+DNA_VALUE_MODE_OVERALL = "overall"
+DNA_VALUE_MODE_SEGMENT_SPECIFIC = "segment_specific"
+DNA_VALUE_MODES = (DNA_VALUE_MODE_OVERALL, DNA_VALUE_MODE_SEGMENT_SPECIFIC)
+
+
+@dataclass(frozen=True)
+class ScenarioValueAssumptions:
+    """Explicit forward economic-value assumption for Scenario Planner
+    (REQ-ECON-003 Requirement 5). Never extrapolated from historical
+    valuation - every field here is an analyst-declared number for a
+    FUTURE plan, clearly distinct from REQ-ECON-002's historical
+    valuation catalogue (`core.outcome_valuation`).
+
+    `fh_value_by_outcome_id` is an explicit LTR value per relevant FH
+    outcome_id ("preferably by segment", restricted to whichever
+    subscription/GSA/bill-through relationship the fit's outcome
+    catalogue makes valid - callers choose which outcome_ids are
+    eligible; this dataclass does not).
+
+    `dna_mode` explicitly states whether `dna_value_by_outcome_id` holds
+    one shared value under every DNA outcome_id it contains
+    (`"overall"`) or a genuinely distinct value per outcome_id
+    (`"segment_specific"`) - both representations are required to be
+    supported, and which one was used is disclosed, never inferred
+    after the fact from whether the values happen to be equal.
+
+    `currency` is a single ISO-3 currency shared by every value here -
+    FX conversion across currencies remains Finance-blocked
+    (`REQ-ECON-002` Requirement 7 / `docs/wp2_outcome_valuation_
+    decision_package.md` D7); this dataclass never invents an FX
+    default, so it deliberately does not support mixed currencies.
+    """
+
+    fh_value_by_outcome_id: Mapping[str, float]
+    dna_value_by_outcome_id: Mapping[str, float]
+    dna_mode: str
+    currency: str
+    assumptions_id: str = "default"
+    source: str = "scenario_forward_assumption"
+
+    def __post_init__(self) -> None:
+        if self.dna_mode not in DNA_VALUE_MODES:
+            raise ValueError(
+                f"ScenarioValueAssumptions: unknown dna_mode "
+                f"'{self.dna_mode}' (expected one of {DNA_VALUE_MODES})."
+            )
+        if not self.currency or len(self.currency) != 3 or not self.currency.isupper():
+            raise ValueError(
+                "ScenarioValueAssumptions requires a valid three-letter "
+                f"uppercase ISO currency, got {self.currency!r}."
+            )
+        combined = {**self.fh_value_by_outcome_id, **self.dna_value_by_outcome_id}
+        for oid, val in combined.items():
+            if val is None or (isinstance(val, float) and not np.isfinite(val)):
+                raise ValueError(
+                    f"ScenarioValueAssumptions: outcome '{oid}' has a "
+                    f"non-finite or None value ({val})."
+                )
+            if val < 0:
+                raise ValueError(
+                    f"ScenarioValueAssumptions: outcome '{oid}' has a "
+                    f"negative value ({val}) - Finance has not approved "
+                    "negative value semantics."
+                )
+        overlap = set(self.fh_value_by_outcome_id) & set(self.dna_value_by_outcome_id)
+        if overlap:
+            raise ValueError(
+                f"ScenarioValueAssumptions: outcome_id(s) {sorted(overlap)} "
+                "appear in both fh_value_by_outcome_id and "
+                "dna_value_by_outcome_id - each outcome must belong to "
+                "exactly one product's assumption."
+            )
+
+    def to_dict(self) -> dict:
+        return {
+            "fh_value_by_outcome_id": dict(self.fh_value_by_outcome_id),
+            "dna_value_by_outcome_id": dict(self.dna_value_by_outcome_id),
+            "dna_mode": self.dna_mode,
+            "currency": self.currency,
+            "assumptions_id": self.assumptions_id,
+            "source": self.source,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ScenarioValueAssumptions":
+        known = set(cls.__dataclass_fields__)
+        payload = {k: v for k, v in d.items() if k in known}
+        return cls(**payload)
+
+    def missing_outcome_ids(self, required_outcome_ids: Sequence[str]) -> List[str]:
+        """Which of `required_outcome_ids` have no explicit value yet -
+        used to fail closed before evaluation/save, never silently
+        proceeding with an incomplete assumption set."""
+        covered = set(self.fh_value_by_outcome_id) | set(self.dna_value_by_outcome_id)
+        return [oid for oid in required_outcome_ids if oid not in covered]
+
+    def to_outcome_value_mapping(
+        self, *, mapping_id: str = "scenario_forward_assumption"
+    ) -> "OutcomeValueMapping":
+        """Flatten into the existing, governed `OutcomeValueMapping` -
+        Requirement 5 extends, rather than replaces, this mechanism.
+        The `dna_mode="overall"` expansion (one value applied to every
+        `dna_value_by_outcome_id` key) already happened when this object
+        was built (`build_scenario_value_assumptions`) - this method
+        never performs an implicit expansion of its own."""
+        value_by_outcome_id = {
+            **self.fh_value_by_outcome_id,
+            **self.dna_value_by_outcome_id,
+        }
+        currency_by_outcome_id = {oid: self.currency for oid in value_by_outcome_id}
+        return OutcomeValueMapping(
+            value_by_outcome_id=value_by_outcome_id,
+            currency_by_outcome_id=currency_by_outcome_id,
+            mapping_id=mapping_id,
+            source=self.source,
+        )
+
+
+def build_scenario_value_assumptions(
+    *,
+    fh_value_by_outcome_id: Mapping[str, float],
+    dna_mode: str,
+    currency: str,
+    dna_outcome_ids: Sequence[str] = (),
+    dna_overall_value: Optional[float] = None,
+    dna_value_by_outcome_id: Optional[Mapping[str, float]] = None,
+    assumptions_id: str = "default",
+) -> ScenarioValueAssumptions:
+    """The one place `dna_mode="overall"` is expanded into a per-
+    outcome_id dict - explicit and testable, never performed silently
+    inside `ScenarioValueAssumptions` itself.
+
+    `dna_mode="overall"` requires `dna_overall_value` and applies it to
+    every id in `dna_outcome_ids`. `dna_mode="segment_specific"`
+    requires `dna_value_by_outcome_id` to already cover every id in
+    `dna_outcome_ids` - missing entries block rather than defaulting to
+    0.0 or being silently omitted. When `dna_outcome_ids` is empty (no
+    DNA outcome is in scope at all), no DNA assumption is required
+    regardless of `dna_mode` - there is nothing to expand or validate.
+    """
+    if dna_mode not in DNA_VALUE_MODES:
+        raise ValueError(
+            f"Unknown dna_mode '{dna_mode}' (expected one of {DNA_VALUE_MODES})."
+        )
+    if not dna_outcome_ids:
+        expanded_dna: dict = {}
+    elif dna_mode == DNA_VALUE_MODE_OVERALL:
+        if dna_overall_value is None:
+            raise ValueError(
+                "dna_mode='overall' requires an explicit dna_overall_value."
+            )
+        if dna_overall_value < 0 or not np.isfinite(dna_overall_value):
+            raise ValueError(
+                f"dna_overall_value must be a finite, non-negative number, "
+                f"got {dna_overall_value!r}."
+            )
+        expanded_dna = {oid: float(dna_overall_value) for oid in dna_outcome_ids}
+    elif dna_mode == DNA_VALUE_MODE_SEGMENT_SPECIFIC:
+        expanded_dna = dict(dna_value_by_outcome_id or {})
+        missing = [oid for oid in dna_outcome_ids if oid not in expanded_dna]
+        if missing:
+            raise ValueError(
+                "dna_mode='segment_specific' requires an explicit value "
+                f"for every DNA outcome_id; missing: {missing}."
+            )
+    return ScenarioValueAssumptions(
+        fh_value_by_outcome_id=dict(fh_value_by_outcome_id),
+        dna_value_by_outcome_id=expanded_dna,
+        dna_mode=dna_mode,
+        currency=currency,
+        assumptions_id=assumptions_id,
+    )
 
 
 # ---------------------------------------------------------------------------

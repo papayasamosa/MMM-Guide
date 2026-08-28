@@ -44,7 +44,11 @@ from ancestry_mmm.core.outcomes import (
     outcome_eligibility,
 )
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
-from ancestry_mmm.core.planning.value import CurrencyContext, OutcomeValueMapping
+from ancestry_mmm.core.planning.value import (
+    CurrencyContext,
+    OutcomeValueMapping,
+    ScenarioValueAssumptions,
+)
 from ancestry_mmm.core.predict import extract_posterior_params
 from ancestry_mmm.core.scenario_governance import CounterfactualPolicy
 from ancestry_mmm.core.schema import ModelSpec
@@ -357,6 +361,85 @@ def test_incompatible_stored_value_mapping_is_replaced_by_fresh_derivation():
     stored = at.session_state["value_mapping"]
     assert stored["mapping_id"] == "outcome-catalogue"
     assert "New" in stored["value_by_outcome_id"]
+
+
+class TestScenarioValueAssumptionsEditor:
+    """WP2G (REQ-ECON-003 Requirement 5): explicit forward economic
+    value assumptions for Scenario Planner - never extrapolated from
+    historical valuation, and taking precedence over the catalogue-
+    derived value_mapping once explicitly saved."""
+
+    def test_editor_appears_for_expected_value_objective(self):
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_consistent_session_state(at, value_currency="GBP")
+        at.run()
+        objective_radio = [r for r in at.radio if r.label == "Optimisation objective"]
+        objective_radio[0].set_value("expected_value").run()
+        assert not at.exception
+
+        headings = [
+            e.label
+            for e in at.expander
+            if "Economic value assumptions" in (e.label or "")
+        ]
+        assert headings, "value assumptions expander not found"
+        number_inputs = [n.key for n in at.number_input]
+        assert "sva_fh_New" in number_inputs
+
+    def test_saving_an_explicit_assumption_takes_precedence(self):
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_consistent_session_state(at, value_currency="GBP")
+        at.run()
+        objective_radio = [r for r in at.radio if r.label == "Optimisation objective"]
+        objective_radio[0].set_value("expected_value").run()
+        assert not at.exception
+
+        at.number_input(key="sva_fh_New").set_value(77.0).run()
+        assert not at.exception
+        at.button(key="sva_save").click().run()
+        assert not at.exception
+
+        stored_assumptions = at.session_state["scenario_value_assumptions"]
+        assert stored_assumptions["fh_value_by_outcome_id"]["New"] == 77.0
+
+        stored_mapping = at.session_state["value_mapping"]
+        assert stored_mapping["mapping_id"] == "scenario_forward_assumption"
+        assert stored_mapping["value_by_outcome_id"]["New"] == 77.0
+
+    def test_never_extrapolates_a_default_from_historical_valuation(self):
+        """The number input must start at 0.0, never silently pre-filled
+        from the fit's own value_weight=5.0 catalogue config - Requirement
+        5's "never a carried-forward historical rate" applies to the fit-
+        time catalogue value too, not only REQ-ECON-002's historical
+        valuation records."""
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_consistent_session_state(at, value_currency="GBP")
+        at.run()
+        objective_radio = [r for r in at.radio if r.label == "Optimisation objective"]
+        objective_radio[0].set_value("expected_value").run()
+        assert not at.exception
+
+        fh_input = at.number_input(key="sva_fh_New")
+        assert fh_input.value == 0.0
+
+    def test_provenance_disclosure_shown_after_evaluation(self):
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_consistent_session_state(at, value_currency="GBP")
+        at.session_state["scenario_value_assumptions"] = ScenarioValueAssumptions(
+            fh_value_by_outcome_id={"New": 88.0},
+            dna_value_by_outcome_id={},
+            dna_mode="overall",
+            currency="GBP",
+        ).to_dict()
+        at.run()
+        objective_radio = [r for r in at.radio if r.label == "Optimisation objective"]
+        objective_radio[0].set_value("expected_value").run()
+        assert not at.exception
+
+        headings = [
+            e.label for e in at.expander if "Value assumptions used" in (e.label or "")
+        ]
+        assert headings, "provenance disclosure expander not found"
 
 
 @pytest.mark.parametrize("value_currency", ["USD"])
