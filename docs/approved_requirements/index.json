@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "generated_at": "2026-08-27",
+  "generated_at": "2026-08-28",
   "requirements": [
     {
       "requirement_id": "REQ-AUTH-001",
@@ -1259,6 +1259,74 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
         "ancestry_mmm/tests/test_governed_fx_authority_reconciliation.py::TestGovernedFXOverlayReconciled::test_req_fx_006_indexed_and_classified_incomplete"
+      ]
+    },
+    {
+      "requirement_id": "REQ-SEARCH-004",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-SEARCH-004.md",
+      "affected_modules": [
+        "ancestry_mmm/core/search_objects.py",
+        "ancestry_mmm/core/activities.py",
+        "ancestry_mmm/core/persistence.py",
+        "ancestry_mmm/core/fingerprint.py",
+        "docs/wp1_search_seo_granularity_decision_package.md"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_search_004_indexed_and_classified_incomplete",
+        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_all_records_reference_the_decision_package"
+      ]
+    },
+    {
+      "requirement_id": "REQ-SEARCH-005",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-SEARCH-005.md",
+      "affected_modules": [
+        "ancestry_mmm/core/search_objects.py",
+        "ancestry_mmm/core/activities.py",
+        "ancestry_mmm/core/persistence.py",
+        "docs/wp1_search_seo_granularity_decision_package.md"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_search_005_indexed_and_classified_incomplete",
+        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_all_records_reference_the_decision_package"
+      ]
+    },
+    {
+      "requirement_id": "REQ-SEO-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-SEO-001.md",
+      "affected_modules": [
+        "ancestry_mmm/core/search_objects.py",
+        "ancestry_mmm/core/causal_graph.py",
+        "ancestry_mmm/core/persistence.py",
+        "docs/wp1_search_seo_granularity_decision_package.md"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_seo_001_indexed_and_classified_incomplete",
+        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_all_records_reference_the_decision_package",
+        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_seo_001_defers_causal_role"
       ]
     }
   ]

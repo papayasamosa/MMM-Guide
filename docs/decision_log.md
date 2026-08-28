@@ -7913,3 +7913,97 @@ was before this record, now with a single document naming all of them.
 choice remains open pending `docs/wp7_governed_fx_finance_decision_
 package.md`. The Search/SEO half of Work Package 7 remains separate and
 not yet started.
+
+**Date:** 2026-08-28
+**Decision:** Reconcile the remaining Search/SEO PRD authority backlog
+(Work Package 1 of `Media-Mix-Lab Coding LLM Next Steps 2026-08-28`),
+completing the second half of the earlier Work Package 7 that PR #327's
+governed-FX half left separate. New `REQ-SEARCH-004`, `REQ-SEARCH-005`,
+and `REQ-SEO-001` (`docs/approved_requirements/`) translate the
+2026-08-24 optional Search-granularity/SEO-visibility overlay's
+already-unambiguous *architecture* into repository authority: a governed
+`search_intent_group` taxonomy, raw-term/query mapping, and parent-child
+`ActivityDefinition` lineage (004, extending `REQ-SEARCH-001`'s
+object-separation pattern); a market x route x platform x parent-activity
+Search granularity capability record with six independent boolean
+eligibility axes (005); and a governed SEO visibility/ranking
+metric-definition and observation data shape, distinct from organic
+Search capture (SEO-001). Every record is a target-state contract only,
+with zero implementation.
+
+Authority for reconciling only the *architecture* half (never the
+underlying causal/statistical/business content) follows the same
+pattern `REQ-FX-001`-`006` and `REQ-SCENGINE-001` already established:
+`docs/specification_authority.md`'s own overlay record states the
+invariants are PRD-supplied and self-consistent, while explicitly
+deferring approval or selection of any candidate approach. This decision
+reconciles what the overlay itself already renders unambiguous - it does
+not grant new authority beyond that.
+
+New `docs/wp1_search_seo_granularity_decision_package.md` collects every
+open question the overlay's own per-part decision registers name: SEO
+visibility's causal role and estimand (`MD-008C`, `VL-034`, `FR-CAU-015`,
+Part 2 §26.3 item 14); any controllable SEO intervention (`PL-028`); the
+initial taxonomy's content and ownership (`DD-020`, Part 3 §29 item 27);
+every Search-granularity identification/promotion threshold (`MD-008A`,
+`VL-032`); Search/SEO planning- and optimisation-eligibility promotion
+criteria (`PL-027`, `PL-028`); and any parent-child Search cost-
+allocation method (`MD-008B`, `VL-033`, `RP-031`). The overlay supplies
+no numeric threshold itself for any of these - only named categories -
+confirmed by reading all ten touched PRD parts rather than assumed. No
+candidate is selected for any of them.
+
+New `ancestry_mmm/tests/test_search_seo_granularity_authority_
+reconciliation.py` (mirroring `test_governed_fx_authority_
+reconciliation.py`'s pattern) guards: all three records indexed and
+their files exist; each has its own gaps-table row classified
+"Requirement exists but capability incomplete"; all three are named in
+the "already implemented" section; the decision package exists, makes no
+decision, and cites the PRD's own decision-register item IDs; each
+record references the decision package; `REQ-SEO-001`'s causal-role
+field is reserved, never defaulted; `REQ-SEARCH-005` names all six
+eligibility axes; and the new Work Package 1 update subsection coexists
+with, rather than rewrites, Work Package 0's original 2026-08-24
+disclaimer text (which `test_search_granularity_overlay_reconciliation.
+py` already pins).
+
+**Alternatives considered:** implementing Search/SEO runtime behaviour
+directly from PRD prose in this same pass (rejected - the governing
+brief's mandatory PRD-to-REQ rule forbids implementing from PRD prose
+where no approved requirement exists, and this pass's own job is to
+create that requirement, not consume it); folding all three new records
+into a single `REQ-SEARCH-004` covering the whole overlay (rejected -
+the taxonomy/mapping layer, the eligibility-axis layer, and the
+SEO-visibility object are three independently reconcilable contracts
+with different dependents and different decision-package sections,
+mirroring how `REQ-SEARCH-001`/`REQ-CAP-001` and the four
+`REQ-SCENGINE-*`-family records were each kept separate rather than
+merged); selecting a default initial taxonomy from Part 5's illustrative,
+explicitly non-mandated examples (rejected - the PRD text itself states
+"does not mandate those specific labels," so treating them as approved
+content would fabricate an approval the source document does not give).
+
+**Impact:** New `docs/approved_requirements/REQ-SEARCH-004.md`,
+`REQ-SEARCH-005.md`, `REQ-SEO-001.md`,
+`docs/wp1_search_seo_granularity_decision_package.md`,
+`ancestry_mmm/tests/test_search_seo_granularity_authority_
+reconciliation.py`. Modified: `docs/approved_requirements/index.json`
+(3 new entries, `generated_at` bumped to 2026-08-28),
+`docs/approved_requirements/README.md` (new `REQ-SEO-*` category line,
+extended `REQ-SEARCH-*` description), `docs/specification_authority.md`
+(three new gap-table rows, three new "already implemented" bullets, and
+a new dated Work Package 1 update subsection appended to the existing
+2026-08-24 overlay record without rewriting it), `ancestry_mmm/tests/
+test_outcome_approval.py` (matching `generated_at` assertion). No
+`ancestry_mmm/core`, `application`, or `pages` code changed. No
+statistical, causal, or business/Product/Finance decision made - every
+open question from the overlay's own decision registers remains exactly
+as open as before this record, now collected in one document.
+**Owner:** Modelling / Product / Marketing (business/causal/taxonomy
+questions) / Platform engineering (architecture reconciliation,
+implemented autonomously).
+**Status:** Architecture reconciled for the taxonomy, eligibility, and
+SEO-visibility-shape layers; every causal, statistical, business, and
+threshold choice remains open pending
+`docs/wp1_search_seo_granularity_decision_package.md`. Work Package 7 is
+now fully reconciled (FX half: PR #327; Search/SEO half: this record).
