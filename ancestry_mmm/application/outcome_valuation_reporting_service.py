@@ -40,15 +40,7 @@ from ancestry_mmm.core.outcome_valuation_attribution import (
     PosteriorEconomicAttribution,
     summarize_posterior_economic_attribution,
 )
-from ancestry_mmm.core.outcome_valuation_periods import (
-    PERIOD_GRAIN_CUSTOM,
-    PERIOD_GRAIN_MONTH,
-    PERIOD_GRAIN_QUARTER,
-    PERIOD_GRAIN_WEEK,
-    PERIOD_GRAIN_YEAR,
-    resolve_weeks_for_calendar_period,
-    resolve_weeks_for_custom_range,
-)
+from ancestry_mmm.core.outcome_valuation_periods import resolve_weeks_for_grain
 from ancestry_mmm.core.outcome_valuation_rates import derive_weekly_value_rates
 from ancestry_mmm.core.outcome_valuation_reporting import (
     DEFAULT_REPORTING_N_PERMUTATIONS,
@@ -58,8 +50,6 @@ from ancestry_mmm.core.outcome_valuation_reporting import (
     observed_denominator_counts_frame,
 )
 from ancestry_mmm.core.uncertainty import DEFAULT_CRED_MASS, DEFAULT_N_DRAWS
-
-_CALENDAR_GRAINS = {PERIOD_GRAIN_MONTH, PERIOD_GRAIN_QUARTER, PERIOD_GRAIN_YEAR}
 
 
 @dataclass
@@ -328,31 +318,10 @@ class OutcomeValuationReportingService:
     def _resolve_weeks(
         request: HistoricalOutcomeValuationRequest, available_weeks: List[str]
     ) -> List[str]:
-        if request.grain == PERIOD_GRAIN_WEEK:
-            if not request.period_label:
-                raise ValueError("A week grain request requires period_label.")
-            return (
-                [request.period_label]
-                if request.period_label in available_weeks
-                else []
-            )
-        if request.grain == PERIOD_GRAIN_CUSTOM:
-            if not request.custom_range_start or not request.custom_range_end:
-                raise ValueError(
-                    "A custom grain request requires custom_range_start and "
-                    "custom_range_end."
-                )
-            return resolve_weeks_for_custom_range(
-                available_weeks,
-                request.custom_range_start,
-                request.custom_range_end,
-            )
-        if request.grain in _CALENDAR_GRAINS:
-            if not request.period_label:
-                raise ValueError(
-                    f"A '{request.grain}' grain request requires period_label."
-                )
-            return resolve_weeks_for_calendar_period(
-                available_weeks, request.grain, request.period_label
-            )
-        raise ValueError(f"Unsupported reporting grain: '{request.grain}'.")
+        return resolve_weeks_for_grain(
+            available_weeks,
+            request.grain,
+            period_label=request.period_label,
+            custom_range_start=request.custom_range_start,
+            custom_range_end=request.custom_range_end,
+        )

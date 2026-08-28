@@ -83,7 +83,20 @@ def _meta() -> FHModelMeta:
     )
 
 
-def _trace(meta: FHModelMeta, n_fourier: int = 6, chains: int = 2, draws: int = 10):
+def _trace(
+    meta: FHModelMeta,
+    n_fourier: int = 6,
+    chains: int = 2,
+    draws: int = 10,
+    n_obs: int | None = None,
+):
+    """`n_obs` (WP2F): when given, also includes the five generalised-eta
+    Deterministics (`eta_market`/`eta_trend`/`eta_season`/`eta_promo`/
+    `eta_controls`) `core.contribution_waterfall` reads directly by
+    name, shaped `(obs, outcome)` - required for the waterfall's happy
+    path; omitted (`None`) reproduces the pre-WP2F trace shape exactly,
+    for asserting the waterfall's fail-closed behaviour against an
+    older-schema bundle that lacks them."""
     rng = np.random.default_rng(0)
     n_ch, n_seg, n_mkt = len(meta.channels), len(meta.outcome_ids), len(meta.markets)
     posterior = {
@@ -116,6 +129,29 @@ def _trace(meta: FHModelMeta, n_fourier: int = 6, chains: int = 2, draws: int = 
         "market_offset": ["market", "outcome"],
         "gamma_fourier": ["fourier", "outcome"],
     }
+    if n_obs is not None:
+        coords["obs"] = list(range(n_obs))
+        posterior["eta_market"] = np.broadcast_to(
+            0.1, (chains, draws, n_obs, n_seg)
+        ).copy()
+        posterior["eta_trend"] = np.broadcast_to(
+            np.linspace(0.0, 0.2, n_obs)[:, None], (chains, draws, n_obs, n_seg)
+        ).copy()
+        posterior["eta_season"] = np.broadcast_to(
+            np.linspace(0.05, -0.05, n_obs)[:, None], (chains, draws, n_obs, n_seg)
+        ).copy()
+        posterior["eta_promo"] = np.zeros((chains, draws, n_obs, n_seg))
+        posterior["eta_controls"] = np.broadcast_to(
+            np.linspace(-0.02, 0.02, n_obs)[:, None], (chains, draws, n_obs, n_seg)
+        ).copy()
+        for var in (
+            "eta_market",
+            "eta_trend",
+            "eta_season",
+            "eta_promo",
+            "eta_controls",
+        ):
+            dims[var] = ["obs", "outcome"]
     return az.from_dict(posterior=posterior, coords=coords, dims=dims)
 
 
@@ -126,9 +162,11 @@ def _january_2024_weeks() -> list[str]:
     return ["2024-01-07", "2024-01-14", "2024-01-21", "2024-01-28"]
 
 
-def _seed_session_state(at: AppTest, *, valuation_records=None) -> None:
+def _seed_session_state(
+    at: AppTest, *, valuation_records=None, with_waterfall_support: bool = False
+) -> None:
     meta = _meta()
-    trace = _trace(meta)
+    trace = _trace(meta, n_obs=16 if with_waterfall_support else None)
     transformed_data = pd.DataFrame(
         {
             "date": pd.date_range("2024-01-01", periods=16, freq="W"),
@@ -353,3 +391,46 @@ class TestPeriodComparison:
         assert "Incremental value - change" not in metric_labels
         # Period A's own card still renders successfully.
         assert "Incremental value" in metric_labels
+
+
+class TestContributionWaterfall:
+    """WP2F: the generalised-Shapley contribution waterfall section."""
+
+    def test_happy_path_reconciles_and_shows_no_error(self):
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_session_state(
+            at, valuation_records=_january_records(), with_waterfall_support=True
+        )
+        at.run()
+
+        at.selectbox(key="ev_cmp_a_grain").set_value("Week").run()
+        at.selectbox(key="ev_cmp_a_week").set_value("2024-01-07").run()
+        at.selectbox(key="ev_cmp_b_grain").set_value("Week").run()
+        at.selectbox(key="ev_cmp_b_week").set_value("2024-01-14").run()
+        assert not at.exception
+
+        errors = [e.value for e in at.error]
+        assert not any("Contribution waterfall failed" in e for e in errors)
+        headings = [m.value for m in at.markdown]
+        assert any("Contribution waterfall" in h for h in headings)
+        captions = [c.value for c in at.caption]
+        assert any("Reconciliation check" in c for c in captions)
+
+    def test_missing_generalised_eta_deterministics_fails_closed(self):
+        """A bundle fitted before WP2F (no eta_trend/eta_season/etc in
+        its trace) must show an explicit error, never crash or silently
+        omit the waterfall."""
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_session_state(
+            at, valuation_records=_january_records(), with_waterfall_support=False
+        )
+        at.run()
+
+        at.selectbox(key="ev_cmp_a_grain").set_value("Week").run()
+        at.selectbox(key="ev_cmp_a_week").set_value("2024-01-07").run()
+        at.selectbox(key="ev_cmp_b_grain").set_value("Week").run()
+        at.selectbox(key="ev_cmp_b_week").set_value("2024-01-14").run()
+        assert not at.exception
+
+        errors = [e.value for e in at.error]
+        assert any("Contribution waterfall failed" in e for e in errors)

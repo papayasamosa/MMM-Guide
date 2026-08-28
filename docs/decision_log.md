@@ -8402,3 +8402,62 @@ code or UI in this PR."
 per the business-decision brief's WP2F-design requirement).
 **Status:** WP2F-design complete and merged pending CI. WP2D-ui
 (historical Results UI) is next per the brief's stated sequence.
+
+**Date:** 2026-08-28
+**Decision:** Implement the WP2F contribution waterfall
+(`core/contribution_waterfall.py`) following `docs/wp2f_contribution_
+waterfall_design_note.md`'s Section 13.3 (the note's own authoritative
+refinement of its Section 5.2), and correct one further gap in that
+refinement discovered numerically by the implementation PR's own
+mandatory reconciliation tests: Section 13.3's fused `mu_reference =
+exp(intercept + eta_market)` implicitly assumed Period A and Period B
+cover the same number of weeks. Deterministic reconciliation tests
+(Section 14's own required "unequal week-count" case) showed the
+reconciliation invariant (Section 8) failing by exactly `(n_B_weeks -
+n_A_weeks) * mu_reference` whenever period lengths genuinely differ.
+Resolution: `mu_reference` is exposed as its own explicit, always-
+computed `"baseline"` bridge component rather than discarded after use
+as the Shapley starting point - exactly zero for equal-length period
+comparisons (recovering the design note's original claim exactly),
+honestly non-zero for unequal-length ones. This is documented as a
+dated update within the design note itself (`docs/wp2f_contribution_
+waterfall_design_note.md`'s "Update, 2026-08-28" section) rather than
+silently rewritten history. No decision package was required: this is
+the same "which components are required for exact reconciliation"
+technical determination Section 5.3 already established the design
+note (and, transitively, evidence gathered while implementing it) is
+authorised to resolve - it changes no business/statistical
+interpretation, only which components are exposed for the
+already-approved invariant to hold unconditionally.
+
+**Alternatives considered:** shipping Section 13.3 exactly as written
+and restricting the feature to equal-length period comparisons only
+(rejected - Section 14 and the governing brief both explicitly require
+unequal-length support, e.g. a still-partial quarter compared to a
+complete one); silently renormalising the presented components so they
+summed to the correct total without a named `"baseline"` line
+(rejected - this would hide a real, business-meaningful cause of the
+discrepancy - period length itself - behind an invented correction
+factor, precisely the kind of fabricated allocation the governing brief
+and REQ-ECON-005 both prohibit); treating the discovery as grounds to
+halt and produce a new decision package (rejected - the fix is a
+technical completion of an already-approved determination, not a new
+business/statistical policy question).
+
+**Impact:** New `ancestry_mmm/core/contribution_waterfall.py`
+(`extract_generalised_eta_terms`, `compute_generalised_shapley_
+contributions`, `compute_contribution_waterfall_bridge`,
+`ContributionBridgeComponent`/`ContributionWaterfallBridge`,
+`sorted_presented_components`) and `ancestry_mmm/tests/
+test_contribution_waterfall.py` (19 tests, incl. the reconciliation
+invariant for equal- and unequal-length periods, a zero-spend-channel
+case, and a direct numeric cross-check against the existing, unmodified
+`compute_shapley_contributions`). Modified: `docs/wp2f_contribution_
+waterfall_design_note.md` (dated update section appended, nothing
+rewritten). `core.attribution.compute_shapley_contributions` and its
+existing callers are completely unchanged.
+**Owner:** Modelling / Platform engineering (implemented autonomously,
+per the business-decision brief's WP2F-implementation requirement).
+**Status:** WP2F implementation (core layer) complete pending CI. UI/
+AppTest/browser coverage for the waterfall chart follows in the same
+work package before merge.

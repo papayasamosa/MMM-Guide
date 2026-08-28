@@ -6,8 +6,10 @@ resolution, and the no-scaling-of-partial-periods invariant.
 import pytest
 
 from ancestry_mmm.core.outcome_valuation_periods import (
+    PERIOD_GRAIN_CUSTOM,
     PERIOD_GRAIN_MONTH,
     PERIOD_GRAIN_QUARTER,
+    PERIOD_GRAIN_WEEK,
     PERIOD_GRAIN_YEAR,
     calendar_month_label,
     calendar_quarter_label,
@@ -15,6 +17,7 @@ from ancestry_mmm.core.outcome_valuation_periods import (
     distinct_calendar_periods,
     resolve_weeks_for_calendar_period,
     resolve_weeks_for_custom_range,
+    resolve_weeks_for_grain,
 )
 import pandas as pd
 
@@ -150,3 +153,53 @@ class TestDistinctCalendarPeriods:
         weeks = ["2025-01-06", "2025-01-13", "2025-01-20"]
         periods = distinct_calendar_periods(weeks, PERIOD_GRAIN_MONTH)
         assert periods == ["2025-01"]
+
+
+class TestResolveWeeksForGrain:
+    """The single grain-dispatch entry point shared by
+    OutcomeValuationReportingService and ContributionWaterfallService."""
+
+    WEEKS = ["2025-01-06", "2025-01-13", "2025-01-20", "2025-02-03"]
+
+    def test_week_grain_returns_the_single_week(self):
+        result = resolve_weeks_for_grain(
+            self.WEEKS, PERIOD_GRAIN_WEEK, period_label="2025-01-13"
+        )
+        assert result == ["2025-01-13"]
+
+    def test_week_grain_unavailable_week_returns_empty(self):
+        result = resolve_weeks_for_grain(
+            self.WEEKS, PERIOD_GRAIN_WEEK, period_label="2099-01-01"
+        )
+        assert result == []
+
+    def test_week_grain_without_period_label_raises(self):
+        with pytest.raises(ValueError, match="period_label"):
+            resolve_weeks_for_grain(self.WEEKS, PERIOD_GRAIN_WEEK)
+
+    def test_custom_grain_delegates_to_resolve_weeks_for_custom_range(self):
+        result = resolve_weeks_for_grain(
+            self.WEEKS,
+            PERIOD_GRAIN_CUSTOM,
+            custom_range_start="2025-01-06",
+            custom_range_end="2025-01-13",
+        )
+        assert result == ["2025-01-06", "2025-01-13"]
+
+    def test_custom_grain_without_range_raises(self):
+        with pytest.raises(ValueError, match="custom_range"):
+            resolve_weeks_for_grain(self.WEEKS, PERIOD_GRAIN_CUSTOM)
+
+    def test_calendar_grain_delegates_to_resolve_weeks_for_calendar_period(self):
+        result = resolve_weeks_for_grain(
+            self.WEEKS, PERIOD_GRAIN_MONTH, period_label="2025-01"
+        )
+        assert result == ["2025-01-06", "2025-01-13", "2025-01-20"]
+
+    def test_calendar_grain_without_period_label_raises(self):
+        with pytest.raises(ValueError, match="period_label"):
+            resolve_weeks_for_grain(self.WEEKS, PERIOD_GRAIN_MONTH)
+
+    def test_unsupported_grain_raises(self):
+        with pytest.raises(ValueError, match="Unsupported"):
+            resolve_weeks_for_grain(self.WEEKS, "fortnight", period_label="x")

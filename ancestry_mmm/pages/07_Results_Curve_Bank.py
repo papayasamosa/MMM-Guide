@@ -151,6 +151,12 @@ from ancestry_mmm.application.outcome_valuation_reporting_service import (
     HistoricalOutcomeValuationRequest,
     OutcomeValuationReportingService,
 )
+from ancestry_mmm.application.contribution_waterfall_service import (
+    ContributionWaterfallPeriodRequest,
+    ContributionWaterfallRequest,
+    ContributionWaterfallService,
+)
+from ancestry_mmm.core.contribution_waterfall import sorted_presented_components
 
 
 _EFFECT_TYPE_LABELS = {
@@ -661,6 +667,94 @@ def _render_period_comparison(meta, trace, frame, records):
     )
     _render_metric_comparison_row("Attributable spend", comparison.spend, currency)
     _render_metric_comparison_row("ROI", comparison.roi, currency, is_roi=True)
+
+    st.markdown("#### Contribution waterfall")
+    st.caption(
+        "How Period A's outcome bridges to Period B's, broken down by "
+        "media/channel, seasonality, trend, promotions, and controls "
+        "(WP2F). Reuses the same market and periods selected above."
+    )
+    _render_contribution_waterfall(
+        meta,
+        trace,
+        frame,
+        market=cmp_market,
+        outcome_ids=denominator_ids,
+        period_a=ContributionWaterfallPeriodRequest(
+            grain=grain_a,
+            period_label=period_label_a,
+            custom_range_start=custom_start_a,
+            custom_range_end=custom_end_a,
+        ),
+        period_b=ContributionWaterfallPeriodRequest(
+            grain=grain_b,
+            period_label=period_label_b,
+            custom_range_start=custom_start_b,
+            custom_range_end=custom_end_b,
+        ),
+    )
+
+
+def _render_contribution_waterfall(
+    meta, trace, frame, *, market, outcome_ids, period_a, period_b
+):
+    """WP2F: the generalised-Shapley period-over-period contribution
+    waterfall. Routes every calculation through
+    `ContributionWaterfallService` - one bridge-construction path,
+    never a shortcut computed directly in this page."""
+    request = ContributionWaterfallRequest(
+        market=market,
+        trace=trace,
+        frame=frame,
+        meta=meta,
+        outcome_ids=outcome_ids,
+        period_a=period_a,
+        period_b=period_b,
+    )
+    with st.spinner("Computing the contribution waterfall..."):
+        result = ContributionWaterfallService().compute(request)
+
+    if result.errors:
+        for error in result.errors:
+            st.error(error)
+        return
+
+    bridge = result.bridge
+    ordered = sorted_presented_components(bridge.components)
+    categories = ["Period A"] + [c.component for c in ordered] + ["Period B"]
+    values = (
+        [bridge.period_a_outcome_mean]
+        + [c.bridge_mean for c in ordered]
+        + [bridge.period_b_outcome_mean]
+    )
+    st.plotly_chart(
+        create_waterfall_chart(
+            categories,
+            values,
+            title=f"{market} - contribution waterfall",
+        ),
+        width="stretch",
+    )
+    with st.expander("Posterior uncertainty by component"):
+        detail_df = pd.DataFrame(
+            [
+                {
+                    "Component": c.component,
+                    "Period A": c.period_a_mean,
+                    "Period B": c.period_b_mean,
+                    "Bridge (mean)": c.bridge_mean,
+                    f"Bridge ({bridge.credible_mass:.0%} lower)": c.bridge_lower,
+                    f"Bridge ({bridge.credible_mass:.0%} upper)": c.bridge_upper,
+                }
+                for c in ordered
+            ]
+        )
+        st.dataframe(detail_df, width="stretch")
+        st.caption(
+            f"Reconciliation check (expected ~0): "
+            f"{bridge.reconciliation_error_mean:.6g}. Based on "
+            f"{bridge.n_draws} posterior draw(s)."
+        )
 
 
 def _render_economic_valuation_section(meta, trace, frame, outcome_definitions):

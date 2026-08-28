@@ -145,3 +145,51 @@ def distinct_calendar_periods(available_weeks: Sequence[str], grain: str) -> Lis
         if label not in seen:
             seen.append(label)
     return seen
+
+
+_CALENDAR_GRAINS = (PERIOD_GRAIN_MONTH, PERIOD_GRAIN_QUARTER, PERIOD_GRAIN_YEAR)
+
+
+def resolve_weeks_for_grain(
+    available_weeks: Sequence[str],
+    grain: str,
+    *,
+    period_label: str | None = None,
+    custom_range_start: str | None = None,
+    custom_range_end: str | None = None,
+) -> List[str]:
+    """Single grain-dispatch entry point over every resolution mode this
+    module supports (week/month/quarter/year/custom) - the one place
+    that decides which of `resolve_weeks_for_calendar_period`/
+    `resolve_weeks_for_custom_range`/a direct single-week lookup applies,
+    reused by every caller that needs "resolve a period selector's
+    current grain+label into actual weeks" rather than each
+    reimplementing the same dispatch (WP2D-ui's `OutcomeValuationReporting
+    Service`, WP2F's `ContributionWaterfallService`).
+
+    Raises `ValueError` for a missing required field or an unsupported
+    grain - never silently falls back. Returns `[]` (not an error) for a
+    single week grain whose `period_label` is not in `available_weeks` -
+    matching `resolve_weeks_for_calendar_period`'s own "returns however
+    many weeks are actually available" fail-closed-by-omission
+    convention, since an empty result is itself the caller's cue to show
+    a "no weeks available" state.
+    """
+    if grain == PERIOD_GRAIN_WEEK:
+        if not period_label:
+            raise ValueError("A week grain request requires period_label.")
+        return [period_label] if period_label in available_weeks else []
+    if grain == PERIOD_GRAIN_CUSTOM:
+        if not custom_range_start or not custom_range_end:
+            raise ValueError(
+                "A custom grain request requires custom_range_start and "
+                "custom_range_end."
+            )
+        return resolve_weeks_for_custom_range(
+            available_weeks, custom_range_start, custom_range_end
+        )
+    if grain in _CALENDAR_GRAINS:
+        if not period_label:
+            raise ValueError(f"A '{grain}' grain request requires period_label.")
+        return resolve_weeks_for_calendar_period(available_weeks, grain, period_label)
+    raise ValueError(f"Unsupported reporting grain: '{grain}'.")
