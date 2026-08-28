@@ -658,10 +658,62 @@ For the implementation PR to build against, not created here:
 
 **Owner:** Modelling / Platform engineering.
 
-**Status:** Design note only. No `core`, `application`, or `pages` code
-accompanies this document. Implementation (WP2F implementation) may
-proceed once this note is reviewed and merged, following Section 14's
-preview and Section 8's mandatory reconciliation tests. WP2D-ui and
-WP2E may proceed independently of this note, per the governing brief's
-own sequencing (this note blocks only the waterfall's own
-implementation, not the rest of the economics workstream).
+**Status:** Implemented (`core/contribution_waterfall.py`, WP2F
+implementation). Section 13.3's authoritative refinement of Section
+5.2 is what was actually built - see Update, 2026-08-28, for one
+further correction discovered numerically during implementation.
+
+## Update, 2026-08-28: unequal-length periods require an explicit
+`baseline` component
+
+**What was found:** Section 13.3's own worked proof (and, before it,
+Section 4/9/11's original claim) implicitly assumes Period A and
+Period B cover the **same number of weeks**. Deterministic reconciliation
+tests written for the implementation PR (`tests/test_contribution_
+waterfall.py::TestComputeContributionWaterfallBridge::
+test_reconciliation_holds_with_unequal_period_lengths`, mandated by
+Section 14's own test checklist) caught this numerically: with
+`mu_reference = exp(intercept + eta_market)` excluded from the bridge
+sum entirely (as Section 13.3 specifies), the reconciliation invariant
+(Section 8) failed by exactly `(n_B_weeks - n_A_weeks) * mu_reference`
+whenever the two periods' week-counts differed. This is not a
+floating-point artefact - summing `mu_reference` over `n_A` versus `n_B`
+rows genuinely produces different totals whenever `n_A != n_B`, and
+that difference was not attributed to any component.
+
+**Why Section 13.3 missed this:** its worked example (Section 13.3
+itself, and the 13.1/13.2 examples it builds on) only ever compares
+periods of equal length, where `n_A == n_B` makes the gap vanish
+identically - so the proof's implicit equal-length assumption never
+surfaced as a visible discrepancy in the note's own worked arithmetic.
+
+**Resolution (implemented, not merely proposed):** `mu_reference` is
+kept as its own explicit, always-computed **`baseline`** bridge
+component (`contribution = mu_reference` per row - not Shapley-split,
+since it is common to every permutation before any decomposed player is
+inserted), rather than being discarded after use as a starting point.
+For an equal-length comparison, `baseline`'s bridge is exactly zero,
+recovering Section 4/13.3's original claim exactly. For an
+unequal-length comparison, it is a genuine, honest component - "this
+period simply covers a different number of weeks of baseline-level
+outcome" is real information, not noise - so it is never hidden from
+the presented chart, only sorted alongside every other component by
+magnitude like any other (Section 9). This required no decision
+package: it is the same category of "which components are required for
+exact reconciliation" technical determination Section 5.3 already
+established this note (and, transitively, evidence gathered while
+implementing it) is authorised to resolve - it changes no business or
+statistical interpretation, only which components are exposed for the
+already-approved reconciliation invariant to hold unconditionally,
+exactly as Section 6/14 require.
+
+**What is unaffected:** Sections 1-3, 5.1, 6 (except the note above),
+7, 8 (the invariant itself is unchanged and now holds unconditionally,
+including for unequal lengths), 9, 10, 12, and 13.1/13.2 all stand as
+written. Section 5.2 remains superseded by 13.3 as originally stated;
+13.3 is now itself refined by this update for the unequal-length case
+only. Section 4/11's claim that intercept/market (now: `baseline`)
+"contribute exactly zero to any delta" should be read as scoped to
+equal-length period comparisons specifically - true exactly as stated
+there, but not the complete picture for the general case, which this
+update completes.
