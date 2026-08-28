@@ -1328,6 +1328,30 @@
         "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_all_three_records_reference_the_decision_package",
         "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_seo_001_defers_causal_role"
       ]
+    },
+    {
+      "requirement_id": "REQ-ECON-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-ECON-001.md",
+      "affected_modules": [
+        "ancestry_mmm/core/canonical_curves.py",
+        "ancestry_mmm/core/attribution.py",
+        "ancestry_mmm/core/optimization.py",
+        "docs/wp2_outcome_valuation_gap_analysis.md",
+        "docs/wp2_outcome_valuation_decision_package.md"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_canonical_curves.py::test_matches_normal_prediction_function_exactly",
+        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_001_indexed_and_implemented",
+        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_001_reconciles_the_ratio_form_not_net_of_investment"
+      ]
     }
   ]
 }
