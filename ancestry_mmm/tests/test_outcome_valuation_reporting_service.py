@@ -17,7 +17,7 @@ from ancestry_mmm.application.outcome_valuation_reporting_service import (
     HistoricalOutcomeValuationRequest,
     OutcomeValuationReportingService,
 )
-from ancestry_mmm.core.coverage import STATE_ESTIMATED
+from ancestry_mmm.core.coverage import STATE_ESTIMATED, STATE_OBSERVED_ZERO
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.outcome_valuation import (
     VALUATION_KIND_FH_LTR,
@@ -283,3 +283,159 @@ class TestFailsClosed:
 
         assert result.attribution is None
         assert result.errors != []
+
+
+class TestComparePeriods:
+    """WP2E: explicit two-period comparison. Reuses `evaluate_period()`
+    itself (called twice) - one calculation path, verified here by
+    checking the comparison numbers agree with two direct
+    `evaluate_period()` calls."""
+
+    def test_happy_path_compares_two_weeks(self, trace, frame, meta):
+        records = _valuation_records(WEEK_STARTS)
+        request_a = _base_request(
+            trace,
+            frame,
+            meta,
+            grain=PERIOD_GRAIN_WEEK,
+            period_label=WEEK_STARTS[0],
+            weekly_valuation_records=records,
+        )
+        request_b = _base_request(
+            trace,
+            frame,
+            meta,
+            grain=PERIOD_GRAIN_WEEK,
+            period_label=WEEK_STARTS[4],
+            weekly_valuation_records=records,
+        )
+        comparison = OutcomeValuationReportingService().compare_periods(
+            request_a, request_b
+        )
+
+        assert comparison.errors == []
+        assert comparison.period_a.resolved_weeks == [WEEK_STARTS[0]]
+        assert comparison.period_b.resolved_weeks == [WEEK_STARTS[4]]
+
+        direct_a = OutcomeValuationReportingService().evaluate_period(request_a)
+        direct_b = OutcomeValuationReportingService().evaluate_period(request_b)
+
+        assert comparison.incremental_value is not None
+        assert comparison.incremental_value.period_a_value == pytest.approx(
+            direct_a.attribution.incremental_value_mean
+        )
+        assert comparison.incremental_value.period_b_value == pytest.approx(
+            direct_b.attribution.incremental_value_mean
+        )
+        assert comparison.incremental_value.absolute_change == pytest.approx(
+            direct_b.attribution.incremental_value_mean
+            - direct_a.attribution.incremental_value_mean
+        )
+
+        assert comparison.spend is not None
+        assert comparison.spend.absolute_change == pytest.approx(
+            direct_b.attribution.spend - direct_a.attribution.spend
+        )
+
+    def test_period_objects_expose_underlying_resolved_weeks_for_the_waterfall(
+        self, trace, frame, meta
+    ):
+        """WP2F's future waterfall needs the exact resolved week-lists
+        each period bridges from/to - exposed here via `period_a`/
+        `period_b`, not re-derivable only from the comparison deltas."""
+        records = _valuation_records(WEEK_STARTS)
+        request_a = _base_request(
+            trace,
+            frame,
+            meta,
+            grain=PERIOD_GRAIN_QUARTER,
+            period_label="2025-Q1",
+            weekly_valuation_records=records,
+        )
+        request_b = _base_request(
+            trace,
+            frame,
+            meta,
+            grain=PERIOD_GRAIN_WEEK,
+            period_label=WEEK_STARTS[0],
+            weekly_valuation_records=records,
+        )
+        comparison = OutcomeValuationReportingService().compare_periods(
+            request_a, request_b
+        )
+        assert comparison.period_a.resolved_weeks == WEEK_STARTS
+        assert comparison.period_b.resolved_weeks == [WEEK_STARTS[0]]
+
+    def test_zero_period_a_value_makes_percentage_change_unavailable(
+        self, trace, frame, meta
+    ):
+        zero_week_record = WeeklyOutcomeValuationRecord(
+            valuation_kind=VALUATION_KIND_FH_LTR,
+            market="UK",
+            week=WEEK_STARTS[0],
+            segment=SEGMENT,
+            denominator_outcome_id="New",
+            quality_status=STATE_OBSERVED_ZERO,
+            aggregate_value=0.0,
+            currency="GBP",
+        )
+        records = [zero_week_record] + _valuation_records(WEEK_STARTS[1:])
+        request_a = _base_request(
+            trace,
+            frame,
+            meta,
+            grain=PERIOD_GRAIN_WEEK,
+            period_label=WEEK_STARTS[0],
+            weekly_valuation_records=records,
+        )
+        request_b = _base_request(
+            trace,
+            frame,
+            meta,
+            grain=PERIOD_GRAIN_WEEK,
+            period_label=WEEK_STARTS[4],
+            weekly_valuation_records=records,
+        )
+        comparison = OutcomeValuationReportingService().compare_periods(
+            request_a, request_b
+        )
+
+        assert comparison.incremental_value is not None
+        assert comparison.incremental_value.period_a_value == pytest.approx(0.0)
+        assert comparison.incremental_value.percentage_change is None
+        assert (
+            comparison.incremental_value.percentage_change_unavailable_reason
+            is not None
+        )
+        assert (
+            "zero" in comparison.incremental_value.percentage_change_unavailable_reason
+        )
+
+    def test_a_failed_period_leaves_comparisons_none_but_surfaces_its_error(
+        self, trace, frame, meta
+    ):
+        records = _valuation_records(WEEK_STARTS[:-1])  # last week uncovered
+        request_a = _base_request(
+            trace,
+            frame,
+            meta,
+            grain=PERIOD_GRAIN_WEEK,
+            period_label=WEEK_STARTS[0],
+            weekly_valuation_records=records,
+        )
+        request_b = _base_request(
+            trace,
+            frame,
+            meta,
+            grain=PERIOD_GRAIN_WEEK,
+            period_label=WEEK_STARTS[-1],
+            weekly_valuation_records=records,
+        )
+        comparison = OutcomeValuationReportingService().compare_periods(
+            request_a, request_b
+        )
+
+        assert comparison.incremental_value is None
+        assert comparison.roi is None
+        assert any(e.startswith("Period B:") for e in comparison.errors)
+        assert comparison.period_a.attribution is not None

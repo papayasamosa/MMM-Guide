@@ -97,7 +97,15 @@ class PosteriorEconomicAttribution:
     (REQ-ECON-003 Requirements 3-4). ``value_per_unit`` inputs are fixed,
     non-drawn business data; only ``incremental_value``/``roi`` carry
     posterior uncertainty, summarised via the existing governed
-    credible-interval convention."""
+    credible-interval convention.
+
+    ``incremental_outcome_*`` (WP2E) is the same ``incremental_outcome_
+    draws`` this artefact is built from, summed per draw and summarised
+    *before* the value join - the raw attributed-outcome-unit posterior,
+    always available whenever the caller could resolve weeks/draws at
+    all, independent of whether a governed value rate exists for this
+    cell (REQ-ECON-001's CPA-vs-ROI split: CPA-style raw-outcome
+    reporting never requires a value operand, only ROI does)."""
 
     valuation_kind: str
     market: str
@@ -116,6 +124,10 @@ class PosteriorEconomicAttribution:
     roi_lower: Optional[float] = None
     roi_upper: Optional[float] = None
     source_rate_fingerprints: Tuple[str, ...] = ()
+    incremental_outcome_mean: Optional[float] = None
+    incremental_outcome_median: Optional[float] = None
+    incremental_outcome_lower: Optional[float] = None
+    incremental_outcome_upper: Optional[float] = None
 
 
 def summarize_posterior_economic_attribution(
@@ -132,6 +144,10 @@ def summarize_posterior_economic_attribution(
     always does for ROI, and a zero/negative/absent spend never produces
     a fabricated ROI figure."""
     _validate_single_cohesive_series(weekly_rates)
+    total_outcome_draws = np.asarray(incremental_outcome_draws, dtype=float).sum(axis=1)
+    outcome_summary = summarize_distribution(
+        total_outcome_draws, cred_mass=credible_mass
+    )
     value_draws = join_incremental_outcome_draws_to_value(
         incremental_outcome_draws, weekly_rates
     )
@@ -164,4 +180,8 @@ def summarize_posterior_economic_attribution(
         source_rate_fingerprints=tuple(
             rate.source_record_fingerprint for rate in weekly_rates
         ),
+        incremental_outcome_mean=outcome_summary["mean"],
+        incremental_outcome_median=outcome_summary["median"],
+        incremental_outcome_lower=outcome_summary["lower"],
+        incremental_outcome_upper=outcome_summary["upper"],
     )
