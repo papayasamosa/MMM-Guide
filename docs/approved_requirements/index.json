@@ -1385,6 +1385,7 @@
       "status": "approved_for_implementation",
       "record_path": "docs/approved_requirements/REQ-ECON-003.md",
       "affected_modules": [
+        "ancestry_mmm/core/outcome_valuation_rates.py",
         "ancestry_mmm/core/canonical_curves.py",
         "ancestry_mmm/core/attribution.py",
         "ancestry_mmm/core/optimization.py",
@@ -1402,7 +1403,10 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
         "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_003_indexed_and_classified_incomplete",
         "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_003_requires_weekly_grain_before_aggregation",
-        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_003_fixes_value_uncertainty_treatment"
+        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_003_fixes_value_uncertainty_treatment",
+        "ancestry_mmm/tests/test_outcome_valuation_rates.py::TestZeroDenominatorCarveOut::test_never_actually_divides_by_zero",
+        "ancestry_mmm/tests/test_outcome_valuation_rates.py::TestInconsistentCasesAreSurfaced::test_nonzero_value_with_zero_denominator_blocks",
+        "ancestry_mmm/tests/test_outcome_valuation_rates.py::TestOrdinaryDivision::test_derives_the_expected_rate"
       ]
     },
     {
