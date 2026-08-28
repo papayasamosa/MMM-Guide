@@ -15,6 +15,7 @@ from ancestry_mmm.utils import (
     set_state,
     dataframe_column_config,
     readable_label,
+    model_input_display_label,
     CONSTRAINT_KIND_LABELS,
     FIELD_HELP,
 )
@@ -1013,7 +1014,12 @@ if unmapped_cost_bearing_channels:
     st.caption(
         "Defaulted to 0 for cost-bearing activities with no approved, effective "
         "cost mapping (never inferred from the raw model input): "
-        + ", ".join(readable_label(c) for c in sorted(unmapped_cost_bearing_channels))
+        + ", ".join(
+            model_input_display_label(
+                c, activity_definitions=activity_definitions, market=market
+            )
+            for c in sorted(unmapped_cost_bearing_channels)
+        )
         + ". Configure a mapping on Activity Mapping to seed a spend default."
     )
 if historical_reference_date is not None and any(
@@ -1087,7 +1093,10 @@ with SectionCard(
         for ch, info in media_unit_channels.items():
             display_df[ch] = plan_df[ch] / info["avg_cost_per_unit"]
         label_overrides = {
-            ch: f"{readable_label(ch)} ({info['unit_type']})"
+            ch: (
+                f"{model_input_display_label(ch, activity_definitions=activity_definitions, market=market)} "
+                f"({info['unit_type']})"
+            )
             for ch, info in media_unit_channels.items()
         }
         edited_display = st.data_editor(
@@ -1104,7 +1113,8 @@ with SectionCard(
         st.caption(
             "Cost-per-unit assumptions in use: "
             + ", ".join(
-                f"{readable_label(ch)} = {info['avg_cost_per_unit']:,.2f} / {info['unit_type']}"
+                f"{model_input_display_label(ch, activity_definitions=activity_definitions, market=market)}"
+                f" = {info['avg_cost_per_unit']:,.2f} / {info['unit_type']}"
                 for ch, info in media_unit_channels.items()
             )
         )
@@ -2335,7 +2345,13 @@ with tab_constrained:
             "Channel (if applicable)",
             ["(any)"] + meta.channels,
             key="c_channel",
-            format_func=lambda c: c if c == "(any)" else readable_label(c),
+            format_func=lambda c: (
+                c
+                if c == "(any)"
+                else model_input_display_label(
+                    c, activity_definitions=activity_definitions, market=market
+                )
+            ),
         )
         mo = st.selectbox("Month (if applicable)", ["(any)"] + months, key="c_month")
         val = st.number_input(
@@ -2365,7 +2381,9 @@ with tab_constrained:
         c1, c2 = st.columns([5, 1])
         c1.markdown(
             f"**{i + 1}.** {CONSTRAINT_KIND_LABELS.get(c.kind, c.kind)} - "
-            f"channel={readable_label(c.channel) or 'any'}, month={c.month or 'any'}, value={c.value}, max % movement={c.max_pct_move}"
+            "channel="
+            f"{model_input_display_label(c.channel, activity_definitions=activity_definitions, market=market) if c.channel else 'any'}"
+            f", month={c.month or 'any'}, value={c.value}, max % movement={c.max_pct_move}"
         )
         if c2.button("Remove", key=f"rm_constraint_{i}"):
             st.session_state["scenario_constraints"].pop(i)

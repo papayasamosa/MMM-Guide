@@ -17,6 +17,7 @@ from ancestry_mmm.utils import (
     dataframe_column_config,
     format_date,
     readable_label,
+    model_input_display_label,
 )
 from ancestry_mmm.components import (
     apply_theme,
@@ -1095,7 +1096,13 @@ if model_type == "market_specific":
     )
     c1, c2 = st.columns(2)
     viewer_market = c1.selectbox("Market", meta.markets)
-    viewer_channel = c2.selectbox("Channel", meta.channels)
+    viewer_channel = c2.selectbox(
+        "Channel",
+        meta.channels,
+        format_func=lambda c: model_input_display_label(
+            c, activity_definitions=activity_definitions, market=viewer_market
+        ),
+    )
 
     show_uncertainty = st.checkbox(
         "Show posterior uncertainty band (re-runs the curve once per sampled draw - slower)",
@@ -1289,7 +1296,13 @@ else:
         "These curves are for analysis; use the Approved response curves section for "
         "governed evidence."
     )
-    viewer_channel = st.selectbox("Channel", meta.channels)
+    viewer_channel = st.selectbox(
+        "Channel",
+        meta.channels,
+        format_func=lambda c: model_input_display_label(
+            c, activity_definitions=activity_definitions
+        ),
+    )
 
     show_uncertainty = st.checkbox(
         "Show posterior uncertainty band (re-runs the curve once per sampled draw - slower)",
@@ -1710,7 +1723,8 @@ if entries:
     st.markdown("#### Record a calibration result")
     entry_options = {
         f"Snapshot {index + 1} · {e.run_label} · {e.market or 'Shared'} · "
-        f"{e.channel} · {e.segment_or_overall} · {e.input_type} · "
+        f"{model_input_display_label(e.channel, activity_definitions=activity_definitions, market=e.market)}"
+        f" · {e.segment_or_overall} · {e.input_type} · "
         f"{format_date(pd.Timestamp.fromtimestamp(e.created_at))}": e.entry_id
         for index, e in enumerate(entries)
     }

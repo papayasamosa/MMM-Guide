@@ -13,6 +13,7 @@ from ancestry_mmm.utils.display import (
     format_number,
     readable_label,
     readable_labels,
+    model_input_display_label,
     display_enum_options,
     display_enum_frame,
     restore_enum_frame,
@@ -20,6 +21,7 @@ from ancestry_mmm.utils.display import (
     OPERATION_LABELS,
     OPERATION_DESCRIPTIONS,
 )
+from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.data.pipeline import SUPPORTED_OPS
 
 
@@ -124,6 +126,101 @@ class TestReadableLabel:
             "paid_search_cap",
             "organic_search_capture",
         ]
+
+
+class TestModelInputDisplayLabel:
+    """UI-WP7: the shared presentation-layer label resolver for model
+    inputs. Stable IDs (activity_id, model_input_column) are never
+    affected - only what's shown."""
+
+    def _activity(self, **overrides):
+        defaults = dict(
+            activity_id="UK:tv_spend",
+            channel="TV_Brand",
+            activity_ownership="paid",
+            model_role="intervention",
+            economic_treatment="paid_media_cost",
+            planning_eligibility="optimisable",
+            source="test",
+            market="UK",
+        )
+        defaults.update(overrides)
+        return ActivityDefinition(**defaults)
+
+    def test_no_governed_metadata_falls_back_to_readable_label(self):
+        assert model_input_display_label("tv_spend") == readable_label("tv_spend")
+
+    def test_no_matching_activity_falls_back_to_readable_label(self):
+        definitions = [self._activity(model_input_column="digital_spend")]
+        assert model_input_display_label(
+            "tv_spend", activity_definitions=definitions
+        ) == readable_label("tv_spend")
+
+    def test_matched_activity_uses_reporting_channel(self):
+        definitions = [self._activity(model_input_column="tv_spend")]
+        assert (
+            model_input_display_label("tv_spend", activity_definitions=definitions)
+            == "TV Brand"
+        )
+
+    def test_matched_activity_adds_platform_and_campaign_context(self):
+        definitions = [
+            self._activity(
+                model_input_column="social_spend",
+                channel="Social",
+                platform="Meta",
+                campaign_type="Prospecting",
+            )
+        ]
+        assert (
+            model_input_display_label("social_spend", activity_definitions=definitions)
+            == "Social (Meta / Prospecting)"
+        )
+
+    def test_resolved_model_input_column_falls_back_to_channel(self):
+        # ActivityDefinition.resolved_model_input_column falls back to
+        # `channel` when `model_input_column` is unset - the resolver must
+        # match on the same resolved column, not the raw (possibly blank)
+        # field, matching core.activities' own resolution rule.
+        definitions = [self._activity(channel="tv_spend")]
+        assert model_input_display_label(
+            "tv_spend", activity_definitions=definitions
+        ) == readable_label("tv_spend")
+
+    def test_prefers_exact_market_row_over_wildcard_row(self):
+        definitions = [
+            self._activity(
+                model_input_column="tv_spend", market="*", channel="Generic_TV"
+            ),
+            self._activity(
+                model_input_column="tv_spend", market="UK", channel="UK_TV_Brand"
+            ),
+        ]
+        assert (
+            model_input_display_label(
+                "tv_spend", activity_definitions=definitions, market="UK"
+            )
+            == "UK TV Brand"
+        )
+
+    def test_accepts_plain_dict_definitions(self):
+        definitions = [
+            {
+                "model_input_column": "tv_spend",
+                "channel": "TV_Brand",
+                "market": "UK",
+            }
+        ]
+        assert (
+            model_input_display_label("tv_spend", activity_definitions=definitions)
+            == "TV Brand"
+        )
+
+    def test_never_mutates_the_stable_column_name(self):
+        definitions = [self._activity(model_input_column="tv_spend")]
+        label = model_input_display_label("tv_spend", activity_definitions=definitions)
+        assert label != "tv_spend"
+        assert definitions[0].model_input_column == "tv_spend"
 
 
 class TestDataframeColumnConfig:

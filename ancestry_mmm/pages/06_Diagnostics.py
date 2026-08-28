@@ -21,6 +21,7 @@ from ancestry_mmm.utils import (
     FIELD_HELP,
     readable_label,
     outcome_display_label,
+    model_input_display_label,
 )
 from ancestry_mmm.components import (
     apply_theme,
@@ -1275,7 +1276,9 @@ if _capability_result is not None and not _capability_result.supported:
         "on whether the active validation policy includes the "
         "market_channel_capability gate:\n\n"
         + "\n".join(
-            f"- **{issue.market} / {issue.channel}**: {issue.reason}"
+            f"- **{issue.market} / "
+            f"{model_input_display_label(issue.channel, activity_definitions=activity_definitions, market=issue.market)}"
+            f"**: {issue.reason}"
             for issue in _capability_result.issues
         )
     )

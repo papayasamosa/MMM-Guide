@@ -225,6 +225,86 @@ def outcome_display_label(outcome: Any, *, include_breakdown: bool = False) -> s
     return label
 
 
+def _activity_definition_for_column(
+    model_input_column: str,
+    activity_definitions: Optional[Iterable[Any]],
+    market: Optional[str],
+) -> Optional[Any]:
+    """Find the governed activity for one resolved model-input column,
+    preferring an exact-market row over a market-wildcard (``"*"``) row.
+
+    Display-only: never raises on an ambiguous/duplicate mapping the way
+    ``core.activities.activity_by_model_input`` deliberately does at the
+    engine boundary - it takes the first usable match rather than blocking
+    rendering.
+    """
+    best = None
+    for definition in activity_definitions or ():
+        if isinstance(definition, Mapping):
+            column = definition.get("model_input_column") or definition.get("channel")
+            row_market = definition.get("market")
+        else:
+            column = getattr(definition, "resolved_model_input_column", None)
+            if not column:
+                column = getattr(definition, "model_input_column", "") or getattr(
+                    definition, "channel", ""
+                )
+            row_market = getattr(definition, "market", None)
+        if column != model_input_column:
+            continue
+        if market is not None and row_market == market:
+            return definition
+        if best is None:
+            best = definition
+    return best
+
+
+def model_input_display_label(
+    model_input_column: str,
+    *,
+    activity_definitions: Optional[Iterable[Any]] = None,
+    market: Optional[str] = None,
+) -> str:
+    """Presentation-layer label for one model-input column (a channel/media
+    spend or delivery variable), preferring the governed activity's
+    reporting channel and activity context over the raw column name.
+
+    The stable ``model_input_column`` remains the value used by joins,
+    fingerprints, model identity, and persistence - this only controls what
+    an analyst reads. Preference order:
+
+    1. the governed activity's reporting channel, plus platform/campaign
+       context where it adds useful specificity, for the activity whose
+       resolved model-input column matches ``model_input_column``
+       (preferring an exact-market row over a market-wildcard row when
+       ``market`` is given);
+    2. ``readable_label(model_input_column)`` when no governed activity
+       metadata is available for this column (no ``activity_definitions``
+       supplied, or none match).
+    """
+    definition = _activity_definition_for_column(
+        model_input_column, activity_definitions, market
+    )
+    if definition is None:
+        return readable_label(model_input_column)
+
+    def value(field: str) -> str:
+        if isinstance(definition, Mapping):
+            raw = definition.get(field, "")
+        else:
+            raw = getattr(definition, field, "")
+        return str(raw or "").strip()
+
+    channel = value("channel")
+    label = readable_label(channel) if channel else readable_label(model_input_column)
+    context = " / ".join(
+        part for part in (value("platform"), value("campaign_type")) if part
+    )
+    if context:
+        label += f" ({context})"
+    return label
+
+
 def display_enum_options(values: Iterable[Any]) -> list[Any]:
     """Return editor options with human labels while retaining no domain state.
 

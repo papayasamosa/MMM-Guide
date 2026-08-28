@@ -24,6 +24,7 @@ from ancestry_mmm.utils import (
     curve_artifact_store_dir,
     dataframe_column_config,
     readable_label,
+    model_input_display_label,
 )
 from ancestry_mmm.components import (
     apply_theme,
@@ -138,7 +139,9 @@ def _planning_curve_reference(outcome, as_of: date) -> str:
     return "-".join([*readable_parts, as_of.isoformat()])
 
 
-def _humanise_reference_context_preview(context, outcome_display_labels):
+def _humanise_reference_context_preview(
+    context, outcome_display_labels, *, activity_definitions=None, market=None
+):
     """Prepare a display-only context preview while preserving stored keys."""
     return {
         "trend": context.trend,
@@ -157,7 +160,9 @@ def _humanise_reference_context_preview(context, outcome_display_labels):
             for outcome_id, values in context.outcome_controls.items()
         },
         "other_channel_model_input": {
-            readable_label(channel): value
+            model_input_display_label(
+                channel, activity_definitions=activity_definitions, market=market
+            ): value
             for channel, value in context.other_channel_media_input.items()
         },
         "reference_period_start": context.reference_period_start,
@@ -979,7 +984,11 @@ for market in selected_markets:
             st.markdown("**Other-channel model input** (every fitted channel)")
             other_channel_media_input = {
                 channel: st.number_input(
-                    readable_label(channel),
+                    model_input_display_label(
+                        channel,
+                        activity_definitions=activity_definitions,
+                        market=market,
+                    ),
                     value=0.0,
                     key=f"ocg_other_channel_{market}_{channel}",
                 )
@@ -1057,7 +1066,12 @@ for market in selected_markets:
                     "**Derived from the model frame** (review before confirming)"
                 )
                 st.write(
-                    _humanise_reference_context_preview(context, outcome_display_labels)
+                    _humanise_reference_context_preview(
+                        context,
+                        outcome_display_labels,
+                        activity_definitions=activity_definitions,
+                        market=market,
+                    )
                 )
 
         # Corrective PR E2.2: the checkbox's own widget key embeds a
@@ -1145,13 +1159,16 @@ for market in meta.markets:
     for channel in meta.channels:
         if market in selected_markets:
             key_prefix = f"ocg_support_{market}_{channel}"
+            channel_label = model_input_display_label(
+                channel, activity_definitions=activity_definitions, market=market
+            )
             unit = st.text_input(
-                f"Unit - {market}/{readable_label(channel)}",
+                f"Unit - {market}/{channel_label}",
                 value="impressions",
                 key=f"{key_prefix}_unit",
             )
             unit_scale = st.number_input(
-                f"Unit scale - {market}/{readable_label(channel)}",
+                f"Unit scale - {market}/{channel_label}",
                 value=1.0,
                 min_value=1e-9,
                 key=f"{key_prefix}_scale",
@@ -1203,7 +1220,9 @@ for market in selected_markets:
     for channel in meta.channels:
         key_prefix = f"ocg_support_{market}_{channel}"
         with st.expander(
-            f"Model input - {market} / {readable_label(channel)}", expanded=False
+            f"Model input - {market} / "
+            f"{model_input_display_label(channel, activity_definitions=activity_definitions, market=market)}",
+            expanded=False,
         ):
             include_support = st.checkbox(
                 "Also record observed/planning support for this cell "
@@ -1263,7 +1282,7 @@ for market in selected_markets:
             if cost_mapping is None:
                 st.error(
                     f"No approved, effective cost mapping for {market} / "
-                    f"{readable_label(channel)} "
+                    f"{model_input_display_label(channel, activity_definitions=activity_definitions, market=market)} "
                     "as of the cost as-of date above; cannot build monetary support."
                 )
                 continue
@@ -1277,7 +1296,7 @@ for market in selected_markets:
             if not rate:
                 st.error(
                     f"No valid FX rate {local_currency}->{reporting} for {market} / "
-                    f"{readable_label(channel)}; cannot build monetary support."
+                    f"{model_input_display_label(channel, activity_definitions=activity_definitions, market=market)}; cannot build monetary support."
                 )
                 continue
             try:
@@ -1296,7 +1315,7 @@ for market in selected_markets:
                 invalid_support_cells.append(f"{market}/{channel}")
                 st.error(
                     f"Cannot derive monetary support for {market} / "
-                    f"{readable_label(channel)}: "
+                    f"{model_input_display_label(channel, activity_definitions=activity_definitions, market=market)}: "
                     f"{exc}. Adjust the planning min/max above, or the cost "
                     "mapping's knots/allow_extrapolation on the Media Costs "
                     "page, then retry."
@@ -1549,7 +1568,8 @@ if st.button(
                         stats["posterior_mean"].to_numpy(dtype=float),
                         stats["lower_interval"].to_numpy(dtype=float),
                         stats["upper_interval"].to_numpy(dtype=float),
-                        f"{curve_market} · {readable_label(curve_channel)}",
+                        f"{curve_market} · "
+                        f"{model_input_display_label(curve_channel, activity_definitions=activity_definitions, market=curve_market)}",
                         x_axis_label=resolve_curve_axis_label(x_col, draws_group),
                     ),
                     width="stretch",
