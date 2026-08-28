@@ -35,6 +35,22 @@ search across all 11 parts and the FX addendum). The existing codebase
 already implements the ratio form consistently across three independent
 modules (see "Capability status" below).
 
+## Revision history
+
+- 2026-08-28 (original): approved the CPA/ROI arithmetic and value-join
+  principle; left everything about what `value_per_unit` represents, and
+  its presentation, decision-bound (D0-D10).
+- 2026-08-28 (this revision): the business-decision brief "Outcome
+  valuation and time-varying ROI: approved business decisions" resolves
+  its item 11, approving Requirement 7 (monetary presentation) below and
+  explicitly re-confirming the ratio-form ROI definition from the
+  original approval (*"The governed calculation remains: ROI =
+  incremental economic value / attributable spend... Do not redefine ROI
+  as (value - spend) / spend"*). This revision adds Requirement 7 only;
+  Requirements 1-6 are unchanged from the original approval. Most of
+  D0-D10 are now resolved by `REQ-ECON-002`, `REQ-ECON-003`, and
+  `REQ-ECON-004` — see the updated "Out of scope" section below.
+
 ## Capability status
 
 Already substantively implemented and internally consistent — this
@@ -150,29 +166,68 @@ summaries" and "Do not add independently summarised medians." This
 record does not change that existing rule; it confirms the ROI/CPA
 formulas above are computed within, not around, that discipline.
 
+### 7. Monetary presentation
+
+Per the business decision (item 11 of the 2026-08-28 brief): the
+preferred user-facing presentation of the ROI figure Requirement 2
+computes is monetary — e.g. "£2.50 returned per £1 spent" — rather than
+relying solely on an unexplained multiplier (e.g. "2.5×"). The currency
+symbol/label used must follow the report's reporting currency (subject
+to whatever FX/reporting-currency policy is eventually approved — this
+requirement governs presentation format, not currency conversion). Any
+report or UI surface presenting a ROI figure must also expose the
+underlying incremental economic value and spend it was computed from,
+so the ROI figure remains independently interpretable rather than a
+bare ratio. This does not change the arithmetic in Requirement 2 — it is
+a presentation contract for the same already-approved value.
+
 ## Out of scope (decision-required, not approved by this record)
 
-See `docs/wp2_outcome_valuation_decision_package.md` in full. In
-summary, this record does not approve:
+See `docs/wp2_outcome_valuation_decision_package.md` in full for the
+authoritative current status of every item below. Most are now resolved
+by `REQ-ECON-002`/`REQ-ECON-003`/`REQ-ECON-004`, per the 2026-08-28
+business-decision brief; this record's own arithmetic (Requirements 1-2,
+7) is unaffected either way.
 
-- what `value_per_unit` represents for Family History (projected LTR's
-  definition, or which FH outcome it attaches to) — D1;
-- what `value_per_unit` represents for DNA (revenue's attachment to
-  orders/kits/outcomes, or which segment axes it varies by) — D2;
-- missing-week imputation policy — D3;
-- future-value extrapolation policy — D4;
-- any waterfall/economic-decomposition accounting method — D5;
-- reporting-period aggregation weighting for partial periods — D6;
+- what `value_per_unit` represents for Family History — **resolved**:
+  a governed aggregate weekly LTR input, denominator reconciled per
+  project (`REQ-ECON-002` Requirements 2-3) — D1;
+- what `value_per_unit` represents for DNA — **resolved**: a governed
+  aggregate weekly revenue input, denominator = kit orders
+  (`REQ-ECON-002` Requirements 4-5) — D2;
+- missing-week imputation policy — **resolved**: fail closed, with an
+  explicit zero-denominator/zero-outcome carve-out (`REQ-ECON-002`
+  Requirement 8) — D3;
+- future-value extrapolation policy — **resolved**: no auto-
+  extrapolation, explicit scenario assumption required (`REQ-ECON-003`
+  Requirement 5) — D4;
+- any waterfall/economic-decomposition accounting method — **still
+  open**: scope clarified as a period-over-period outcome-volume
+  contribution bridge, not an economic decomposition (`REQ-ECON-004`,
+  "Explicitly not covered"), but the computation method itself remains
+  gated behind a required calculation/design note before any further
+  authority record or code — D5;
+- reporting-period aggregation weighting for partial periods —
+  **resolved**: actual included weeks only, never scaled or annualised
+  (`REQ-ECON-004` Requirement 3) — D6;
 - FX policy for a value/revenue series, as distinct from the
   already-approved spend-side FX architecture (`REQ-FX-001` through
-  `REQ-FX-006`) — D7;
-- treatment of value uncertainty when a value series varies — D8;
+  `REQ-FX-006`) — **still open, Finance-owned and blocked**; only
+  currency-identification metadata (never conversion) is authorised
+  (`REQ-ECON-002` Requirement 7) — D7;
+- treatment of value uncertainty when a value series varies —
+  **resolved**: supplied values are fixed, only posterior draws carry
+  uncertainty (`REQ-ECON-003` Requirement 4) — D8;
 - the source-pack domain classification of a supplied weekly value
-  series, and the content of the PRD-referenced-but-undefined
-  `value_rule` object — D9;
-- standard reporting periods and the exact YoY decomposition method
-  underlying any of the four independently-worded PRD copies of that
-  question — D10.
+  series — **resolved**: the existing Outcomes domain (`REQ-ECON-002`
+  Requirement 1); the PRD-referenced-but-undefined `value_rule` object
+  itself remains unpopulated, superseded by this repository's own
+  governed contract — D9;
+- standard reporting periods and the YoY decomposition method — **partly
+  resolved**: standard periods and calendar-quarter convention approved
+  (`REQ-ECON-004` Requirements 1-2); the broader "YoY decomposition
+  method" question is now understood to be the same D5 waterfall
+  question, scoped down to outcome volume, not economics — D10.
 
 ## Affected modules
 
@@ -194,6 +249,7 @@ D1-D10 above are resolved): `ancestry_mmm/core/canonical_curves.py`,
 - `ancestry_mmm/tests/test_canonical_curves.py::test_matches_normal_prediction_function_exactly`
 - `ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_001_indexed_and_implemented`
 - `ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_001_reconciles_the_ratio_form_not_net_of_investment`
+- `ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_001_approves_monetary_presentation`
 
 ## Migration impact
 
@@ -203,9 +259,12 @@ behaviour into approved authority.
 
 ## Unresolved decisions
 
-D1 through D10 in `docs/wp2_outcome_valuation_decision_package.md`. None
-of them affects the arithmetic this record approves; all of them affect
-what is fed into it.
+D5 (waterfall computation method, gated behind a required design note)
+and D7 (FX conversion policy, Finance-owned and blocked) in
+`docs/wp2_outcome_valuation_decision_package.md`. D1-D4, D6, D8, D9, and
+D10 are resolved by `REQ-ECON-002`/`REQ-ECON-003`/`REQ-ECON-004`. None of
+D1-D10 ever affected the arithmetic this record approves; they affect
+only what is fed into it.
 
 ## Owner
 

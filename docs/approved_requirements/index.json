@@ -1350,7 +1350,78 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
         "ancestry_mmm/tests/test_canonical_curves.py::test_matches_normal_prediction_function_exactly",
         "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_001_indexed_and_implemented",
-        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_001_reconciles_the_ratio_form_not_net_of_investment"
+        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_001_reconciles_the_ratio_form_not_net_of_investment",
+        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_001_approves_monetary_presentation"
+      ]
+    },
+    {
+      "requirement_id": "REQ-ECON-002",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-ECON-002.md",
+      "affected_modules": [
+        "ancestry_mmm/core/outcomes.py",
+        "ancestry_mmm/core/coverage.py",
+        "ancestry_mmm/core/persistence.py",
+        "ancestry_mmm/core/fingerprint.py",
+        "docs/wp2_outcome_valuation_decision_package.md"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_002_indexed_and_classified_incomplete",
+        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_002_never_defaults_fh_denominator"
+      ]
+    },
+    {
+      "requirement_id": "REQ-ECON-003",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-ECON-003.md",
+      "affected_modules": [
+        "ancestry_mmm/core/canonical_curves.py",
+        "ancestry_mmm/core/attribution.py",
+        "ancestry_mmm/core/optimization.py",
+        "ancestry_mmm/core/uncertainty.py",
+        "ancestry_mmm/core/planning/value.py",
+        "ancestry_mmm/application/scenario_service.py"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_003_indexed_and_classified_incomplete",
+        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_003_requires_weekly_grain_before_aggregation",
+        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_003_fixes_value_uncertainty_treatment"
+      ]
+    },
+    {
+      "requirement_id": "REQ-ECON-004",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-ECON-004.md",
+      "affected_modules": [
+        "ancestry_mmm/core/reporting_rollups.py",
+        "ancestry_mmm/core/outcome_group_totals.py",
+        "ancestry_mmm/pages/07_Results_Curve_Bank.py"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_004_indexed_and_classified_incomplete",
+        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_004_forbids_partial_period_scaling",
+        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_004_excludes_the_waterfall"
       ]
     }
   ]

@@ -1,6 +1,15 @@
 # Time/segment-varying outcome valuation and joined ROI economics: gap analysis and proposed architecture
 
-Status: analysis and architecture proposal only. No `core`, `application`, or
+**2026-08-28 update:** the business decisions this analysis's proposals
+were pending have since been approved — see `docs/wp2_outcome_valuation_
+decision_package.md`'s "Business decisions approved (2026-08-28)" section
+and `docs/approved_requirements/REQ-ECON-002.md`/`REQ-ECON-003.md`/
+`REQ-ECON-004.md`. This document is preserved as the evidence base those
+decisions and records were drawn from; it is not rewritten, and several
+of its "proposal" framings below are now superseded by approved
+authority rather than merely candidate designs.
+
+Status (at original publication): analysis and architecture proposal only. No `core`, `application`, or
 `pages` code accompanies this document. Every design element below that
 depends on an unresolved statistical, financial, business, or governance
 choice is explicitly marked **decision-bound** and traces to
