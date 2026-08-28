@@ -35,14 +35,37 @@ brief's explicit instruction not to invent FX policy here.
 
 ## Capability status
 
-Zero implementation. No `WeeklyOutcomeValue`-style object, no FH-LTR or
-DNA-revenue input schema, and no denominator-linkage mechanism exists
-anywhere in this repository. `OutcomeDefinition.value_weight`/
-`value_currency` (`core/outcomes.py`) remains the only existing
-per-outcome value concept, and it is a single constant scalar — this
-record's object is additive to it (see `REQ-ECON-001`'s existing
-backward-compatibility framing in `docs/wp2_outcome_valuation_gap_
-analysis.md` §9), never a replacement.
+**WP2A delivered (2026-08-28):** `ancestry_mmm/core/outcome_valuation.py`
+implements `WeeklyOutcomeValuationRecord` (Requirements 1-8: distinct
+FH/DNA valuation kinds, canonical-week/segment-dimension reuse, mandatory
+explicit `denominator_outcome_id` with no default ever accepted,
+mandatory ISO-3 currency whenever a value is present, and the fail-closed
+missingness contract using the existing `core.coverage` canonical
+vocabulary), `validate_weekly_outcome_valuation_catalogue` (catalogue-
+level uniqueness, denominator-reference, and count-type-denominator
+checks), and `cross_validate_against_observed_denominator` (the
+zero-denominator/zero-outcome carve-out: a genuine zero-denominator/
+zero-value pair is not flagged, while any other missing-value or
+inconsistent-value case is surfaced against already-ingested observed
+outcome data). `OutcomeDefinition.value_weight`/`value_currency`
+(`core/outcomes.py`) remains the existing scalar per-outcome value
+concept, unchanged and additive (see `REQ-ECON-001`'s backward-
+compatibility framing in `docs/wp2_outcome_valuation_gap_analysis.md`
+§9) — this record's object is a new, separate weekly time series, never
+a replacement.
+
+**Not yet implemented:** the Requirement 9 versioned/provenanced
+source-data mechanism is not yet wired into `core.persistence`'s project
+bundle (no `config/outcome_valuation.json`, no
+`ScenarioGovernanceDependencies` fingerprint slot yet — `source_version`
+exists as a dataclass field, and a per-record `fingerprint()` method
+exists, but the full project-bundle round-trip/quarantine-on-import/
+staleness-propagation wiring `REQ-SEARCH-001`'s pattern establishes is
+deferred to a follow-on PR); the Requirement 10 provenance-field UI; and
+any Data Upload page workflow (`pages/01_Data_Upload.py`) — this record
+explicitly excluded Results UI, and WP2A additionally excluded the
+Data Upload UI to keep the PR narrowly scoped to the core data contract
+and its validation.
 
 ## Requirement
 
@@ -259,13 +282,17 @@ anywhere may branch on organisational ownership.
 
 ## Affected modules
 
-None yet — target-state contract only. Anticipated future affected
-modules (WP2A, not created by this record): `ancestry_mmm/core/outcomes.py`
-or a new sibling module (e.g. `core/outcome_valuation.py`);
-`ancestry_mmm/core/coverage.py` (missingness-state reuse);
-`ancestry_mmm/core/persistence.py` (versioning/staleness);
-`ancestry_mmm/core/fingerprint.py`; `ancestry_mmm/pages/01_Data_Upload.py`
-(supply/review workflow, not built by this record).
+Delivered (WP2A, 2026-08-28): `ancestry_mmm/core/outcome_valuation.py`
+(new module — `WeeklyOutcomeValuationRecord`,
+`validate_weekly_outcome_valuation_catalogue`,
+`cross_validate_against_observed_denominator`); reuses (does not modify)
+`ancestry_mmm/core/coverage.py`'s canonical missingness vocabulary and
+`ancestry_mmm/core/outcomes.py`'s `SEGMENT_DIMENSIONS` vocabulary.
+
+Not yet delivered: `ancestry_mmm/core/persistence.py` and
+`ancestry_mmm/core/fingerprint.py` (project-bundle round-trip and
+staleness-propagation wiring); `ancestry_mmm/pages/01_Data_Upload.py`
+(supply/review workflow).
 
 ## Required tests
 
@@ -278,11 +305,15 @@ or a new sibling module (e.g. `core/outcome_valuation.py`);
 - `ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable`
 - `ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_002_indexed_and_classified_incomplete`
 - `ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_002_never_defaults_fh_denominator`
+- `ancestry_mmm/tests/test_outcome_valuation.py::TestRecordConstruction::test_blank_denominator_outcome_id_rejected`
+- `ancestry_mmm/tests/test_outcome_valuation.py::TestCatalogueValidation::test_unknown_denominator_outcome_id_is_rejected`
+- `ancestry_mmm/tests/test_outcome_valuation.py::TestCrossValidateAgainstObservedDenominator::test_zero_zero_pair_is_not_flagged`
+- `ancestry_mmm/tests/test_outcome_valuation.py::TestCrossValidateAgainstObservedDenominator::test_nonzero_value_with_zero_denominator_is_surfaced`
 
 ## Migration impact
 
-None. No schema, persisted artefact, or application code changes as a
-result of this record.
+None. `outcome_valuation.py` is an entirely new, additive module. No
+existing schema, persisted artefact, or application code changed.
 
 ## Unresolved decisions
 

@@ -1359,10 +1359,9 @@
       "status": "approved_for_implementation",
       "record_path": "docs/approved_requirements/REQ-ECON-002.md",
       "affected_modules": [
-        "ancestry_mmm/core/outcomes.py",
+        "ancestry_mmm/core/outcome_valuation.py",
         "ancestry_mmm/core/coverage.py",
-        "ancestry_mmm/core/persistence.py",
-        "ancestry_mmm/core/fingerprint.py",
+        "ancestry_mmm/core/outcomes.py",
         "docs/wp2_outcome_valuation_decision_package.md"
       ],
       "required_tests": [
@@ -1374,7 +1373,11 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
         "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_002_indexed_and_classified_incomplete",
-        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_002_never_defaults_fh_denominator"
+        "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_002_never_defaults_fh_denominator",
+        "ancestry_mmm/tests/test_outcome_valuation.py::TestRecordConstruction::test_blank_denominator_outcome_id_rejected",
+        "ancestry_mmm/tests/test_outcome_valuation.py::TestCatalogueValidation::test_unknown_denominator_outcome_id_is_rejected",
+        "ancestry_mmm/tests/test_outcome_valuation.py::TestCrossValidateAgainstObservedDenominator::test_zero_zero_pair_is_not_flagged",
+        "ancestry_mmm/tests/test_outcome_valuation.py::TestCrossValidateAgainstObservedDenominator::test_nonzero_value_with_zero_denominator_is_surfaced"
       ]
     },
     {
