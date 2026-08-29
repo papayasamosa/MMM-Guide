@@ -325,6 +325,14 @@ def test_degenerate_convergence_evidence_never_crashes_the_page():
     )
     text = _all_markdown_text(at)
     assert "Fail" in text  # converged=False for a failed convergence check
+    # UX-019 (overnight UI/UX review, third pass, critic pass): the Max
+    # R-hat st.metric on the "Full diagnostic detail" > Convergence tab used
+    # to render the bare literal "nan" here, inconsistent with the Min ESS
+    # metric right beside it (already blank via format_number for the same
+    # NaN case). Must never surface the raw float as text to the analyst.
+    metric_values = [m.value for m in at.metric if m.label == "Max R-hat"]
+    assert metric_values == ["Not available"]
+    assert not any("nan" in (m.value or "").lower() for m in at.metric)
 
 
 # ---------------------------------------------------------------------------

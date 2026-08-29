@@ -861,7 +861,22 @@ if scorecard:
     with tab_conv:
         conv = scorecard["convergence"]
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Max R-hat", f"{conv['max_rhat']:.3f}", help="Should be < 1.01")
+        _max_rhat = conv["max_rhat"]
+        # UX-019 (overnight UI/UX review, third pass, critic pass): Min ESS
+        # right next to this already handles a NaN value gracefully (blank,
+        # via format_number, a few lines below) - Max R-hat instead ran
+        # straight through an f-string, which renders NaN as the bare
+        # literal text "nan" (e.g. a single-chain run, or the same
+        # zero-variance-chain case core.models.py already documents for
+        # R-hat/ESS). Matching the sibling metric's own convention here
+        # rather than introducing a new one; the "not converged" st.warning
+        # below already explains the consequence, this only removes the
+        # raw technical string.
+        c1.metric(
+            "Max R-hat",
+            "Not available" if _max_rhat != _max_rhat else f"{_max_rhat:.3f}",
+            help="Should be < 1.01. Not available when R-hat cannot be computed for this run.",
+        )
         _min_ess = conv["min_ess"]
         # round() raises ValueError on NaN (e.g. a degenerate/zero-variance
         # chain's ESS) - only skip the round() step for that case, never

@@ -148,6 +148,32 @@ class TestConvergenceDomain:
         assert conv.status == "review"
         assert "borderline" in conv.detail
 
+    def test_nan_rhat_and_ess_never_shown_as_bare_nan(self):
+        """UX-019 (overnight UI/UX review, third pass, critic pass): a
+        zero-variance or single-chain run makes ArviZ's rank-normalised
+        R-hat/ESS a real, correct NaN (core.models.py's own documented 0/0
+        case) - the domain-rail detail text must never leak that raw float
+        as the literal substring "nan" to the analyst."""
+        scorecard = {
+            "convergence": {
+                "max_rhat": float("nan"),
+                "min_ess": float("nan"),
+                "divergences": 0,
+                "converged": False,
+            }
+        }
+        rows = compute_domain_health(
+            scorecard=scorecard,
+            diag_artefact=None,
+            capability_result=None,
+            readiness=None,
+            policy=None,
+        )
+        conv = next(r for r in rows if r.domain == "Convergence")
+        assert conv.status == "fail"
+        assert "nan" not in conv.detail.lower()
+        assert "not available" in conv.detail.lower()
+
 
 class TestPredictiveFitDomain:
     def test_reported_when_no_gate_configured(self):
@@ -498,6 +524,27 @@ class TestPrimaryConcern:
             capability_result=None,
         )
         assert sentence is not None
+        assert "convergence" in sentence.lower()
+
+    def test_nan_rhat_never_shown_as_bare_nan_in_main_concern(self):
+        """UX-019: same NaN-safe guard as TestConvergenceDomain above,
+        pinned separately for the "Main concern" banner sentence."""
+        scorecard = {
+            "convergence": {
+                "max_rhat": float("nan"),
+                "min_ess": float("nan"),
+                "divergences": 0,
+                "converged": False,
+            }
+        }
+        sentence = derive_primary_concern(
+            readiness=None,
+            diag_artefact=None,
+            scorecard=scorecard,
+            capability_result=None,
+        )
+        assert sentence is not None
+        assert "nan" not in sentence.lower()
         assert "convergence" in sentence.lower()
 
     def test_deterministic_same_inputs_same_output(self):

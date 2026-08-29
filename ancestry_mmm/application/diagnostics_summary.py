@@ -142,7 +142,18 @@ def _convergence_domain(
     ess = conv.get("min_ess", conv.get("ess_min"))
     div = conv.get("divergences")
     if rhat is not None and ess is not None and div is not None:
-        detail = f"max R-hat {rhat:.3f}, min ESS {ess:,.0f}, {div} divergence(s)."
+        # UX-019 (overnight UI/UX review, third pass, critic pass): rhat/ess
+        # can legitimately be NaN (core.models.py's own rank-normalised
+        # R-hat/ESS 0/0 case for a zero-variance or single-chain run) - a
+        # real, reachable non-convergence signal, not an error. Formatting
+        # NaN straight through f"{...:.3f}"/f"{...:,.0f}" renders the bare
+        # literal "max R-hat nan, min ESS nan" here, which the sibling
+        # per-metric st.metric on the page's own Convergence tab already
+        # avoids (see pages/06_Diagnostics.py). Match that same "Not
+        # available" wording here instead of leaking the raw float.
+        rhat_text = "not available" if rhat != rhat else f"{rhat:.3f}"
+        ess_text = "not available" if ess != ess else f"{ess:,.0f}"
+        detail = f"max R-hat {rhat_text}, min ESS {ess_text}, {div} divergence(s)."
     else:
         detail = "Convergence computed."
     return DomainHealth("Convergence", status, detail)
@@ -438,7 +449,9 @@ def derive_primary_concern(
     conv = (scorecard or {}).get("convergence")
     if conv and conv.get("converged") is False:
         rhat = conv.get("max_rhat", conv.get("rhat_max"))
-        if rhat is not None:
+        # UX-019: same NaN-safe formatting as _convergence_domain above -
+        # never leak the bare "nan" literal into this banner either.
+        if rhat is not None and rhat == rhat:
             return (
                 "Main concern: convergence diagnostics are outside typical thresholds "
                 f"(max R-hat {rhat:.3f})."
