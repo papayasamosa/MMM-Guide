@@ -279,7 +279,11 @@ with st.expander("Advanced response assumptions", expanded=False):
             0.5,
             float(prior_config["decay_sigma"]),
             0.05,
-            help="Technical name: adstock decay prior standard deviation.",
+            help=FIELD_HELP["adstock_decay"]
+            + " This controls how much uncertainty surrounds the typical-carryover "
+            "value above - increase it if you are unsure that value is right for "
+            "this channel, decrease it if you are confident in the current "
+            "setting. Technical name: adstock decay prior standard deviation.",
         )
         prior_config["K_scale"] = st.slider(
             "Spend level where saturation starts",
@@ -297,7 +301,11 @@ with st.expander("Advanced response assumptions", expanded=False):
             10.0,
             float(prior_config["S_alpha"]),
             0.5,
-            help="Technical name: saturation-shape Gamma alpha.",
+            help=FIELD_HELP["saturation_shape"]
+            + " Higher values assume a more pronounced, well-defined bend; keep "
+            "the default unless response curves look implausibly flat or sharp "
+            "compared to known business experience. Technical name: "
+            "saturation-shape Gamma alpha.",
         )
         prior_config["S_beta"] = st.slider(
             "Saturation curve uncertainty",
@@ -305,7 +313,11 @@ with st.expander("Advanced response assumptions", expanded=False):
             10.0,
             float(prior_config["S_beta"]),
             0.5,
-            help="Technical name: saturation-shape Gamma beta.",
+            help=FIELD_HELP["saturation_shape"]
+            + " This controls how much uncertainty surrounds that shape "
+            "assumption - increase it to let the data have more influence over "
+            "the curve's shape, decrease it only with strong prior evidence for "
+            "a specific curve. Technical name: saturation-shape Gamma beta.",
         )
 
     st.markdown("#### How much markets and segments may differ")
