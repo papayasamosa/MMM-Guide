@@ -521,9 +521,18 @@ def test_legacy_pathway_review_loads_catalogue_and_requires_refit():
         ][0]["after_component_type"]
         == "cross_product"
     )
-    assert any(
-        "earlier fit and approval were invalidated" in success.value
-        for success in at.success
+    # UX-011: saving now calls st.rerun() so the page's own "Saved structure
+    # summary"/header badge refresh in the same view instead of showing a
+    # stale pre-save snapshot next to the save confirmation. AppTest's
+    # click().run() settles through that rerun, so the transient
+    # st.success(...) text from the pre-rerun script pass is no longer
+    # present in at.success afterwards (same trade-off already accepted for
+    # UX-009/UX-010) - assert the equivalent, already-persisted governance
+    # fact instead: this save path is only reached when a migration review
+    # was completed, which is what the invalidated success message reported.
+    assert (
+        at.session_state["migration_review"]["migration_review_status"]
+        == "reviewed_refit_required"
     )
 
 
