@@ -475,6 +475,26 @@ def workflow_page_state(
     if key == "transform_pipeline":
         if transformed:
             return _state(key, "complete", satisfied=True)
+        # Merge-readiness pass (2026-08-29): this canonical status previously
+        # had no vocabulary for "sources joined but not yet transformed" - it
+        # collapsed straight from "blocked"/"not_started" to "complete", so
+        # it fell back to "not_started" for this intermediate state even
+        # though the page's own header badge (02_Transform_Pipeline.py,
+        # `_header_badges = ["current"]` once `joined_data` is set)
+        # correctly renders "In progress" for the same state. Once the
+        # overnight UI/UX pass's UX-004 fix made this page's header update
+        # immediately after "Join sources" (previously it lagged one rerun
+        # behind), this mismatch became a same-view, every-time
+        # contradiction - "· Not started" and "· In progress" badges shown
+        # side by side - rather than a rare, click-order-dependent artefact.
+        # Recognising "current" here for the same condition the page itself
+        # already uses removes the caller/canonical mismatch at its source,
+        # matching UX-013's Causal Graph badge-dedup fix. Presentation only:
+        # does not change `satisfied` (still False - the page's downstream
+        # gating is unaffected), and pages the reason string only.
+        joined = _get(getter, "joined_data") is not None
+        if joined and data_loaded:
+            return _state(key, "current", satisfied=False)
         return _state(
             key,
             "not_started" if data_loaded else "blocked",
