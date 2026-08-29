@@ -256,10 +256,28 @@ class TestGroupReadiness:
         monkeypatch.setattr(ui_module, "page_readiness", lambda k: statuses[k])
         assert ui_module.group_readiness(["a", "b"]) == "current"
 
-    def test_none_ready_but_one_blocked_is_blocked(self, monkeypatch):
+    def test_none_ready_and_one_plain_blocked_is_not_started(self, monkeypatch):
+        """Overnight UI/UX pass (2026-08-29): a plain per-page "blocked"
+        status with zero progress anywhere in the group is the ordinary
+        fresh-project sequential-gate case (e.g. "Load data before
+        transforming"), not a genuine attention condition - it must read
+        the same neutral "Not started" as any other not-yet-begun group,
+        not the same red "Blocked" badge used for a real problem. See
+        group_readiness()'s docstring for the full rationale."""
         statuses = {"a": "blocked", "b": "not_started"}
         monkeypatch.setattr(ui_module, "page_readiness", lambda k: statuses[k])
-        assert ui_module.group_readiness(["a", "b"]) == "blocked"
+        assert ui_module.group_readiness(["a", "b"]) == "not_started"
+
+    def test_none_ready_but_one_stale_or_unavailable_is_still_blocked(self, monkeypatch):
+        """Unlike a plain sequential "blocked" gate, "stale"/"review"/
+        "unavailable" mean something changed or became invalid after real
+        progress was made elsewhere - a genuine attention condition that
+        must still surface as "blocked" even with zero pages currently
+        satisfied in this group."""
+        for attention_status in ("stale", "review", "unavailable"):
+            statuses = {"a": attention_status, "b": "not_started"}
+            monkeypatch.setattr(ui_module, "page_readiness", lambda k: statuses[k])
+            assert ui_module.group_readiness(["a", "b"]) == "blocked"
 
     def test_none_ready_none_blocked_is_not_started(self, monkeypatch):
         monkeypatch.setattr(ui_module, "page_readiness", lambda k: "not_started")
