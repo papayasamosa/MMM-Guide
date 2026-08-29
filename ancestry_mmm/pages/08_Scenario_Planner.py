@@ -110,6 +110,7 @@ from ancestry_mmm.core.validation_policy import (
     load_approval_readiness,
     load_threshold_policy,
 )
+from ancestry_mmm.application.scenario_plan_period import derive_plan_period_disclosure
 from ancestry_mmm.application.scenario_service import (
     ManualScenarioInput,
     OptimisationInput,
@@ -947,6 +948,29 @@ months = [d.strftime("%Y-%m") for d in month_dates]
 # future promo/control values.
 market_mask = np.array(frame["df"][spec.market_col] == market)
 last_trend = float(frame["trend"][market_mask][-1]) if market_mask.any() else 1.0
+
+# UX-020: disclose when some or all of the plan lies beyond the model's
+# observed data, mirroring the "Beyond observed support (extrapolated)"
+# disclosure already used on curve pages (application/curve_annotations.py)
+# rather than inventing new wording. Informational severity only (spec
+# section 12) - this does not mean the model is invalid, and future
+# conditions are not claimed to be known; the existing flat-trend safeguard
+# (trend held at its last observed level, only calendar seasonality varies -
+# see comment above) already bounds the risk this discloses, so
+# `derive_plan_period_disclosure` states that mitigation rather than raising
+# an alarm. Shown only when it is actually relevant to this plan's dates -
+# fully in-sample scenarios get no caption at all.
+_observed_dates_for_market = (
+    frame["dates"][market_mask] if market_mask.any() else frame["dates"]
+)
+_plan_period_disclosure = derive_plan_period_disclosure(
+    _observed_dates_for_market,
+    month_dates,
+    plan_start_label=months[0],
+    plan_end_label=months[-1],
+)
+if _plan_period_disclosure is not None and _plan_period_disclosure.message:
+    st.info(_plan_period_disclosure.message)
 mean_promo = {
     oid: float(frame["promo"][market_mask, i].mean()) if market_mask.any() else 0.0
     for i, oid in enumerate(meta.outcome_ids)
