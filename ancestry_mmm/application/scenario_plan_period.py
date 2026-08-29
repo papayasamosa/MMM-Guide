@@ -24,7 +24,7 @@ Warning or a block, and reuses the same "Beyond observed support
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 import pandas as pd
 
@@ -49,8 +49,8 @@ class PlanPeriodDisclosure:
 
 
 def derive_plan_period_disclosure(
-    observed_dates: Sequence[object],
-    plan_month_dates: Sequence[object],
+    observed_dates: Sequence[Any],
+    plan_month_dates: Sequence[Any],
     *,
     plan_start_label: str,
     plan_end_label: str,
