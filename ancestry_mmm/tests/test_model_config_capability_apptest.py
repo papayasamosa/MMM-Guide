@@ -219,10 +219,16 @@ def test_capability_warning_never_blocks_preparing_the_frame():
     )
     prepare_button.click().run()
     assert not at.exception, f"prepare click raised: {at.exception}"
+    # UX-015: preparing the frame now calls st.rerun() so the page's own
+    # "Model setup summary" panel (which reads get_state("frame") earlier
+    # in the same script pass) stops showing "Not prepared" next to this
+    # exact confirmation. AppTest's click().run() settles through that
+    # rerun, so the transient st.success(...) text from the pre-rerun
+    # script pass is no longer present in at.success afterwards (same
+    # trade-off already accepted for UX-009/010/011) - the persisted
+    # session_state assertion below already covers the same fact.
     assert at.session_state["frame"] is not None
-    assert any(
-        "Exploratory modelling frame prepared" in (s.value or "") for s in at.success
-    )
+    assert at.session_state["frame"]["preparation_mode"] == "exploratory"
 
 
 def test_official_preparation_has_explicit_decision_required_gate():
