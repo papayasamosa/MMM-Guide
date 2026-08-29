@@ -502,6 +502,18 @@ with st.container(border=True):
                     else (
                         "optional"
                         if domain == DOMAIN_EXPERIMENT_EVIDENCE
+                        # Overnight UI/UX pass (2026-08-29, UX-002): before any
+                        # source has been added at all, a required domain
+                        # simply hasn't been reached yet - the same neutral
+                        # "awaiting data" state this page's own header badge
+                        # already uses for this exact condition, not a red
+                        # "Blocked" alarm before the analyst has done anything
+                        # (severity-semantics finding, same pattern as
+                        # group_readiness() in components/ui.py). Once at
+                        # least one source exists elsewhere, a domain that is
+                        # still missing is a genuine outstanding requirement,
+                        # so "blocked" remains correct there.
+                        else "awaiting_data" if not sources
                         else "blocked"
                     )
                 ]
