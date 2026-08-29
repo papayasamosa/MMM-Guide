@@ -884,6 +884,11 @@ if scorecard:
 
     with tab_fit:
         st.markdown("#### In-sample fit")
+        st.caption(
+            "R-squared and MAPE per market x outcome, comparing the posterior-mean "
+            "fit to actuals. A good in-sample fit does not by itself mean channel "
+            "effects are separable - see Identification & collinearity for that."
+        )
         fit_df = pd.DataFrame(scorecard["in_sample_fit"])
         st.dataframe(
             fit_df, width="stretch", column_config=dataframe_column_config(fit_df)
@@ -1008,10 +1013,23 @@ if scorecard:
             if not id_flags:
                 st.info("No multicollinearity or weak-identification flags raised.")
             else:
+                # Overnight UI/UX pass (2026-08-29): these flags are
+                # analyst-review evidence, not a validation-policy gate (no
+                # gate reads them - see core/validation_policy.py), so they
+                # are never shown with the blocking-error treatment used
+                # elsewhere on this page for a genuine stop condition (e.g.
+                # "Identification diagnostics failed" above). A "severe"
+                # flag is still distinguished from an "elevated" one by its
+                # own message wording, not by escalating colour/icon beyond
+                # warning - do not imply exclusion is required (Section 11).
+                st.caption(
+                    "These are statistical review signals, not a blocking check - "
+                    "review the highlighted channels before relying on their "
+                    "individual effects; do not exclude a channel solely because "
+                    "of this diagnostic unless the governed methodology says to."
+                )
                 for f in id_flags:
-                    (st.error if f["level"] == "error" else st.warning)(
-                        f"**{f['channel']}**: {f['message']}"
-                    )
+                    st.warning(f"**{f['channel']}**: {f['message']}")
 
             with st.expander("Channel spend correlation matrix"):
                 corr_df = pd.DataFrame(ident_section.payload["correlation_matrix"]).T

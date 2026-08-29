@@ -230,7 +230,18 @@ class TestIdentificationDomain:
         ident = next(r for r in rows if r.domain == "Identification & collinearity")
         assert ident.status == "pass"
 
-    def test_fail_when_error_flag_present(self):
+    def test_review_when_error_flag_present(self):
+        """Overnight UI/UX pass (2026-08-29): an "error"-severity
+        identification flag is a stronger review signal than a "warning"-
+        severity one, but identification/collinearity is never a
+        validation-policy gate (nothing in core.validation_policy reads
+        it), so it must never reach "fail" - that status is reserved for a
+        domain whose evidence actually blocks approval (see
+        test_fail_with_blocking_failures for the "Approval evidence"
+        domain, which is a real gate). Using "fail" here would render with
+        the same blocking-severity treatment as a genuine stop condition,
+        which is the "do not upgrade a warning to an error simply because
+        a number looks unusual" anti-pattern the UX guidance prohibits."""
         artefact = _artefact(
             identification=_section(
                 "computed",
@@ -252,7 +263,7 @@ class TestIdentificationDomain:
             policy=None,
         )
         ident = next(r for r in rows if r.domain == "Identification & collinearity")
-        assert ident.status == "fail"
+        assert ident.status == "review"
 
     def test_review_when_only_warning_flags(self):
         artefact = _artefact(
