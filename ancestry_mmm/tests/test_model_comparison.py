@@ -1,6 +1,9 @@
 """Tests for core.model_comparison - frame slicing for Model B, and the
 comparison-candidate bookkeeping used by pages/12_Compare_Models.py."""
 
+import json
+
+import arviz as az
 import numpy as np
 import pandas as pd
 import pytest
@@ -11,6 +14,7 @@ from ancestry_mmm.core.model_comparison import (
     candidates_to_dataframe,
     slice_frame_to_market,
 )
+from ancestry_mmm.core.models import compute_model_diagnostics
 
 
 @pytest.fixture
@@ -190,6 +194,73 @@ class TestCandidatesToDataframe:
     def test_empty_candidate_list_gives_empty_dataframe(self):
         df = candidates_to_dataframe([])
         assert df.empty
+
+
+def _multi_channel_trace(*, chains: int = 2, draws: int = 10) -> az.InferenceData:
+    """A trace with a >1-element variable (``decay_rate`` over 2 channels) -
+    the shape that makes ``np.max``/``np.min`` (inside
+    ``compute_model_diagnostics``) return a numpy scalar rather than a
+    native Python float, which is what previously let a numpy type leak
+    into ``rhat_max``/``ess_min``/``converged`` (UX-021)."""
+    rng = np.random.default_rng(0)
+    posterior = {
+        "decay_rate": rng.uniform(0.1, 0.9, size=(chains, draws, 2)),
+        "intercept": rng.normal(size=(chains, draws)),
+    }
+    return az.from_dict(
+        posterior=posterior,
+        coords={"channel": ["TV", "Radio"]},
+        dims={"decay_rate": ["channel"]},
+    )
+
+
+class TestComputeModelDiagnosticsJsonSafety:
+    """UX-021: a non-converged candidate's status must survive an
+    export/import round-trip, not silently flip to "Converged". Root cause:
+    ``compute_model_diagnostics`` returned ``numpy.float64``/``numpy.bool_``
+    for ``rhat_max``/``ess_min``/``converged`` whenever any posterior
+    variable had more than one element (the overwhelmingly common real-model
+    case - any model with >1 channel, market, or outcome). Every one of
+    those types is not natively JSON-serialisable; `core.persistence`'s
+    ``export_project`` writes ``model_comparison_candidates`` via
+    ``json.dumps(..., default=str)``, which silently stringifies a
+    ``numpy.bool_(False)`` into the literal text ``"False"`` - a non-empty
+    string, and therefore truthy on read-back. A candidate that genuinely
+    did not converge would render "Converged" on Compare Models after any
+    project export + re-import, which is precisely the kind of misleading
+    precision this review exists to catch."""
+
+    def test_rhat_max_and_ess_min_are_native_python_floats(self):
+        diagnostics = compute_model_diagnostics(_multi_channel_trace())
+        assert type(diagnostics["rhat_max"]) is float
+        assert type(diagnostics["ess_min"]) is float
+
+    def test_converged_is_a_native_python_bool_not_numpy_bool(self):
+        diagnostics = compute_model_diagnostics(_multi_channel_trace())
+        assert type(diagnostics["converged"]) is bool
+
+    def test_diagnostics_dict_survives_a_default_str_json_round_trip(self):
+        """Reproduces the exact serialisation core.persistence.export_project
+        uses for model_comparison_candidates - a non-converged result must
+        still read back as non-converged, not as the truthy string "False"."""
+        diagnostics = compute_model_diagnostics(_multi_channel_trace())
+        assert (
+            diagnostics["converged"] is False
+        )  # this fixture's tiny trace never converges
+
+        candidate = ModelComparisonCandidate.from_scorecard(
+            model_type="A",
+            label="Model A - shared curve",
+            model_run_id="run-ux021",
+            fitted_at=1.0,
+            scorecard={"convergence": diagnostics},
+        )
+        serialized = json.dumps(candidate.to_dict(), default=str)
+        restored = ModelComparisonCandidate.from_dict(json.loads(serialized))
+        # If `converged` had leaked through as the string "False" (the bug),
+        # this identity check against the real Python singleton would fail -
+        # a truthy non-empty string is not `is False`.
+        assert restored.convergence["converged"] is False
 
 
 class TestCandidatesDecisionSummaryDataframe:
