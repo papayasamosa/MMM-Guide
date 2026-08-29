@@ -185,3 +185,62 @@ def test_exploratory_frame_does_not_require_a_prefit_run():
     at = _run_at(**{"frame": _frame(preparation_mode="exploratory")})
     at = _with_fresh_preview(at)
     assert "run the pre-fit support review" not in _all_text(at)
+
+
+# --- UX-017 regression coverage -------------------------------------------
+#
+# Before this fix, `_official_fit_gate_blocked` in 05_Model_Training.py
+# evaluated `_frame_mode != "official"` (rather than `== "official"`) and
+# never inspected `official_preparation_result["ready"]` at all - so an
+# exploratory frame was unconditionally blocked from ever fitting the
+# moment any structure existed (regardless of whether official preparation
+# was actually unresolved), directly contradicting Model Setup's own
+# "available for investigation only" copy for that frame. Meanwhile an
+# official frame whose own official preparation was genuinely unresolved
+# was never blocked by this specific check at all. These tests exercise the
+# exact code path the pre-existing
+# `test_exploratory_frame_does_not_require_a_prefit_run` test could not
+# reach, because its `_run_at()` helper never populates
+# `official_preparation_result` in session state.
+
+
+def test_exploratory_frame_is_fittable_even_when_official_preparation_is_unresolved():
+    """The bug this finding described: an exploratory frame must remain
+    fittable for investigation regardless of whether official preparation
+    (a concept that does not apply to it at all) is resolved."""
+    at = _run_at(
+        **{
+            "frame": _frame(preparation_mode="exploratory"),
+            "official_preparation_result": {"status": "blocked", "ready": False},
+        }
+    )
+    at = _with_fresh_preview(at)
+    assert not at.exception, f"page raised: {at.exception}"
+    assert _fit_button_present(at)
+    assert "official preparation is unresolved" not in _all_text(at)
+
+
+def test_official_frame_blocked_when_official_preparation_is_unresolved():
+    """The genuine governance intent this gate exists for (per its own error
+    message, unchanged by this fix): an official frame may not fit an
+    official run while official preparation is unresolved."""
+    at = _run_at(
+        prefit_run=_prefit_run_dict(readiness_scenario="ready"),
+        official_preparation_result={"status": "blocked", "ready": False},
+    )
+    at = _with_fresh_preview(at)
+    assert not _fit_button_present(at)
+    assert "official preparation is unresolved" in _all_text(at)
+
+
+def test_official_frame_not_blocked_by_this_gate_once_official_preparation_is_ready():
+    """Once official preparation genuinely resolves to ready, this specific
+    gate must stop blocking the official frame (the pre-fit gate remains a
+    separate, independent check, satisfied here by a ready PrefitRun)."""
+    at = _run_at(
+        prefit_run=_prefit_run_dict(readiness_scenario="ready"),
+        official_preparation_result={"status": "ready", "ready": True},
+    )
+    at = _with_fresh_preview(at)
+    assert not at.exception, f"page raised: {at.exception}"
+    assert _fit_button_present(at)

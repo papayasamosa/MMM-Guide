@@ -518,10 +518,27 @@ st.caption(
 )
 _official_result = get_state("official_preparation_result")
 _frame_mode = frame.get("preparation_mode")
+# UX-017 fix: this gate exists to block an *official* fit while official
+# preparation is itself unresolved (per this block's own error message
+# below, and REQ-PREFIT-001's scope of "official production-fit
+# submission"). It must not apply to an exploratory frame at all - Model
+# Setup's "Prepare exploratory modelling frame" button explicitly describes
+# that frame as "available for investigation only", and the sibling
+# `_prefit_gate_reasons` check immediately below already correctly scopes
+# itself to `_frame_mode == "official"` only. Before this fix,
+# `_frame_mode != "official"` meant the opposite of the intended scoping -
+# it blocked every exploratory frame unconditionally (regardless of whether
+# official preparation was actually unresolved) and never blocked an
+# official frame whose own official preparation was genuinely unresolved
+# but merely absent from session state. Checking `.get("ready", False)`
+# (from `OfficialPreparationResult.to_dict()`) rather than mere dict
+# presence/truthiness also matches this block's own wording ("while
+# official preparation is unresolved") to what is actually evaluated.
 _official_fit_gate_blocked = (
-    isinstance(_official_result, dict)
+    _frame_mode == "official"
+    and isinstance(_official_result, dict)
     and bool(_official_result)
-    and _frame_mode != "official"
+    and not _official_result.get("ready", False)
 )
 _prefit_gate_reasons = []
 if _frame_mode == "official":
@@ -559,9 +576,9 @@ if _official_fit_gate_blocked:
         )
     else:
         st.error(
-            "Fitting is blocked for this frame because it is exploratory while "
-            "official preparation is unresolved. Return to Model Setup and "
-            "prepare the official canonical frame before fitting an official run."
+            "Fitting is blocked for this official frame because official "
+            "preparation is unresolved. Return to Model Setup and resolve the "
+            "official preparation review before fitting an official run."
         )
 if (not _official_fit_gate_blocked) and st.button("Build & fit model", type="primary"):
     try:
