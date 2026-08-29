@@ -584,6 +584,14 @@ with tab_demo:
             st.success(
                 f"Loaded demo sources: {', '.join(f'{k} ({v.shape[0]} rows x {v.shape[1]} cols)' for k, v in frames.items())}"
             )
+            # Overnight UI/UX pass (2026-08-29, UX-003): without a rerun, the
+            # "Source readiness"/header badges above (computed earlier in this
+            # same script run, before this button's code) kept showing the
+            # pre-load "Awaiting data"/"No sources loaded yet" state in the
+            # same view as this success message - the same rerun-after-state-
+            # change pattern already used correctly by Home's own demo-load
+            # button (app.py) and by this file's outcome-import flow (above).
+            st.rerun()
 
     st.divider()
     st.markdown("#### Realistic source-pack demo")
@@ -632,6 +640,9 @@ with tab_demo:
                     for name, frame in frames.items()
                 )
             )
+            # UX-003 (see "Load demo data" above): same rerun-after-state-
+            # change fix, same reason.
+            st.rerun()
 
 with tab_upload:
     st.caption(
@@ -782,6 +793,12 @@ with tab_upload:
                             f"separate table(s) under '{_DOMAIN_LABELS[logical_domain_choice]}' "
                             f"(v{source_version.version})."
                         )
+                        # UX-003: same rerun-after-state-change fix as "Load
+                        # demo data" above - this branch is gated by the
+                        # one-shot add_standard_source button flag, so the
+                        # rerun cannot re-trigger reprocessing of the same
+                        # upload.
+                        st.rerun()
                 elif add_standard_source:
                     try:
                         canonical_bundle = canonicalize_standard_workbook(workbook)
@@ -812,6 +829,8 @@ with tab_upload:
                             f"(v{source_version.version}) and adopted its governed "
                             "source semantics."
                         )
+                        # UX-003: same rerun-after-state-change fix.
+                        st.rerun()
                 else:
                     if (
                         add_generic_excel
@@ -864,6 +883,10 @@ with tab_upload:
                                 f"{uploaded.name} as generic source '{source_name}' "
                                 f"(v{source_version.version})."
                             )
+                            # UX-003: same rerun-after-state-change fix; this
+                            # branch is gated by the one-shot
+                            # add_generic_excel button flag.
+                            st.rerun()
                     else:
                         stored = _store_standard_workbook(
                             source_name,
@@ -884,6 +907,8 @@ with tab_upload:
                             f"separate table(s) under '{_DOMAIN_LABELS[logical_domain_choice]}' "
                             f"(v{source_version.version})."
                         )
+                        # UX-003: same rerun-after-state-change fix.
+                        st.rerun()
             else:
                 _clear_standard_adoption_state()
                 df, source_version, err = load_file_with_source_version(
@@ -919,6 +944,10 @@ with tab_upload:
                         f"Loaded {df.shape[0]} rows from {uploaded.name} as source "
                         f"'{source_name}' (version {source_version.version})."
                     )
+                    # UX-003: same rerun-after-state-change fix; gated by the
+                    # one-shot add_standard_source/add_generic_excel button
+                    # flags above, so the rerun cannot reprocess the upload.
+                    st.rerun()
 
 
 _render_outcome_source_review()
