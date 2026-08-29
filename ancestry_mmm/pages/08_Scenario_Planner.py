@@ -635,7 +635,16 @@ with st.container(border=True):
     st.markdown("### Allocation desk")
     _desk_status = st.columns(4)
     _desk_status[0].metric(
-        "Model approval", "Current" if get_state("model_approval") else "Needs review"
+        "Model approval",
+        "Current"
+        if get_state("model_approval")
+        # Overnight UI/UX pass (2026-08-29): "Needs review" implies an
+        # existing model is awaiting an approval decision. Before any model
+        # has even been fitted (checked via the same _dashboard_trained
+        # gate used by "Plan state" below), there is nothing to review yet
+        # - say so plainly rather than implying a pending action that does
+        # not exist.
+        else ("Needs review" if _dashboard_trained else "Not started"),
     )
     _desk_status[1].metric(
         "Plan state", "Editable" if _dashboard_trained else "Blocked"
