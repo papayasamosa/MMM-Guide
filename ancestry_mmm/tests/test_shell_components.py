@@ -268,7 +268,9 @@ class TestGroupReadiness:
         monkeypatch.setattr(ui_module, "page_readiness", lambda k: statuses[k])
         assert ui_module.group_readiness(["a", "b"]) == "not_started"
 
-    def test_none_ready_but_one_stale_or_unavailable_is_still_blocked(self, monkeypatch):
+    def test_none_ready_but_one_stale_or_unavailable_is_still_blocked(
+        self, monkeypatch
+    ):
         """Unlike a plain sequential "blocked" gate, "stale"/"review"/
         "unavailable" mean something changed or became invalid after real
         progress was made elsewhere - a genuine attention condition that

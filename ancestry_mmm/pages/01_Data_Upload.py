@@ -513,7 +513,8 @@ with st.container(border=True):
                         # least one source exists elsewhere, a domain that is
                         # still missing is a genuine outstanding requirement,
                         # so "blocked" remains correct there.
-                        else "awaiting_data" if not sources
+                        else "awaiting_data"
+                        if not sources
                         else "blocked"
                     )
                 ]
