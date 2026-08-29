@@ -195,6 +195,33 @@ class TestCandidatesToDataframe:
         df = candidates_to_dataframe([])
         assert df.empty
 
+    def test_a_single_candidate_missing_ppc_coverage_shows_blank_not_the_word_none(
+        self,
+    ):
+        """UX-022: reproduces the exact real-world case found reviewing a
+        populated Compare Models page - one saved candidate with no
+        posterior predictive coverage evidence recorded (e.g. a synthetic or
+        otherwise limited trace). Before this fix, a column that is None for
+        every row stays object-dtype, and dataframe_column_config falls back
+        to a TextColumn that renders the literal word "None" in the
+        analyst-facing table - exactly the kind of raw-value leak this
+        review exists to catch."""
+        candidate = ModelComparisonCandidate(
+            model_type="A",
+            label="Model A - shared curve (UK)",
+            model_run_id="run-1",
+            fitted_at=1.0,
+            convergence={"rhat_max": 1.38, "ess_min": 9.0, "converged": False},
+            in_sample_fit=[{"outcome_id": "New", "r_squared": 0.5, "mape_pct": 12.0}],
+            ppc_coverage=[],  # no PPC evidence for this candidate at all
+            n_plausibility_flags=0,
+        )
+        df = candidates_to_dataframe([candidate])
+        assert pd.isna(df.loc[0, "mean_ppc_coverage_pct"])
+        assert str(df["mean_ppc_coverage_pct"].dtype) == "Float64"
+        assert str(df["converged"].dtype) == "boolean"
+        assert bool(df.loc[0, "converged"]) is False
+
 
 def _multi_channel_trace(*, chains: int = 2, draws: int = 10) -> az.InferenceData:
     """A trace with a >1-element variable (``decay_rate`` over 2 channels) -
@@ -326,7 +353,17 @@ class TestCandidatesDecisionSummaryDataframe:
             n_plausibility_flags=0,
         )
         df = candidates_decision_summary_dataframe([candidate])
-        assert df.loc[0, "converged"] is None
+        # UX-022: the "converged" column is forced onto pandas' nullable
+        # "boolean" dtype specifically so this missing value renders as a
+        # blank/indeterminate checkbox cell on the real page (via
+        # utils.display.dataframe_column_config's dtype-based
+        # CheckboxColumn selection), not the literal text "None" that an
+        # object-dtype all-None column would otherwise fall back to
+        # (dataframe_column_config picks TextColumn for object dtype). The
+        # value itself is still "no score", just represented as pd.NA
+        # rather than Python's `None` singleton.
+        assert pd.isna(df.loc[0, "converged"])
+        assert str(df["converged"].dtype) == "boolean"
 
     def test_empty_candidate_list_gives_empty_dataframe(self):
         df = candidates_decision_summary_dataframe([])
