@@ -609,6 +609,16 @@ with SectionCard(
                 else:
                     st.success("Activity mapping saved.")
             st.session_state["activity_detail_mode"] = "edit"
+            # Overnight UI/UX pass (2026-08-29, UX-009): "Mapping summary"
+            # above (Governed activities/Saved Search objects/Physical
+            # mappings counts) is computed earlier in this same script run,
+            # before this form's handler - live-reproduced showing "0" here
+            # immediately after a successful save while sections lower on
+            # the page (rendered after this handler) already reflected the
+            # new activity. Same rerun-after-state-change fix as UX-003/
+            # UX-004; safe here since save_activity is a one-shot
+            # st.form_submit_button flag.
+            st.rerun()
         except (TypeError, ValueError) as exc:
             st.error(f"Nothing was saved. Resolve this activity first: {exc}")
 
@@ -948,6 +958,11 @@ if save_search:
             if _is_new_search_object:
                 st.session_state["search_selected_index"] = len(updated) - 1
             st.success("Search setup saved.")
+            # UX-009 (see "Save activity mapping" above): same fix - the
+            # "Mapping summary" Saved Search objects count is computed
+            # earlier in this run. save_search is a one-shot
+            # st.form_submit_button flag, so this is safe.
+            st.rerun()
     except (TypeError, ValueError) as exc:
         st.error(f"Nothing was saved. Resolve this Search object first: {exc}")
 
@@ -1134,6 +1149,9 @@ if st.button("Save delivery & cost mapping"):
         f"{len(unit_markets) * len(unit_channels)} channel/market "
         "combinations have a media-unit mapping."
     )
+    # UX-009 (see "Save activity mapping" above): same fix - the "Mapping
+    # summary" Physical mappings count is computed earlier in this run.
+    st.rerun()
 _media_unit_section.__exit__(None, None, None)
 
 render_next_step("channel_media_units")
