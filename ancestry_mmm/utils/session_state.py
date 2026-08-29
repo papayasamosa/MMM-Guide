@@ -344,7 +344,31 @@ def invalidate_governance_evidence() -> None:
     the scorecard, replaces the diagnostics artefact via a backtest, or
     otherwise changes what evidence the four cleared keys were bound to -
     a stale approval or readiness must never survive to the next rerun.
+
+    UX-018 (overnight UI/UX review, third pass): every call site of this
+    function recomputes/replaces the diagnostics artefact (Compute
+    scorecard, prior predictive check, backtest, historical validation,
+    etc.) on a page an analyst may already have approved. Before this fix,
+    an existing named ``model_approval`` (reviewer, date, notes) was wiped
+    here with no on-screen trace at all - the analyst would simply find an
+    empty "Approve this model" form where a "Approved by <name>" confirmation
+    used to be, with nothing explaining that their own prior action (e.g.
+    clicking "Compute scorecard") was what caused it. The page's own
+    "no longer matches the current model, policy, or readiness evidence"
+    messages only cover the *separate* case where staleness is caught lazily
+    on a later rerun (see ``readiness_matches_current_evidence`` /
+    ``require_matching_approval`` in ``core.validation_policy`` /
+    ``core.approval``) - they never fire here because this function already
+    clears ``model_approval`` before that downstream check ever runs. Warning
+    once, centrally, here (rather than duplicating the message at each of the
+    six call sites in ``pages/06_Diagnostics.py``) guarantees an analyst is
+    told exactly what was lost and why, every time, without changing which
+    keys are cleared or when - presentation only, no governance/timing change.
     """
+    _had_approval = bool(st.session_state.get("model_approval"))
+    _approved_by = (
+        st.session_state["model_approval"].get("approved_by") if _had_approval else None
+    )
     for key in (
         "validation_results",
         "approval_readiness",
@@ -352,6 +376,15 @@ def invalidate_governance_evidence() -> None:
         "model_approval",
     ):
         st.session_state[key] = None
+    if _had_approval:
+        st.warning(
+            "This action produced new diagnostics evidence, so the "
+            "previous model approval"
+            + (f" (by **{_approved_by}**)" if _approved_by else "")
+            + " and any evaluated readiness no longer apply and have been "
+            "cleared. Review the updated evidence and re-approve below if "
+            "it is still appropriate."
+        )
 
 
 def get_workflow_progress() -> "tuple[int, int]":
