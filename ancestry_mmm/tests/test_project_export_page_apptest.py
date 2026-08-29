@@ -550,7 +550,17 @@ def test_build_bundle_updates_project_status_and_shows_included_checklist(
     activity (for the "Project status" panel) and shows a checklist of
     what the bundle actually contains, read back from the bundle's own
     manifest.json rather than re-derived - so it can never disagree with
-    what import_project() itself reports for the same bundle."""
+    what import_project() itself reports for the same bundle.
+
+    Pass 4 redesign (closing the gap passes 2-3 identified but deliberately
+    left unfixed): the checklist and download button are now rendered from
+    the already-persisted `export_last_bundle_summary` state, not from the
+    button's own transient scope - this test proves both (a) they appear
+    immediately after the build (the original working behaviour, still
+    intact) and (b) they survive a later, unrelated rerun instead of
+    vanishing (the actual regression fix - previously this exact rerun
+    would have made the download button disappear until the analyst
+    clicked "Build export bundle" again)."""
     export_root = tmp_path / "exports"
     artifact_root = tmp_path / "artifact-root"
 
@@ -582,14 +592,81 @@ def test_build_bundle_updates_project_status_and_shows_included_checklist(
     )
     assert "Original source files and tables" in checklist_copy
     assert "Coverage and frequency review history" in checklist_copy
+    assert any(
+        d.label == "Download project bundle (.zip)" for d in at.download_button
+    ), "the download control must be present immediately after a real build"
 
-    # A fresh rerun (e.g. the analyst's next interaction) reflects the
-    # updated activity in the "Project status" panel rendered at the top of
-    # the page - this does not re-click the button, so it does not rebuild.
+    # A fresh, unrelated rerun (e.g. the analyst's next interaction, or
+    # simply revisiting the page) must NOT re-click the button (so it must
+    # not rebuild the bundle), reflects the updated activity in the
+    # "Project status" panel, AND - the actual regression this redesign
+    # fixes - must still show the checklist and a working download button,
+    # since both are now derived from persisted state rather than the
+    # button's own transient scope.
     at.run()
     assert not at.exception, f"follow-up rerun raised: {at.exception}"
     assert any("Last bundle built this session" in (c.value or "") for c in at.caption)
     assert any("proj-status" in (c.value or "") for c in at.caption)
+    assert any("What's included in this bundle" in e.label for e in at.expander), (
+        "the checklist must still be present after an unrelated rerun, not just "
+        "immediately after the click"
+    )
+    assert any(
+        d.label == "Download project bundle (.zip)" for d in at.download_button
+    ), (
+        "the download control must still be present (and usable) after an unrelated rerun"
+    )
+
+    # A second, unrelated rerun again - proves this is stable, not a
+    # one-off artefact of exactly one extra rerun, and that re-reading the
+    # manifest/file from disk on every render does not itself raise or
+    # regress anything.
+    at.run()
+    assert not at.exception, f"second follow-up rerun raised: {at.exception}"
+    assert any(
+        d.label == "Download project bundle (.zip)" for d in at.download_button
+    ), "the download control must remain usable across repeated reruns"
+
+
+def test_build_bundle_download_degrades_gracefully_when_the_file_is_later_removed(
+    monkeypatch, tmp_path
+):
+    """If the bundle file this session built is later deleted from disk (a
+    realistic scenario in a shared temp/export directory), the page must
+    degrade to a clear, actionable message rather than crashing - and must
+    not pretend the session's build activity never happened."""
+    export_root = tmp_path / "exports"
+    artifact_root = tmp_path / "artifact-root"
+
+    import ancestry_mmm.utils as utils_pkg
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(utils_pkg, "PROJECT_EXPORT_ROOT", export_root)
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", artifact_root)
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    at.session_state["project_name"] = "proj-deleted"
+    build_button = next(b for b in at.button if b.label == "Build export bundle")
+    build_button.click().run()
+    assert not at.exception, f"export click raised: {at.exception}"
+
+    bundle_path = Path(at.session_state["export_last_bundle_summary"]["path"])
+    assert bundle_path.exists()
+    bundle_path.unlink()
+
+    at.run()
+    assert not at.exception, f"rerun after file removal raised: {at.exception}"
+    assert not any(
+        d.label == "Download project bundle (.zip)" for d in at.download_button
+    ), "no download control should be offered for a bundle no longer on disk"
+    assert any("no longer present on disk" in (w.value or "") for w in at.warning), (
+        "a clear, actionable message must explain why the download is unavailable"
+    )
+    # The session's own record of having built a bundle is not erased just
+    # because the file was later removed - it stays an honest log.
+    assert any("Last bundle built this session" in (c.value or "") for c in at.caption)
+    assert any("proj-deleted" in (c.value or "") for c in at.caption)
 
 
 def test_import_bundle_updates_project_status_and_shows_included_checklist(
