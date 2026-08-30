@@ -259,3 +259,95 @@ This addendum is a contract-level record only; no `core`, `application`,
 or `pages` code changes accompany it (Phase A discipline). It does not
 resolve D1, D2, D5, D6, or D7 of the decision package, which remain open
 as recorded in that package's own updated status section.
+
+## Addendum, 2026-08-30 (Phase B): platform axis and reporting roll-up implemented
+
+This addendum implements the two items the 2026-08-30 addendum above
+named as approved-in-principle but not yet built: the governed platform
+axis and the reporting roll-up computation.
+
+**Governed `search_intent_group` content, now as code.**
+`ancestry_mmm/core/search_intent_taxonomy.py` implements `SearchIntentGroup`
+(this record's §1 schema) and the two approved top-level records,
+`BRAND_SEARCH_INTENT_GROUP` and `NON_BRAND_SEARCH_INTENT_GROUP`
+(`brand_class = "brand"` / `"generic_non_brand"` respectively), exposed
+together as `APPROVED_MINIMUM_SEARCH_INTENT_GROUPS`. `parent_search_intent_group_id`
+already supports a future group nesting under Non-Brand (D4) without a
+schema change - deliberately not exercised by any built-in record yet,
+since D4's evidence threshold remains open.
+
+**Governed platform axis, kept orthogonal per the prior addendum's
+instruction.** `ancestry_mmm/core/activities.py` gains two new optional
+fields on `ActivityDefinition` (schema version bumped 4 -> 5):
+`search_intent_group_id` (the field this record's §3 already named) and
+`search_platform` (new - `SEARCH_PLATFORMS = ("google", "bing")`).
+These are deliberately two separate fields, never combined into one enum
+value (e.g. never a single `"google_brand"`), matching the prior
+addendum's explicit instruction. `search_platform` is validated as a
+closed vocabulary in `ActivityDefinition.__post_init__`; cross-checking
+`search_intent_group_id` against a full taxonomy catalogue is
+`core.search_intent_taxonomy.validate_activity_search_taxonomy`'s job,
+since `ActivityDefinition` does not carry the taxonomy catalogue itself.
+
+**A deliberate schema choice, not a business decision:** the pre-existing
+free-text `ActivityDefinition.platform` field (used by every activity
+type - TV, Social, CRM, etc.) is left untouched rather than repurposed
+under a closed enum, since collapsing it to `{"google", "bing"}` would
+reject every unrelated existing value. `search_platform` is a new,
+narrowly-scoped field instead. This is an ordinary implementation
+judgement call within this record's existing delegation, not a new
+business decision.
+
+**PMax/Demand Gen/YouTube exclusion, now enforced.**
+`ActivityDefinition.__post_init__` and
+`validate_activity_search_taxonomy` both reject an activity whose
+`campaign_type` is `pmax`/`performance_max`/`demand_gen`/`youtube`
+(case-insensitive) if it also carries `search_intent_group_id` or
+`search_platform` - Decision 2's "do not classify them as PPC simply
+because of the source system," enforced as a validation rule rather than
+left as prose. A PMax-labelled activity with no taxonomy reference is
+still perfectly valid; only the taxonomy fields are forbidden on it.
+
+**Reporting roll-up hierarchy implemented, resolving the reporting half
+of D3/Decision 4.** `roll_up_paid_search_reporting` computes every level
+of Total Paid Search -> {Brand Search, Non-Brand Search} -> {Google
+Brand, Bing Brand} / {Google Non-Brand, Bing Non-Brand} purely by summing
+governed leaf cells - no level accepts a pre-supplied parent total,
+satisfying Decision 4's "the business must never manually add detailed
+categories to obtain a parent total." An unrecognised `(search_intent_group_id,
+platform)` combination (e.g. a not-yet-approved deeper Non-Brand keyword
+group) raises rather than being silently dropped or misattributed,
+consistent with this record's §6 no-fabrication contract. A missing leaf
+combination (ragged coverage, §2/REQ-SEARCH-005) contributes zero via
+ordinary summation over an empty set, which ordinary roll-up arithmetic
+already requires - this is not a new missingness policy.
+
+**Fingerprint wiring.** Both new fields are added to
+`REPORTING_TAXONOMY_FIELDS` (so `activity_reporting_fingerprint` changes
+when the taxonomy classification changes, correctly invalidating grouped
+reporting artefacts) and excluded from the hard
+`activity_definitions_fingerprint`/`activity_fit_fingerprint` gates
+(mirroring `pooling_group_id`'s existing precedent) - a pure taxonomy
+relabelling must not force a model refit or invalidate a curve/scenario
+that changed nothing fit-relevant.
+
+**Not implemented by this addendum** (remains as scoped above/in the
+decision package): D4's deeper Non-Brand keyword/search-term split and
+its promotion threshold; any Search-taxonomy management UI surface;
+`core.persistence` export/import quarantine wiring specific to
+`SearchIntentGroup` (the dataclass's own `to_dict`/`from_dict` round-trip
+correctly today; a dedicated persistence-layer quarantine path for
+malformed taxonomy records, mirroring `resolve_imported_search_objects`,
+is future work once a taxonomy management UI exists to produce untrusted
+input for it).
+
+### Affected modules (this addendum)
+
+- `ancestry_mmm/core/search_intent_taxonomy.py` (new)
+- `ancestry_mmm/core/activities.py` (`search_intent_group_id`,
+  `search_platform` fields; schema v4 -> v5)
+
+### Required tests (this addendum)
+
+- `ancestry_mmm/tests/test_search_intent_taxonomy.py` (all tests)
+- `ancestry_mmm/tests/test_activities.py::TestSearchTaxonomyFields` (all tests)

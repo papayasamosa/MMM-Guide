@@ -59,7 +59,30 @@ MARKETING_OBJECTIVE_SUGGESTIONS = (
     "other",
 )
 
-ACTIVITY_SCHEMA_VERSION = 4
+ACTIVITY_SCHEMA_VERSION = 5
+
+# REQ-SEARCH-004 §3/addendum (Decisions 2, 4): the governed platform axis
+# for a Paid Search activity, orthogonal to `search_intent_group_id`.
+# Deliberately a separate field from the pre-existing, free-text
+# `platform` field above (used across every activity type, not just
+# Search) rather than repurposing it - collapsing a generic free-text
+# field used by every channel into a two-value closed enum would reject
+# unrelated existing platform values (TV, Social, etc.) that have nothing
+# to do with this taxonomy.
+SEARCH_PLATFORM_GOOGLE = "google"
+SEARCH_PLATFORM_BING = "bing"
+SEARCH_PLATFORMS = (SEARCH_PLATFORM_GOOGLE, SEARCH_PLATFORM_BING)
+
+# Campaign types confirmed excluded from the Paid Search taxonomy even
+# though they may appear in a source system such as SA360 (Decision 2:
+# "do not classify them as PPC simply because of the source system").
+# Compared case-insensitively against `campaign_type`.
+NON_PAID_SEARCH_CAMPAIGN_TYPES = (
+    "pmax",
+    "performance_max",
+    "demand_gen",
+    "youtube",
+)
 
 # Reporting-only identity and classification fields. Keeping this list
 # explicit prevents a future taxonomy field from accidentally entering the
@@ -76,6 +99,8 @@ REPORTING_TAXONOMY_FIELDS = (
     "message_type",
     "funnel_stage",
     "activity_ownership",
+    "search_intent_group_id",
+    "search_platform",
 )
 
 
@@ -96,6 +121,22 @@ class ActivityDefinition:
     activity in any model. Pooling remains governed exclusively by the
     model's own hierarchy configuration
     (``core.market_specific_model``/``docs/market_hierarchy.md``).
+
+    ``search_intent_group_id`` (REQ-SEARCH-004 §3, schema v5): an optional
+    reference to a governed ``core.search_intent_taxonomy.SearchIntentGroup``
+    (e.g. Brand or Non-Brand) - referenceable by both a Paid Search
+    activity and an organic Search activity representing the same
+    underlying intent, without collapsing their separate cost, delivery,
+    or causal identity. ``search_platform`` (schema v5) is the orthogonal
+    governed platform axis (``SEARCH_PLATFORMS`` - Google/Bing today) -
+    deliberately a distinct field from ``search_intent_group_id``, never
+    combined into one enum, per the REQ-SEARCH-004 addendum's explicit
+    instruction. Both are reporting/classification dimensions validated
+    structurally here (closed-vocabulary membership only); cross-checking
+    against a full taxonomy catalogue, and the PMax/Demand Gen/YouTube
+    exclusion, is ``core.search_intent_taxonomy.
+    validate_activity_search_taxonomy``'s job, since that needs the
+    taxonomy catalogue this dataclass does not carry.
     """
 
     activity_id: str
@@ -130,6 +171,8 @@ class ActivityDefinition:
     schema_version: int = ACTIVITY_SCHEMA_VERSION
     marketing_objective: str = ""
     funnel_stage: str = "unclassified"
+    search_intent_group_id: str | None = None
+    search_platform: str = ""
 
     def __post_init__(self) -> None:
         if not self.activity_id or not self.channel or not self.source:
@@ -170,6 +213,21 @@ class ActivityDefinition:
             not self.approved_by or not self.approved_at
         ):
             raise ValueError("approved activities require approved_by and approved_at")
+        if self.search_platform and self.search_platform not in SEARCH_PLATFORMS:
+            raise ValueError(
+                f"invalid search_platform {self.search_platform!r}; "
+                f"expected one of {SEARCH_PLATFORMS} or blank"
+            )
+        campaign_type_normalized = (self.campaign_type or "").strip().lower()
+        if campaign_type_normalized in NON_PAID_SEARCH_CAMPAIGN_TYPES and (
+            self.search_intent_group_id or self.search_platform
+        ):
+            raise ValueError(
+                f"activity {self.activity_id!r} has campaign_type "
+                f"{self.campaign_type!r}, which is excluded from the Paid "
+                "Search taxonomy (Decision 2) - it must not carry a "
+                "search_intent_group_id or search_platform"
+            )
 
     @property
     def activity_key(self) -> tuple[str, str]:
@@ -219,6 +277,8 @@ class ActivityDefinition:
         # campaign, or source-column heuristic is allowed here.
         payload.setdefault("funnel_stage", "unclassified")
         payload.setdefault("marketing_objective", "")
+        payload.setdefault("search_intent_group_id", None)
+        payload.setdefault("search_platform", "")
 
         # A payload with no schema_version key at all predates versioning
         # entirely. Preserve the existing legacy floor before normalising the
@@ -260,10 +320,13 @@ def activity_definitions_fingerprint(
     ]
     for item in payload:
         item.pop("pooling_group_id", None)
-        # Funnel/objective are reporting taxonomy, not curve/scenario
-        # governance inputs. They have their own fingerprint below.
+        # Funnel/objective/search-taxonomy fields are reporting taxonomy,
+        # not curve/scenario governance inputs. They have their own
+        # fingerprint below (activity_reporting_fingerprint).
         item.pop("marketing_objective", None)
         item.pop("funnel_stage", None)
+        item.pop("search_intent_group_id", None)
+        item.pop("search_platform", None)
     payload.sort(
         key=lambda item: (
             str(item.get("market")),
