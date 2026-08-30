@@ -181,3 +181,81 @@ Modelling / Platform engineering
 ## Approval date
 
 2026-08-28
+
+## Addendum, 2026-08-30: initial taxonomy content approved (resolves D3)
+
+The business-decision brief "Post-UI/UX Implementation Instructions:
+Approved Business Decisions" (Decision 2, "Minimum Paid Search detail")
+resolves `docs/wp1_search_seo_granularity_decision_package.md`'s **D3**
+(initial governed Search intent taxonomy content and ownership),
+previously fully open between candidates D3-A (adopt an existing
+internal taxonomy verbatim) and D3-B (design a new MMM-specific
+taxonomy). This addendum records the resolution; it does not rewrite the
+original record above.
+
+**Approved minimum taxonomy content.** Two top-level governed
+`search_intent_group` records, per this record's existing §1 schema:
+
+- `search_intent_group_name = "Brand"`, `brand_class = "brand"`
+- `search_intent_group_name = "Non-Brand"`, `brand_class =
+  "generic_non_brand"`
+
+This is a D3-B outcome (a new, MMM-specific two-group taxonomy), chosen
+because Decision 2 names Brand/Non-Brand directly rather than adopting
+any existing media-buying campaign taxonomy, and because a two-group
+split trivially satisfies §5's `cross_route_comparable_flag` requirement.
+Owner: Modelling (taxonomy structure) / Product-Marketing (naming),
+per the decision package's existing owner split.
+
+**Platform (Google/Bing) is an orthogonal axis, not a taxonomy level.**
+Decision 2's four minimum groups (Google Brand, Google Non-Brand, Bing
+Brand, Bing Non-Brand) are the *cross* of the Brand/Non-Brand intent-group
+axis above with a **platform** axis (Google, Bing) that this record's §1
+schema does not currently carry — `core.search_objects.
+SearchObjectDefinition` and `core.activities.ActivityDefinition` have no
+governed platform field today (current Search granularity is free-text
+channel names only, confirmed by repository audit). Adding a governed
+`platform` field (or reusing an existing free-text field under a closed
+enum) is **Phase B implementation work**, not approved by this addendum;
+this addendum only records that platform and intent-group are two
+independent dimensions of the same reporting hierarchy, so a future
+schema change must not conflate them into one combined enum.
+
+**Reporting roll-up hierarchy (resolves the reporting half of D3, and
+Decision 4).** The required roll-up/drill-down hierarchy is: Total Paid
+Search -> {Brand Search, Non-Brand Search} -> {Google Brand, Bing Brand}
+under Brand Search, {Google Non-Brand, Bing Non-Brand} under Non-Brand
+Search. Every parent total must be computed by summing its governed
+children — the business must never manually add detailed categories to
+obtain a parent total (Decision 4). This is a reporting-layer
+requirement on top of the taxonomy content above; the actual roll-up
+computation is Phase B implementation work.
+
+**PMax/Demand Gen/YouTube confirmed excluded from Paid Search.** This
+record's existing object-separation pattern (`REQ-SEARCH-001`) already
+implies PMax, Demand Gen, and YouTube campaigns are not Paid Search
+objects merely because they appear in SA360 operational data; this
+addendum makes that explicit per Decision 2's instruction not to
+classify them as PPC "simply because of the source system." No governed
+object for PMax/Demand Gen/YouTube is created by this addendum — a
+future decision may place some of them in a grouped "Other" reporting
+category, but that decision has not been made (per Decision 2's own
+text) and is not made here.
+
+**D4 (deeper keyword/search-term Non-Brand groups) remains open**, per
+Decision 2's own instruction that a data-support-gated deeper split
+"is not permission to automatically create tiny groups." This addendum
+records the *gating principle* only — a Non-Brand keyword/search-term
+group may only be promoted to separately reportable once data volume,
+active/non-zero weeks, variation, collinearity, and separate-
+estimability evidence support it, reusing `REQ-VAL-001`'s existing
+per-artefact threshold-policy-record mechanism (candidate D4-A) rather
+than a new parallel mechanism — no concrete numeric threshold is
+approved here, consistent with D4's own unresolved status. Where the
+data are too weak, the higher-level Non-Brand grouping is retained and
+the reason recorded, per Decision 2's explicit instruction.
+
+This addendum is a contract-level record only; no `core`, `application`,
+or `pages` code changes accompany it (Phase A discipline). It does not
+resolve D1, D2, D5, D6, or D7 of the decision package, which remain open
+as recorded in that package's own updated status section.
