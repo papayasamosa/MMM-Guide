@@ -948,7 +948,9 @@
       "affected_modules": [
         "docs/wp10_time_varying_baseline_decision_package.md",
         "docs/approved_requirements/REQ-BASELINE-001.md",
-        "docs/approved_requirements/index.json"
+        "docs/approved_requirements/index.json",
+        "ancestry_mmm/core/baseline_diagnostics.py",
+        "docs/time_varying_baseline_decision_record.md"
       ],
       "required_tests": [
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
@@ -957,7 +959,10 @@
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
-        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_baseline_diagnostics.py::TestGovernedDecisionConstants::test_process_decision_is_t3",
+        "ancestry_mmm/tests/test_baseline_diagnostics.py::TestDetectResidualLevelShift::test_detects_a_genuine_step_shift",
+        "ancestry_mmm/tests/test_baseline_diagnostics.py::TestDetectResidualLevelShift::test_no_shift_in_stationary_noise"
       ]
     },
     {
