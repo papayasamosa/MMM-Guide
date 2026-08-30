@@ -205,3 +205,62 @@ No code, schema, or module is created by this addendum. Phase E
 implementation must still resolve G1/G2/G3 and S1/S2/S3 via
 `docs/wp11_capacity_cap_semantics_decision_package.md` before building
 anything.
+
+## Addendum, 2026-08-30 (Phase C/E): cap-hit vocabulary and shared module implemented (Decisions 10/18)
+
+The user's 2026-08-29 "Post-UI/UX Implementation Instructions" brief,
+confirmed in-session 2026-08-30, explicitly delegates this record's
+S1-S3/G1-G3 technical selection (previously reserved by
+`docs/wp11_capacity_cap_semantics_decision_package.md`) to research and
+validation, while retaining ownership of the business questions
+(Decisions 10 and 18, already answered). This addendum records the
+resulting resolution: full decision record in
+`docs/capacity_cap_semantics_decision_record.md`; implementation in the
+new `ancestry_mmm/core/capacity.py`.
+
+**Resolved:**
+
+- the cap-hit status vocabulary's concrete operational definition
+  (`unavailable` = no governed cap value at all, distinct from a
+  supplied finite cap of zero; `ambiguous` = only reachable from
+  posterior-draw evidence, via an explicit, documented `0.20`
+  probability-of-binding ambiguity band around 0.5; `capped`/`uncapped`
+  otherwise) - S1, extended so the full underlying probability/point
+  evidence is always retained and disclosed alongside the categorical
+  label, never replaced by it;
+- the module-sharing timing - G1, scoped precisely to the cap-hit
+  vocabulary, the governed `CapacityLimitDefinition` object (spanning
+  Decision 18's named categories: spend limits, delivery/exposure
+  limits, availability toggles, fixed commitments, bounded ranges), and
+  the generalised reconciliation identity
+  (`verify_capacity_reconciliation`) - NOT `core.graph_model_compiler`'s
+  `capacity_constrained` structural validation, which remains
+  Candidate-A-only until a second concrete capacity-constrained pathway
+  actually exists to validate against (a narrower, still-legitimate
+  deferral, not a re-reservation);
+- what "a governed source and versioned cap-hit rule" requires beyond
+  the cap object's own existing identity/versioning: the classification
+  RULE itself (the ambiguity band and point-evaluation tolerance) is now
+  independently versioned (`CAP_HIT_CLASSIFICATION_RULE_VERSION`);
+- whether Candidate A's reconciliation identity generalises: yes, as
+  `realised + unmet == potential`, grounded in PyMC's own official
+  `Censored` distribution (confirmed via Context7) as a recognised
+  statistical pattern for the underlying min/censoring relationship,
+  without prescribing any specific likelihood family (`AGENTS.md`'s "not
+  one frozen algebraic form" caution preserved).
+
+`ancestry_mmm/core/search_capacity.py` is extended, not replaced: a new
+`candidate_a_cap_hit_status` function computes the four-value
+classification from Candidate A's existing cap/binding-evidence inputs
+via `core.capacity`'s shared function. `CandidateAForwardState.cap_
+binding` and `CandidateAPosteriorOutputs.probability_cap_binding`
+(the existing boolean/probability fields) are completely unchanged -
+verified by dedicated regression tests.
+
+**Still not resolved / deliberately out of scope:** `core.graph_model_
+compiler`'s compiler-level support for a second capacity-constrained
+pathway (no such pathway exists yet); any actual capacity VALUE for a
+real market/channel (this addendum supplies the governed shape, never
+invents a number); wiring `CapacityLimitDefinition` into the Scenario
+Planner/Optimiser UI (a separate integration pass, `REQ-OPT-001`'s own
+scope).

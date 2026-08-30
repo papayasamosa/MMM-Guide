@@ -34,6 +34,7 @@ from .search_objects import (
     SearchObjectDefinition,
     current_search_object_versions,
 )
+from .capacity import CapHitClassification, classify_cap_hit_status_series
 
 
 SEARCH_CANDIDATE_A_ENGINE = "pymc_search_candidate_a"
@@ -539,6 +540,75 @@ def posterior_outputs_from_forward_draws(
         realised_mediated_search_effect=effects.realised_mediated_search_effect,
         total_realised_media_effect=effects.total_realised_media_effect,
         unrealised_potential=effects.unrealised_potential,
+    )
+
+
+def candidate_a_cap_hit_status(
+    cap: Sequence[float] | np.ndarray,
+    *,
+    probability_cap_binding: Optional[Sequence[float] | np.ndarray] = None,
+    point_binding: Optional[Sequence[bool] | np.ndarray] = None,
+) -> List[CapHitClassification]:
+    """The governed four-value cap-hit status series for Candidate A
+    (`core.capacity`'s Decision 10/18 vocabulary), computed from
+    Candidate A's own existing cap value and binding evidence - either
+    `probability_cap_binding` (posterior evidence,
+    `CandidateAPosteriorOutputs.probability_cap_binding`) or
+    `point_binding` (a single evaluation,
+    `CandidateAForwardState.cap_binding`), never both.
+
+    This is purely additive: it does not change, replace, or reinterpret
+    `CandidateAForwardState.cap_binding`/`CandidateAPosteriorOutputs.
+    probability_cap_binding` themselves - both remain exactly as before.
+    A cap value of `np.nan` at a given period is treated as "no governed
+    cap value for this period" (`unavailable`), distinct from a supplied,
+    finite cap of `0.0`.
+    """
+    cap_arr = np.asarray(cap, dtype=float)
+    if cap_arr.ndim != 1:
+        raise SearchCapacityValidationError("cap must be one-dimensional.")
+    # NaN is the explicit "no governed cap value for this period" signal
+    # (unavailable) - not rejected as non-finite the way other Candidate A
+    # arrays are, since this function's whole purpose is to represent that
+    # absence, distinct from a supplied, finite cap of zero.
+    if np.any(np.isneginf(cap_arr)) or np.any(np.isposinf(cap_arr)):
+        raise SearchCapacityValidationError(
+            "cap must not contain +/-inf; use NaN for 'no governed cap "
+            "value', or a large finite number for an effectively unbounded "
+            "cap."
+        )
+    cap_values: List[Optional[float]] = [
+        None if np.isnan(value) else float(value) for value in cap_arr
+    ]
+    if probability_cap_binding is not None and point_binding is not None:
+        raise SearchCapacityValidationError(
+            "candidate_a_cap_hit_status: supply exactly one of "
+            "probability_cap_binding or point_binding, not both."
+        )
+    if probability_cap_binding is not None:
+        prob_arr = np.asarray(probability_cap_binding, dtype=float)
+        if not np.all(np.isfinite(prob_arr)):
+            raise SearchCapacityValidationError(
+                "probability_cap_binding contains non-finite values."
+            )
+        _same_shape(cap_arr, prob_arr)
+        return classify_cap_hit_status_series(
+            cap_values=cap_values,
+            probability_binding=[float(value) for value in prob_arr],
+        )
+    if point_binding is not None:
+        binding_arr = np.asarray(point_binding, dtype=bool)
+        if binding_arr.shape != cap_arr.shape:
+            raise SearchCapacityValidationError(
+                "candidate_a_cap_hit_status: point_binding must match cap shape"
+            )
+        return classify_cap_hit_status_series(
+            cap_values=cap_values,
+            point_binding=[bool(value) for value in binding_arr],
+        )
+    raise SearchCapacityValidationError(
+        "candidate_a_cap_hit_status: exactly one of probability_cap_binding "
+        "or point_binding is required."
     )
 
 

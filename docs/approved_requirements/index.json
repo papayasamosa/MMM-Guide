@@ -967,7 +967,9 @@
       "affected_modules": [
         "docs/wp11_capacity_cap_semantics_decision_package.md",
         "docs/approved_requirements/REQ-CAP-001.md",
-        "docs/approved_requirements/index.json"
+        "docs/approved_requirements/index.json",
+        "ancestry_mmm/core/capacity.py",
+        "docs/capacity_cap_semantics_decision_record.md"
       ],
       "required_tests": [
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
@@ -980,7 +982,12 @@
         "ancestry_mmm/tests/test_req_cap_001_decision_18.py::test_req_cap_001_addendum_does_not_select_g1_over_g3",
         "ancestry_mmm/tests/test_req_cap_001_decision_18.py::test_req_cap_001_addendum_leaves_cap_hit_vocabulary_open",
         "ancestry_mmm/tests/test_req_cap_001_decision_18.py::test_req_cap_001_addendum_cross_references_req_opt_001",
-        "ancestry_mmm/tests/test_req_cap_001_decision_18.py::test_req_cap_001_indexed"
+        "ancestry_mmm/tests/test_req_cap_001_decision_18.py::test_req_cap_001_indexed",
+        "ancestry_mmm/tests/test_capacity.py::TestClassifyCapHitStatus::test_no_cap_value_is_unavailable",
+        "ancestry_mmm/tests/test_capacity.py::TestClassifyCapHitStatus::test_middle_probability_is_ambiguous",
+        "ancestry_mmm/tests/test_capacity.py::TestVerifyCapacityReconciliation::test_violation_raises",
+        "ancestry_mmm/tests/test_capacity.py::TestCapacityLimitDefinition::test_round_trip",
+        "ancestry_mmm/tests/test_search_capacity.py::TestCandidateACapHitStatus::test_does_not_mutate_existing_forward_state"
       ]
     },
     {
