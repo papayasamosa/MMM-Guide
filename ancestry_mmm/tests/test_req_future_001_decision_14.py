@@ -18,7 +18,7 @@ def test_req_future_001_addendum_records_wp2g_reconciliation():
 
 
 def test_req_future_001_addendum_does_not_change_shipped_ui():
-    text = REQ_FUTURE_001_PATH.read_text()
+    text = " ".join(REQ_FUTURE_001_PATH.read_text().split())
     assert "No change to WP2G's shipped UI or defaults" in text
 
 
