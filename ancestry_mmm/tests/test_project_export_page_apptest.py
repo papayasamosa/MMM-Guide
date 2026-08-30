@@ -114,7 +114,17 @@ def _run_export(monkeypatch, tmp_path, *, project_name: str) -> Path:
     build_button.click().run()
     assert not at.exception, f"export click raised: {at.exception}"
 
-    return export_root / f"{project_name}.zip"
+    # Codex review (PR #348, P1 follow-up): the build no longer writes to
+    # (or leaves behind) `export_root / f"{project_name}.zip"` - each build
+    # uses a session-unique temporary filename, read into memory, then
+    # deleted (see 09_Project_Export.py) - specifically so two sessions
+    # building the same project name can never race on one shared path.
+    # Callers that need an actual file to hand to `import_project()` write
+    # the session's own cached bytes out to their own fresh path instead of
+    # relying on any canonical on-disk location.
+    bundle_path = tmp_path / f"{project_name}-readback.zip"
+    bundle_path.write_bytes(at.session_state["export_last_bundle_bytes"])
+    return bundle_path
 
 
 def test_export_reaches_official_curves_checkpoint_with_a_loaded_artifact(
@@ -155,7 +165,9 @@ def test_export_falls_back_to_legacy_curves_checkpoint_without_official_artifact
     build_button.click().run()
     assert not at.exception, f"export click raised: {at.exception}"
 
-    imported = import_project(export_root / "proj-legacy.zip")
+    bundle_path = tmp_path / "proj-legacy-readback.zip"
+    bundle_path.write_bytes(at.session_state["export_last_bundle_bytes"])
+    imported = import_project(bundle_path)
     assert imported["manifest"]["workflow_checkpoint"] == "curves"
     assert imported["manifest"]["contains"]["official_curve_artifacts"] is False
 
@@ -309,7 +321,9 @@ def test_export_includes_causal_graph_state(monkeypatch, tmp_path):
     build_button.click().run()
     assert not at.exception, f"export click raised: {at.exception}"
 
-    imported = import_project(export_root / "proj-with-graph.zip")
+    bundle_path = tmp_path / "proj-with-graph-readback.zip"
+    bundle_path.write_bytes(at.session_state["export_last_bundle_bytes"])
+    imported = import_project(bundle_path)
     graphs, warnings = resolve_imported_causal_graphs(imported)
     assert warnings == []
     assert {g["graph_id"] for g in graphs} == {"g1"}
@@ -736,6 +750,31 @@ def test_build_bundle_download_is_isolated_from_a_shared_project_name_being_over
     bytes_b = session_b.session_state["export_last_bundle_bytes"]
     assert bytes_a != bytes_b, (
         "test setup sanity check: the two sessions' bundles must actually differ"
+    )
+
+    # Codex review follow-up (PR #348, P1): "fresh evidence beyond the
+    # earlier comment is that this revision only isolates the bytes after
+    # the shared-path write has completed... [and] does not cover this
+    # write/read race" - true of running the two builds strictly
+    # sequentially (as the AppTest calls above do; genuinely concurrent
+    # writes aren't reliably reproducible in a synchronous unit test). The
+    # deterministic property this second fix actually provides - and that a
+    # sequential test *can* prove - is structural, not timing-dependent:
+    # each build now writes to a session-unique temporary filename, so two
+    # sessions building "shared-name" can never target the same path at all,
+    # racing or not. Confirmed directly: the shared canonical path was never
+    # written to by either build, and neither build leaves a temp file
+    # behind (each session's own bytes/manifest were already cached in
+    # memory and the on-disk temp file deleted before this assertion).
+    shared_canonical_path = export_root / "shared-name.zip"
+    assert not shared_canonical_path.exists(), (
+        "no build should ever write to the shared project-name path - each "
+        "build must use a session-unique filename instead"
+    )
+    leftover_files = sorted(p.name for p in export_root.glob("*.zip"))
+    assert leftover_files == [], (
+        "each build's temporary file must be deleted once its bytes/manifest "
+        f"are cached, not left on disk to accumulate or collide; found: {leftover_files}"
     )
 
     # Session A's next, unrelated rerun (its actual regression-fix scenario)

@@ -11,6 +11,7 @@ and its durable native frame through the existing persistence boundary.
 
 import json
 import sys
+import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -649,7 +650,18 @@ project_notes = st.text_area(
 set_state("project_notes", project_notes)
 if st.button("Build export bundle", type="primary"):
     PROJECT_EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
-    output_path = PROJECT_EXPORT_ROOT / f"{project_name}.zip"
+    # Codex review (PR #348, P1 follow-up): a per-project-name path here -
+    # even one only ever read back within this same block, as the original
+    # code did - is still a write-side race. Two sessions building
+    # "proj-status" concurrently would both target this exact file; whichever
+    # session's read happens after the other's write completed (mid- or
+    # post-write) could read a corrupt or entirely foreign bundle, before
+    # either session's own private byte-caching (below) ever gets a chance
+    # to help. A session-unique filename (never shared with any other
+    # session, concurrent or not) removes the collision at its source rather
+    # than mitigating it after the fact. Deleted once its bytes/manifest are
+    # cached - see below - since nothing needs it to persist on disk.
+    output_path = PROJECT_EXPORT_ROOT / f"_build_{uuid.uuid4().hex}.zip"
     # PR 88A: "diagnostics_artefact" in session state is always a
     # DiagnosticsArtefact domain object (or None) - see pages/06_Diagnostics.py
     # and reconstruct_model_state() below. This is the one explicit
@@ -817,19 +829,25 @@ if st.button("Build export bundle", type="primary"):
     # than re-deriving a second "what's in it" notion here, so the
     # checklist below can never drift from what was actually written.
     #
-    # Codex review (PR #348, P1): PROJECT_EXPORT_ROOT/<project_name>.zip is a
-    # single shared filesystem path, not session-scoped. The pass-4 redesign
-    # originally re-opened that shared path on every later rerun so the
-    # checklist/download would survive - but in a multi-user deployment, a
-    # second session building the same-named project in between would
-    # silently overwrite the file, and this session's next rerun would then
-    # read and offer *that* session's bundle for download. Fixed by reading
-    # the built bytes into this session's own private state exactly once,
-    # right here, and never touching the shared path again afterwards -
-    # nothing below this point re-opens PROJECT_EXPORT_ROOT.
+    # Codex review (PR #348, P1 + P1 follow-up): PROJECT_EXPORT_ROOT/
+    # <project_name>.zip was a single shared filesystem path, not
+    # session-scoped, on both the read side (re-opened on every later rerun
+    # so the checklist/download would survive - a second session's build in
+    # between would silently overwrite the file, offering it to this
+    # session) and the write side (two concurrent builds of the same project
+    # name both targeting this exact path, racing on the write itself,
+    # before either session's caching ever got a chance to help). Fixed on
+    # both sides: `output_path` above is now a session-unique temporary
+    # filename `export_project()` builds to and nothing else ever
+    # coincidentally shares, and the bytes/manifest are read into this
+    # session's own private state exactly once, right here, before the
+    # temporary file is deleted - nothing below this point re-opens
+    # `output_path`, and nothing above it is ever shared with another
+    # session's build.
     _build_bytes = output_path.read_bytes()
     with zipfile.ZipFile(output_path) as _build_zf:
         _build_manifest = json.loads(_build_zf.read("manifest.json"))
+    output_path.unlink(missing_ok=True)
     set_state(
         "export_last_bundle_summary",
         {
