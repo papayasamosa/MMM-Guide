@@ -823,7 +823,9 @@
         "docs/approved_requirements/REQ-EXPMODE-001.md",
         "docs/approved_requirements/index.json",
         "ancestry_mmm/application/diagnostics_service.py",
-        "ancestry_mmm/pages/06_Diagnostics.py"
+        "ancestry_mmm/pages/06_Diagnostics.py",
+        "ancestry_mmm/core/experiment_lift_test_mapping.py",
+        "docs/experiment_calibration_mechanism_decision_record.md"
       ],
       "required_tests": [
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
@@ -840,7 +842,12 @@
         "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateExperimentCalibration::test_no_evidence_supplied_is_not_applicable",
         "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateExperimentCalibration::test_experiment_provenance_report_is_computed_and_kept_separate",
         "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateExperimentCalibration::test_section_round_trips_and_is_fingerprinted",
-        "ancestry_mmm/tests/test_diagnostics_wp2_evidence_apptest.py::test_scorecard_reports_not_applicable_latent_state_and_experiment_sections"
+        "ancestry_mmm/tests/test_diagnostics_wp2_evidence_apptest.py::test_scorecard_reports_not_applicable_latent_state_and_experiment_sections",
+        "ancestry_mmm/tests/test_experiment_lift_test_mapping.py::TestBuildLiftTestCalibrationRow::test_valid_mapping",
+        "ancestry_mmm/tests/test_experiment_lift_test_mapping.py::TestBuildLiftTestCalibrationRow::test_incompatible_experiment_is_rejected_even_if_use_exists",
+        "ancestry_mmm/tests/test_experiment_lift_test_mapping.py::TestBuildLiftTestCalibrationRow::test_non_likelihood_calibration_evidence_mode_is_rejected",
+        "ancestry_mmm/tests/test_experiments.py::TestDecision11SchemaFields::test_new_fields_round_trip",
+        "ancestry_mmm/tests/test_experiments.py::TestDecision11SchemaFields::test_old_v1_shaped_dict_still_parses_with_new_fields_absent"
       ]
     },
     {

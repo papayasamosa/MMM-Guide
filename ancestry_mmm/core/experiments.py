@@ -124,7 +124,13 @@ _CALIBRATING_MODES = (
 # (`config/experiments.json` in the project bundle). Importers reject an
 # unrecognised future version rather than guessing - mirrors every other
 # governed record's schema-version contract in this repository.
-EXPERIMENT_REGISTRY_SCHEMA_VERSION = 1
+#
+# v2 (2026-08-30, Decision 11): added ExperimentRecord.baseline_exposure_
+# level/strategy_or_tactic_tested/post_adoption_outcome_tracked/
+# applicability_period_start/applicability_period_end (all optional). No
+# `config/experiments.json` file exists anywhere in this repository yet,
+# so no live persisted registry required migration.
+EXPERIMENT_REGISTRY_SCHEMA_VERSION = 2
 
 COMPATIBILITY_DIMENSIONS = (
     "outcome",
@@ -148,6 +154,23 @@ class ExperimentRecord:
     `core.search_objects`'s `search_object_id`/`search_object_version`
     immutability pattern exactly. Use `new_experiment_version` to record
     an edit as a new version; never mutate an existing record in place.
+
+    Decision 11 (`docs/experiment_calibration_mechanism_decision_
+    record.md`) added five optional, backward-compatible fields
+    (`EXPERIMENT_REGISTRY_SCHEMA_VERSION` 1 -> 2): `baseline_exposure_
+    level` (the "x" PyMC-Marketing's official `add_lift_test_
+    measurements` row shape requires - the channel's spend/exposure
+    level immediately before the tested delta was applied, needed
+    because a saturation curve's marginal effect is non-linear in its
+    starting point); `strategy_or_tactic_tested` (what was actually
+    tested - a creative, targeting, or budget-level change - since "the
+    experiment" alone does not disambiguate this); `post_adoption_
+    outcome_tracked` (whether the tested change, once adopted into
+    always-on activity, has had its real-world outcome tracked
+    afterward); and `applicability_period_start`/`applicability_period_
+    end` (the period during which this experiment's finding is
+    considered still valid for calibration - distinct from `start_date`/
+    `end_date`, which record when the experiment itself ran).
     """
 
     experiment_id: str
@@ -167,6 +190,11 @@ class ExperimentRecord:
     treatment_quantity: Optional[float] = None
     limitations: Tuple[str, ...] = ()
     overlapping_experiment_ids: Tuple[str, ...] = ()
+    baseline_exposure_level: Optional[float] = None
+    strategy_or_tactic_tested: Optional[str] = None
+    post_adoption_outcome_tracked: Optional[bool] = None
+    applicability_period_start: Optional[str] = None
+    applicability_period_end: Optional[str] = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -189,6 +217,27 @@ class ExperimentRecord:
             raise ValueError("market_scope is required")
         if self.effect_uncertainty < 0:
             raise ValueError("effect_uncertainty cannot be negative")
+        if (
+            self.baseline_exposure_level is not None
+            and self.baseline_exposure_level < 0
+        ):
+            raise ValueError("baseline_exposure_level cannot be negative")
+        if (self.applicability_period_start is None) != (
+            self.applicability_period_end is None
+        ):
+            raise ValueError(
+                "applicability_period_start and applicability_period_end "
+                "must be present or absent together"
+            )
+        if (
+            self.applicability_period_start is not None
+            and self.applicability_period_end is not None
+            and pd.Timestamp(self.applicability_period_end)
+            < pd.Timestamp(self.applicability_period_start)
+        ):
+            raise ValueError(
+                "applicability_period_end must not precede applicability_period_start"
+            )
 
     @property
     def experiment_key(self) -> str:
@@ -213,11 +262,17 @@ class ExperimentRecord:
             "evidence_status": self.evidence_status,
             "limitations": list(self.limitations),
             "overlapping_experiment_ids": list(self.overlapping_experiment_ids),
+            "baseline_exposure_level": self.baseline_exposure_level,
+            "strategy_or_tactic_tested": self.strategy_or_tactic_tested,
+            "post_adoption_outcome_tracked": self.post_adoption_outcome_tracked,
+            "applicability_period_start": self.applicability_period_start,
+            "applicability_period_end": self.applicability_period_end,
             "metadata": dict(self.metadata),
         }
 
     @classmethod
     def from_dict(cls, values: Mapping[str, Any]) -> "ExperimentRecord":
+        post_adoption_outcome_tracked = values.get("post_adoption_outcome_tracked")
         return cls(
             experiment_id=values["experiment_id"],
             experiment_version=int(values["experiment_version"]),
@@ -229,6 +284,15 @@ class ExperimentRecord:
             segment_scope=tuple(values.get("segment_scope") or ()),
             estimand=values["estimand"],
             treatment_quantity=values.get("treatment_quantity"),
+            baseline_exposure_level=values.get("baseline_exposure_level"),
+            strategy_or_tactic_tested=values.get("strategy_or_tactic_tested"),
+            post_adoption_outcome_tracked=(
+                bool(post_adoption_outcome_tracked)
+                if post_adoption_outcome_tracked is not None
+                else None
+            ),
+            applicability_period_start=values.get("applicability_period_start"),
+            applicability_period_end=values.get("applicability_period_end"),
             observed_effect_estimate=float(values["observed_effect_estimate"]),
             effect_uncertainty=float(values["effect_uncertainty"]),
             method=values["method"],

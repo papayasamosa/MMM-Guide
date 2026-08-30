@@ -80,6 +80,66 @@ class TestExperimentRecordValidation:
         assert restored == original
 
 
+class TestDecision11SchemaFields:
+    """Decision 11 (`docs/experiment_calibration_mechanism_decision_
+    record.md`): new optional fields, schema v1 -> v2."""
+
+    def test_new_fields_default_to_none(self):
+        record = _record()
+        assert record.baseline_exposure_level is None
+        assert record.strategy_or_tactic_tested is None
+        assert record.post_adoption_outcome_tracked is None
+        assert record.applicability_period_start is None
+        assert record.applicability_period_end is None
+
+    def test_new_fields_round_trip(self):
+        original = _record(
+            baseline_exposure_level=20000.0,
+            strategy_or_tactic_tested="brand_search_bid_increase",
+            post_adoption_outcome_tracked=True,
+            applicability_period_start="2026-01-01",
+            applicability_period_end="2026-12-31",
+        )
+        restored = ExperimentRecord.from_dict(original.to_dict())
+        assert restored == original
+        assert restored.post_adoption_outcome_tracked is True
+
+    def test_rejects_negative_baseline_exposure_level(self):
+        with pytest.raises(ValueError, match="baseline_exposure_level"):
+            _record(baseline_exposure_level=-1.0)
+
+    def test_applicability_period_bounds_must_be_present_together(self):
+        with pytest.raises(ValueError, match="applicability_period"):
+            _record(applicability_period_start="2026-01-01")
+        with pytest.raises(ValueError, match="applicability_period"):
+            _record(applicability_period_end="2026-12-31")
+
+    def test_applicability_period_end_before_start_is_rejected(self):
+        with pytest.raises(ValueError, match="applicability_period_end"):
+            _record(
+                applicability_period_start="2026-12-31",
+                applicability_period_end="2026-01-01",
+            )
+
+    def test_old_v1_shaped_dict_still_parses_with_new_fields_absent(self):
+        # A payload that never mentions the new fields at all (as any
+        # schema-v1-era persisted record would look) must still parse
+        # cleanly, with the new fields defaulting to None.
+        original = _record()
+        payload = original.to_dict()
+        for key in (
+            "baseline_exposure_level",
+            "strategy_or_tactic_tested",
+            "post_adoption_outcome_tracked",
+            "applicability_period_start",
+            "applicability_period_end",
+        ):
+            del payload[key]
+        restored = ExperimentRecord.from_dict(payload)
+        assert restored.baseline_exposure_level is None
+        assert restored.post_adoption_outcome_tracked is None
+
+
 class TestExperimentVersioning:
     def test_new_version_increments(self):
         v1 = _record()
