@@ -331,3 +331,64 @@ transformation is resolved); full partial-window SEO coverage policy
 ### Required tests (this addendum)
 
 - `ancestry_mmm/tests/test_seo_visibility.py` (all tests)
+
+## Addendum, 2026-08-30 (Phase B): partial-window SEO handling resolved (Decision 3)
+
+`REQ-SEO-001`'s own "Out of scope" note tracked "full partial-window SEO
+coverage policy (Decision 3)" separately. This addendum records that
+resolution, researched directly against official PyMC and PyMC-Marketing
+documentation (via Context7) rather than guessed: full options-considered
+decision record in
+`docs/seo_partial_window_handling_decision_record.md`; implementation in
+`ancestry_mmm/core/seo_partial_window_policy.py`.
+
+**Resolved:**
+
+- PyMC's native `observed=`-masked-array automatic-imputation mechanism
+  was investigated and NOT adopted as the primary mechanism for a
+  partially-observed SEO predictor - it is a real, documented feature,
+  but applying it to a predictor (rather than an outcome) would require
+  an unvalidatable generative prior for periods with no SEO tracking at
+  all and no ground truth to check recovery against;
+- the approved architecture direction instead (candidate W2-B, a
+  windowed/gated regressor: the SEO term is structurally active only
+  during SEO's valid data window; the full MMM's time index, every
+  other channel/control, and the final-outcome likelihood are
+  completely unaffected for every period) - matching Decision 3's own
+  "keep the full MMM history... never shorten the whole MMM to SEO's
+  window" requirement exactly, and matching PyMC-Marketing's own
+  documented idiom of excluding a variable from periods it does not
+  cover rather than fabricating values for it;
+- the valid-window determination contract
+  (`SeoValidEstimationWindow`/`determine_valid_estimation_window`),
+  reusing `core.coverage`'s existing missingness vocabulary directly
+  (no parallel vocabulary invented) - a week counts as within-window if
+  it was actually queried (an ordinary observed fact or a confirmed
+  `observed_zero`), never if it was structurally never queried
+  (`missing_expected`/`unavailable_source`/`unknown`);
+- diagnostics classification of the full MMM's weekly grid relative to
+  the determined window (`before_window`/`within_window`/
+  `after_window`/`no_window_data`), satisfying "mark the valid
+  estimation window clearly in diagnostics";
+- the fail-closed official-use eligibility gate for the SEO contribution
+  specifically (`assess_seo_contribution_window_eligibility`), never
+  eligible without both a real window AND an approved minimum-window-
+  length threshold - no threshold number is invented here (deferred to
+  `REQ-DATASUPPORT-001`, mirroring that record's own deliberately
+  `None`-defaulted thresholds) - satisfying "fail closed for the SEO
+  contribution specifically... rather than corrupting the full MMM fit."
+
+**Still not resolved by this addendum:**
+
+- the actual PyMC/PyTensor code implementing the windowed-gate
+  mechanism inside a real SEO causal pathway - a separate, materially
+  statistical fit-time integration requiring its own prior-predictive
+  and synthetic-recovery validation, not a configuration change;
+- the approved minimum-window-length threshold itself
+  (`REQ-DATASUPPORT-001`'s scope, not invented here);
+- the functional form/transformation question this addendum's own
+  "Out of scope" text already deferred to Decision 6/Phase C.
+
+No `application`/`pages` code changes accompany this addendum; only the
+new standalone `core.seo_partial_window_policy` module (which does not
+modify `core.seo_visibility` or `core.coverage`).

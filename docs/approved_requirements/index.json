@@ -1390,7 +1390,9 @@
         "ancestry_mmm/core/persistence.py",
         "docs/wp1_search_seo_granularity_decision_package.md",
         "ancestry_mmm/core/seo_visibility.py",
-        "docs/seo_positional_visibility_metric_decision_record.md"
+        "docs/seo_positional_visibility_metric_decision_record.md",
+        "ancestry_mmm/core/seo_partial_window_policy.py",
+        "docs/seo_partial_window_handling_decision_record.md"
       ],
       "required_tests": [
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
@@ -1414,7 +1416,14 @@
         "ancestry_mmm/tests/test_seo_visibility.py::TestComputeWeeklyPositionalVisibility::test_higher_is_better_direction",
         "ancestry_mmm/tests/test_seo_visibility.py::TestComputeWeeklyPositionalVisibility::test_partially_observed_window",
         "ancestry_mmm/tests/test_seo_visibility.py::TestGovernedMetricDefinition::test_causal_role_matches_decision_6",
-        "ancestry_mmm/tests/test_seo_visibility.py::TestGovernedMetricDefinition::test_direction_relative_to_estimand_stays_not_yet_approved"
+        "ancestry_mmm/tests/test_seo_visibility.py::TestGovernedMetricDefinition::test_direction_relative_to_estimand_stays_not_yet_approved",
+        "ancestry_mmm/tests/test_seo_partial_window_policy.py::TestDetermineValidEstimationWindow::test_mixed_series_finds_first_and_last_queried_week",
+        "ancestry_mmm/tests/test_seo_partial_window_policy.py::TestDetermineValidEstimationWindow::test_all_never_queried_produces_no_window",
+        "ancestry_mmm/tests/test_seo_partial_window_policy.py::TestDetermineValidEstimationWindow::test_observed_zero_counts_as_within_window",
+        "ancestry_mmm/tests/test_seo_partial_window_policy.py::TestClassifyWeekRelativeToWindow::test_before_within_after",
+        "ancestry_mmm/tests/test_seo_partial_window_policy.py::TestAssessSeoContributionWindowEligibility::test_no_approved_threshold_can_never_be_eligible",
+        "ancestry_mmm/tests/test_seo_partial_window_policy.py::TestAssessSeoContributionWindowEligibility::test_meeting_threshold_is_eligible",
+        "ancestry_mmm/tests/test_seo_partial_window_policy.py::TestGatedRegressorArchitectureMetadata::test_architecture_is_documented_not_executable"
       ]
     },
     {
