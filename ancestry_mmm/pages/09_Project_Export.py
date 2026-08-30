@@ -816,17 +816,30 @@ if st.button("Build export bundle", type="primary"):
     # core.persistence.export_project - see the module docstring) rather
     # than re-deriving a second "what's in it" notion here, so the
     # checklist below can never drift from what was actually written.
+    #
+    # Codex review (PR #348, P1): PROJECT_EXPORT_ROOT/<project_name>.zip is a
+    # single shared filesystem path, not session-scoped. The pass-4 redesign
+    # originally re-opened that shared path on every later rerun so the
+    # checklist/download would survive - but in a multi-user deployment, a
+    # second session building the same-named project in between would
+    # silently overwrite the file, and this session's next rerun would then
+    # read and offer *that* session's bundle for download. Fixed by reading
+    # the built bytes into this session's own private state exactly once,
+    # right here, and never touching the shared path again afterwards -
+    # nothing below this point re-opens PROJECT_EXPORT_ROOT.
+    _build_bytes = output_path.read_bytes()
     with zipfile.ZipFile(output_path) as _build_zf:
         _build_manifest = json.loads(_build_zf.read("manifest.json"))
     set_state(
         "export_last_bundle_summary",
         {
             "project_name": project_name,
-            "path": str(output_path),
             "checkpoint": _build_manifest.get("workflow_checkpoint"),
             "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         },
     )
+    set_state("export_last_bundle_bytes", _build_bytes)
+    set_state("export_last_bundle_manifest", _build_manifest)
     # Project Export redesign (pass 4, closing the gap passes 2-3 logged but
     # deliberately did not fix): re-run so the "Export & Recovery dashboard"
     # and "Project snapshot" cards above - both computed earlier in this
@@ -834,51 +847,44 @@ if st.button("Build export bundle", type="primary"):
     # stale pre-build state next to this success message. The checklist and
     # download button that used to live only inside this `if` block (and so
     # would have vanished on this rerun) are rendered below, unconditionally,
-    # from the persisted `export_last_bundle_summary` this block just wrote -
-    # see that block's own comment for why this is safe.
+    # from this session's own private state this block just wrote - see that
+    # block's own comment for why this is safe.
     st.rerun()
 
 # Render the "what's included" checklist and the download control from
-# already-persisted state, not from this button's transient scope - this is
-# what makes both survive the `st.rerun()` above (and any later rerun this
-# session, e.g. an unrelated widget interaction) instead of disappearing the
-# moment the analyst does anything else. `export_last_bundle_summary`
-# already stores everything needed to reconstruct both: the bundle's exact
-# on-disk path, so the manifest and file bytes are re-read fresh from disk
-# each render (never cached across a session in a way that could go stale),
-# never rebuilt. A missing/moved file degrades to a plain, actionable
-# message instead of a crash - the file's absence does not clear the
-# session-activity record above, which remains an honest log of what this
-# session actually did.
+# already-persisted, session-private state, not from this button's transient
+# scope - this is what makes both survive the `st.rerun()` above (and any
+# later rerun this session, e.g. an unrelated widget interaction) instead of
+# disappearing the moment the analyst does anything else. Deliberately reads
+# the bundle bytes and manifest cached in this session's own `st.session_state`
+# rather than re-opening `PROJECT_EXPORT_ROOT/<project_name>.zip` from disk on
+# every render: that shared path can be silently overwritten by a different
+# session building the same-named project in between reruns, which would
+# otherwise leak another analyst's bundle into this session's download
+# control (Codex review, PR #348, P1). A session that has lost its cached
+# bytes (e.g. after a full app/server restart) degrades to a plain,
+# actionable message instead of a crash or a stale/foreign read - the
+# session-activity record above is not erased just because the in-memory
+# bytes are gone, and stays an honest log of what this session actually did.
 if _last_bundle_build:
-    _bundle_zip_path = Path(_last_bundle_build["path"])
     _bundle_project_name = _last_bundle_build.get("project_name", project_name)
-    if _bundle_zip_path.exists():
-        try:
-            with zipfile.ZipFile(_bundle_zip_path) as _zf:
-                _persisted_manifest = json.loads(_zf.read("manifest.json"))
-        except (KeyError, OSError, zipfile.BadZipFile, json.JSONDecodeError) as e:
-            st.warning(
-                f"The bundle built this session (`{_bundle_zip_path.name}`) could "
-                f"not be read back ({e}). Build the bundle again to refresh the "
-                "checklist and download link."
-            )
-        else:
-            with st.expander("What's included in this bundle", expanded=False):
-                _render_contains_checklist(_persisted_manifest.get("contains", {}))
-            with open(_bundle_zip_path, "rb") as f:
-                st.download_button(
-                    "Download project bundle (.zip)",
-                    f,
-                    file_name=f"{_bundle_project_name}.zip",
-                    mime="application/zip",
-                    key="download_export_bundle",
-                )
+    _bundle_bytes = get_state("export_last_bundle_bytes")
+    _persisted_manifest = get_state("export_last_bundle_manifest")
+    if _bundle_bytes and _persisted_manifest:
+        with st.expander("What's included in this bundle", expanded=False):
+            _render_contains_checklist(_persisted_manifest.get("contains", {}))
+        st.download_button(
+            "Download project bundle (.zip)",
+            _bundle_bytes,
+            file_name=f"{_bundle_project_name}.zip",
+            mime="application/zip",
+            key="download_export_bundle",
+        )
     else:
         st.warning(
-            f"The bundle built this session (`{_bundle_zip_path.name}`) is no "
-            "longer present on disk. Build the bundle again to restore the "
-            "checklist and download link."
+            "The bundle built this session is no longer available in memory "
+            "(for example, after a full app restart). Build the bundle again "
+            "to restore the checklist and download link."
         )
 
 st.markdown("---")

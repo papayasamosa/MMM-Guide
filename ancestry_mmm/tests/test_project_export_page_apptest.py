@@ -628,13 +628,26 @@ def test_build_bundle_updates_project_status_and_shows_included_checklist(
     ), "the download control must remain usable across repeated reruns"
 
 
-def test_build_bundle_download_degrades_gracefully_when_the_file_is_later_removed(
+def test_build_bundle_download_degrades_gracefully_when_session_bytes_are_lost(
     monkeypatch, tmp_path
 ):
-    """If the bundle file this session built is later deleted from disk (a
-    realistic scenario in a shared temp/export directory), the page must
-    degrade to a clear, actionable message rather than crashing - and must
-    not pretend the session's build activity never happened."""
+    """Pass-4 originally re-read the bundle from
+    `PROJECT_EXPORT_ROOT/<project_name>.zip` on every rerun; Codex review on
+    PR #348 (P1) flagged that as a cross-session data leak, since that path
+    is shared filesystem state, not session-scoped - a second session
+    building the same-named project in between could silently overwrite it,
+    and this session would then read and offer *that* session's bundle for
+    download. Fixed by caching the built bytes/manifest in this session's own
+    private `st.session_state` at build time and never re-opening the shared
+    path afterwards.
+
+    This test proves the resulting degrade-gracefully behaviour for the
+    realistic case that replaces "the shared file was deleted": this
+    session's own cached bytes are gone (e.g. a full app/server restart,
+    which clears `st.session_state`) - not a crash, not a stale/foreign
+    bundle, just a clear message - while the session's own record of having
+    built a bundle is not erased just because the in-memory bytes are gone.
+    """
     export_root = tmp_path / "exports"
     artifact_root = tmp_path / "artifact-root"
 
@@ -650,23 +663,101 @@ def test_build_bundle_download_degrades_gracefully_when_the_file_is_later_remove
     build_button = next(b for b in at.button if b.label == "Build export bundle")
     build_button.click().run()
     assert not at.exception, f"export click raised: {at.exception}"
+    assert at.session_state["export_last_bundle_bytes"], (
+        "the build must cache this session's own bundle bytes privately"
+    )
 
-    bundle_path = Path(at.session_state["export_last_bundle_summary"]["path"])
-    assert bundle_path.exists()
-    bundle_path.unlink()
+    # Simulate this session's cached bytes being gone (e.g. a server
+    # restart) without touching any shared filesystem path - the bug this
+    # test now guards against was specifically about that shared path, so a
+    # correct fix must not depend on it at all any more.
+    del at.session_state["export_last_bundle_bytes"]
+    del at.session_state["export_last_bundle_manifest"]
 
     at.run()
-    assert not at.exception, f"rerun after file removal raised: {at.exception}"
+    assert not at.exception, f"rerun after losing session bytes raised: {at.exception}"
     assert not any(
         d.label == "Download project bundle (.zip)" for d in at.download_button
-    ), "no download control should be offered for a bundle no longer on disk"
-    assert any("no longer present on disk" in (w.value or "") for w in at.warning), (
-        "a clear, actionable message must explain why the download is unavailable"
-    )
+    ), "no download control should be offered once this session's bytes are gone"
+    assert any(
+        "no longer available in memory" in (w.value or "") for w in at.warning
+    ), "a clear, actionable message must explain why the download is unavailable"
     # The session's own record of having built a bundle is not erased just
-    # because the file was later removed - it stays an honest log.
+    # because the in-memory bytes were lost - it stays an honest log.
     assert any("Last bundle built this session" in (c.value or "") for c in at.caption)
     assert any("proj-deleted" in (c.value or "") for c in at.caption)
+
+
+def test_build_bundle_download_is_isolated_from_a_shared_project_name_being_overwritten(
+    monkeypatch, tmp_path
+):
+    """Codex review on PR #348 (P1): reproduce the actual multi-session leak
+    scenario directly, not just the degrade-gracefully path. Two sessions
+    build a project under the same name (a realistic default/duplicate
+    project name in a multi-user deployment); the second session's build
+    overwrites the first session's file on the shared
+    `PROJECT_EXPORT_ROOT/<project_name>.zip` path. The first session's next
+    rerun must still offer *its own* bundle for download, never the second
+    session's, because it must not depend on that shared path at all any
+    more."""
+    export_root = tmp_path / "exports"
+    artifact_root = tmp_path / "artifact-root"
+
+    import ancestry_mmm.utils as utils_pkg
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(utils_pkg, "PROJECT_EXPORT_ROOT", export_root)
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", artifact_root)
+
+    session_a = AppTest.from_file(str(PAGE), default_timeout=60)
+    session_a.run()
+    session_a.session_state["project_name"] = "shared-name"
+    session_a.session_state["outcome_data"] = {"outcome": "session-a-marker"}
+    build_a = next(b for b in session_a.button if b.label == "Build export bundle")
+    build_a.click().run()
+    assert not session_a.exception, (
+        f"session A export click raised: {session_a.exception}"
+    )
+    bytes_a = session_a.session_state["export_last_bundle_bytes"]
+
+    # A second, independent session (a different analyst, or the same
+    # analyst in another tab) builds a project under the identical name,
+    # overwriting the shared on-disk file session A's old code would have
+    # re-read from.
+    session_b = AppTest.from_file(str(PAGE), default_timeout=60)
+    session_b.run()
+    session_b.session_state["project_name"] = "shared-name"
+    session_b.session_state["outcome_data"] = {"outcome": "session-b-marker"}
+    build_b = next(b for b in session_b.button if b.label == "Build export bundle")
+    build_b.click().run()
+    assert not session_b.exception, (
+        f"session B export click raised: {session_b.exception}"
+    )
+    bytes_b = session_b.session_state["export_last_bundle_bytes"]
+    assert bytes_a != bytes_b, (
+        "test setup sanity check: the two sessions' bundles must actually differ"
+    )
+
+    # Session A's next, unrelated rerun (its actual regression-fix scenario)
+    # must still serve session A's own bytes, not session B's, even though
+    # the shared filesystem path now holds session B's file.
+    session_a.run()
+    assert not session_a.exception, (
+        f"session A follow-up rerun raised: {session_a.exception}"
+    )
+    assert session_a.session_state["export_last_bundle_bytes"] == bytes_a, (
+        "session A's cached bundle bytes must never be affected by another "
+        "session's build under the same project name"
+    )
+    assert any(
+        d.label == "Download project bundle (.zip)" for d in session_a.download_button
+    ), "session A's download control must still be present after its follow-up rerun"
+    # `st.download_button`'s underlying bytes are not introspectable via
+    # AppTest's DownloadButton element (it exposes only label/help/value),
+    # so the strongest available proof that session A is offered its own
+    # bundle - not session B's, silently substituted via the shared on-disk
+    # path - is that the exact session-private state the widget is built
+    # from (asserted above) is untouched by session B's build.
 
 
 def test_import_bundle_updates_project_status_and_shows_included_checklist(
