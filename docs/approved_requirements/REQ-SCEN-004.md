@@ -150,3 +150,42 @@ Modelling
 ## Approval date
 
 2026-08-18
+
+
+## Addendum, 2026-08-30 (Phase E): tractability/objective/posterior-awareness resolved (Decision 16)
+
+This record's own "Explicitly excluded" section tracked "the
+optimisation objective definition" and "the evaluation/search
+tractability strategy" via `docs/wp6_sequential_optimisation_decision_
+package.md`. The user's 2026-08-29 brief, confirmed in-session
+2026-08-30, explicitly delegates this to benchmarking. This addendum
+records the resulting resolution: full decision record, including the
+actual benchmark methodology and measured figures, in
+`docs/sequential_optimisation_tractability_decision_record.md`;
+implementation in the new
+`ancestry_mmm/core/sequential_optimisation_tractability.py`.
+
+**Resolved:** the tractability strategy (T1, direct replay of the exact
+sequential kernel at point-estimate parameters, refined to call the raw
+numerical kernel rather than the full governance-wrapper function
+inside the tight search loop) - selected on real, in-session benchmark
+evidence (0.3-0.5 ms per call at realistic plan sizes, extrapolating to
+under 8 seconds for a demanding 100-iteration SLSQP run at 10 channels
+across a 52-week plan window, and a gradient-smoothness check finding
+no numerical noise) that directly contradicts this record's own
+previously-hypothesised tractability concern; the objective definition
+(O1, plan-window total - the direct sequential analogue of steady-
+state's existing objective, requiring no new business input); and that
+the search itself is not posterior-aware (posterior uncertainty for the
+final chosen plan is computed once, as a separate opt-in step,
+mirroring the manual tab's own already-established pattern).
+
+**Still not resolved:** the actual rewiring of `core.optimization.py`'s
+SLSQP call sites to use the sequential kernel in place of the existing
+steady-state objective - a separate, substantial engineering
+integration (bounds/constraints translation, `REQ-OPT-001`'s objective-
+kind vocabulary wiring) requiring its own end-to-end validation, not
+attempted here. `core.optimization.py` remains completely unchanged;
+sequential-weekly optimisation stays out of the production contract
+exactly as this record's own text already states, pending that
+integration.

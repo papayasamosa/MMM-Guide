@@ -166,3 +166,45 @@ this package does not propose reopening that.
 **Status:** Decision-support package only. `REQ-SCEN-004` records the
 target-state requirement and keeps this capability explicitly out of
 the current production contract pending review of this package.
+
+
+## Update, 2026-08-30: tractability/objective/posterior-awareness selection delegated by later approved instructions; resolved
+
+The user's "Post-UI/UX Implementation Instructions: Approved Business
+Decisions" brief (2026-08-29), a later human instruction, explicitly
+established a source-of-truth order placing the brief's own approved
+decisions and instructions above an older decision package such as this
+one, and explicitly authorised (2026-08-30, in-session confirmation)
+proceeding on this package's T1-T4/O1-O4/posterior-awareness
+candidates, specifically asking for benchmarking: "Benchmark reasonable
+approaches and choose one that preserves the required semantics." This
+supersedes this package's original "not chosen by the coding agent"
+reservation.
+
+This package's own text explicitly named the missing evidence this
+required ("Candidate T1... would need a real timing measurement...
+this package does not supply that measurement"). That measurement was
+performed in-session: a benchmark of `core.sequential_simulation.
+simulate_sequential_outcomes` at realistic multi-channel, multi-month
+plan sizes found per-call cost of 0.3-0.5 ms, extrapolating to under 8
+seconds total for a demanding 100-iteration SLSQP run at 10 channels
+across a 52-week plan window - directly contradicting this package's
+own hypothesis that T1 "may be too slow for interactive use." A
+finite-difference gradient-smoothness check also directly contradicted
+this package's separate hypothesis about numerical noise in the
+adstock recursion's gradient. Both benchmark methods and full results
+are recorded in
+`docs/sequential_optimisation_tractability_decision_record.md`, along
+with the resulting resolution: T1 (direct replay of the exact kernel at
+point-estimate parameters, refined to call the raw numerical kernel
+rather than the full governance-wrapper function inside the tight
+loop), O1 (plan-window total, the direct sequential analogue of
+steady-state's existing objective, requiring no new business input),
+and a non-posterior-aware search (posterior uncertainty computed once,
+opt-in, for the final chosen plan only - mirroring the manual tab's own
+already-established pattern this package's own text names). This
+package's original text above is preserved as history and remains an
+accurate record of the state of the decision before 2026-08-30 - it is
+not rewritten, only superseded for the specific choices this update
+describes. The full `core.optimization` integration itself remains a
+separate, unimplemented follow-up.
