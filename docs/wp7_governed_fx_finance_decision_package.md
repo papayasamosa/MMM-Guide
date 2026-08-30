@@ -221,3 +221,35 @@ Finance where the choice has a cost or compliance implication).
 
 Decision package recorded; no decision made. This workstream stops here
 pending explicit Finance sign-off on the items above.
+
+## Update, 2026-08-30: items 1 and 6 partially resolved by business-decision brief
+
+The business-decision brief "Post-UI/UX Implementation Instructions:
+Approved Business Decisions" (Decision 13) resolves two items above at
+the contract level. This update records the resolution without rewriting
+the original analysis, which remains valid for every other item.
+
+- **Item 1 (is USD the group reporting currency?): resolved — yes**, for
+  the Finance constant-dollar default method specifically. The brief's
+  own examples (GBP→USD, AUD→USD, other local currencies→USD) confirm
+  USD as the target currency whenever `finance_constant_dollar_annual`
+  (see `REQ-FX-003`'s 2026-08-30 addendum) is used. This does not by
+  itself amend `REQ-FX-001`'s group-currency field for every purpose —
+  a purpose not using this default method is not addressed by this
+  resolution.
+- **Item 6 (default historical conversion method for weekly spend):
+  resolved, in a direction not among this package's original three
+  options** — not spend-weighted, arithmetic-average, or month-end, but
+  a Finance-supplied annual constant-dollar rate held uniform across a
+  financial year (`finance_constant_dollar_annual`, `REQ-FX-003`'s
+  2026-08-30 addendum), approved as the default specifically so MMM
+  outputs stay consistent with Finance's own reporting.
+
+**Items 2, 3, 4, 5, 7, 8, 9, 10, 11, and 12 remain fully open**, exactly
+as originally recorded above. In particular, item 7 (budget-planning
+rate) and item 8 (constant-currency basis for year-on-year decomposition)
+are related to, but not resolved by, this update's annual-default
+approval — the brief's decision is about historical/reporting
+consistency with Finance, not a selection of the budget-planning rate or
+the constant-currency comparison basis. No actual Finance rate value is
+supplied or invented by this update.

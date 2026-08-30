@@ -110,3 +110,21 @@ rate-set selection remain Finance-owned).
 ## Approval date
 
 2026-08-27
+
+## Addendum, 2026-08-30: `annual` added to the rate-frequency vocabulary
+
+The business-decision brief "Post-UI/UX Implementation Instructions:
+Approved Business Decisions" (Decision 13) approves a Finance-supplied
+**annual** exchange rate per financial year as the default governed FX
+method (see `REQ-FX-003`'s 2026-08-30 addendum for the full resolution).
+This record's §1 rate-frequency field was a closed `daily`/`weekly`/
+`monthly` vocabulary with no value able to represent "one rate for an
+entire financial year." This addendum extends that closed vocabulary
+with a fourth value, **`annual`**, scoped by an explicit `financial_year`
+identifier (the addendum's own `rate date` field for an annual record is
+the financial year's start date; `end_date` on the owning `FXRateSet` is
+the financial year's end date) — no other field on the existing schema
+changes. This is a contract-shape decision only; no actual annual rate
+values are invented or supplied by this addendum (the real Finance rate
+table remains a separate, external, Finance-supplied input per this
+record's existing "Explicitly excluded" section).
