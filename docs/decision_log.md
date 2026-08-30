@@ -8544,3 +8544,156 @@ classification in `docs/specification_authority.md` is left unchanged
 by this PR (a full reclassification review across every sub-requirement
 was judged out of scope for an implementation PR and is left as a
 follow-up).
+
+**Date:** 2026-08-30
+**Decision:** Approve, and record in governed form, all 19 business
+decisions supplied in "Post-UI/UX Implementation Instructions: Approved
+Business Decisions" (decision date 2026-08-29, following the merged
+UI/UX PR #348 at `8dbab390`). This is Phase A ("Governance and
+contracts") of the six-phase implementation order the brief itself
+specifies (§7): recording every decision, correcting Family
+History outcome/LTR definitions, correcting Search taxonomy and SEO
+semantics, removing/confirming-absent stale SEO date/cost assumptions,
+and defining/updating contracts for FX, event types, future assumptions,
+and optimiser constraints — all at the contract/documentation level
+only. Phases B-E (behavioural/statistical implementation) and Phase F
+(deferred PathMC reconsideration) are explicitly out of scope for this
+pass and are left as a dependency-ordered plan for future work.
+
+Reconnaissance (full text of `docs/specification_authority.md` and
+targeted search of `docs/decision_log.md`'s 8,500+ lines, a governance/
+REQ/PRD audit, and a codebase audit) found this repository already
+carries substantial approved-but-blocked governance for most of these
+19 areas — `REQ-OUT-001`/`002`, `REQ-NBT-001`/`002`, `REQ-SEARCH-001`
+through `005`, `REQ-SEO-001`, `REQ-FX-001` through `006`, `REQ-CAP-001`,
+`REQ-BASELINE-001`, `REQ-FUTURE-001`, `REQ-EVENT-001`/`002`,
+`REQ-EXPMODE-001`, `REQ-CALIB-001`, `REQ-LATENT-001`,
+`REQ-SCENGINE-001`, and `REQ-SCEN-001` through `004` — each already a
+target-state contract explicitly blocked on one or more named decision
+packages (`docs/wp1_search_seo_granularity_decision_package.md`,
+`docs/wp2_named_event_statistical_method_decision_package.md`,
+`docs/wp6_sequential_optimisation_decision_package.md`,
+`docs/wp7_governed_fx_finance_decision_package.md`,
+`docs/wp9_future_assumption_bundle_decision_package.md`,
+`docs/wp10_time_varying_baseline_decision_package.md`,
+`docs/wp11_capacity_cap_semantics_decision_package.md`,
+`docs/wp_structural_causal_engine_decision_package.md`). This business-
+decision brief resolves a specific, named open item in most of those
+packages — see each package's own updated status section and each new/
+amended `REQ-*.md` record below for exactly which item and how. Two
+areas have no existing governed requirement at all — optimiser
+objective/constraint vocabulary (Decision 16) and per-channel evidence-
+based data-support classification (Decision 17) — both genuinely new
+territory, addressed by new zero-implementation target-state records
+(`REQ-OPT-001`, `REQ-DATASUPPORT-001`) mirroring this repository's
+established pattern for exactly this situation (`REQ-SCEN-004`,
+`REQ-FUTURE-001`, `REQ-BASELINE-001`, `REQ-CAP-001`).
+
+The repo-wide stale-assumption sweep the brief requires (36-month FH
+LTR, £5,000/month SEO cost, 28 August 2023 as an SEO modelling date, and
+GSA/NBT aliasing) found **no active occurrence of any of the first
+three** anywhere in the repository (code, tests, docs, or fixtures) —
+these are non-issues in the current codebase, not corrections. GSA and
+Net Bill Through are already correctly non-aliased governed outcome
+types (`REQ-OUT-001`, `REQ-NBT-001`/`002`); legacy `fh_gsa_*` identifiers
+already survive only as tested migration aliases. Regression tests are
+still added (see Impact) to guard each of these four invariants against
+future reintroduction, since the brief requires verification by search
+regardless of current cleanliness, and per the repository's "no silent
+fallbacks" discipline.
+
+**Reason:** The brief itself states the purpose of this phase: "make the
+source of truth coherent before major model changes." Recording all 19
+decisions now — resolving named open items in existing decision packages
+where the decision text does so, and creating minimal new target-state
+contracts only where no governed record exists at all — lets Phases B
+through E proceed against a coherent, rediscoverable authority instead of
+re-deriving these business calls from the instructions document each
+time a future work package starts.
+
+**Alternatives considered:** Implementing Phases B-E's behavioural/
+statistical changes directly in this pass (rejected — the brief
+explicitly prohibits landing all 19 decisions in one PR and explicitly
+scopes this pass to governance/contracts only); treating the already-
+approved-but-blocked REQ records as sufficient without recording this
+brief's own resolutions (rejected — several of those records' own text
+explicitly defers exactly the question this brief answers, e.g. SEO's
+causal role, the FX default method, and the Search taxonomy content;
+leaving them unresolved would force a future agent to re-derive the same
+answer from the instructions document, which the brief explicitly warns
+against); inventing numeric thresholds for Decision 16's constraint
+types or Decision 17's data-support classification to "finish" those
+areas now (rejected — both the brief and this repository's established
+practice, most recently WP2.11's explicit refusal to invent an
+identifiability threshold while real data is under review, require an
+evidence-gathering decision package before any number is approved, not
+an invented default).
+
+**Impact:** New governed requirement records: `docs/approved_
+requirements/REQ-OUT-003.md` (Decision 1 — 48-month FH LTR horizon,
+120-day DNA cross-sell window), `docs/approved_requirements/
+REQ-OPT-001.md` (Decisions 16/18 — optimiser objective-kind and
+constraint-kind vocabulary, zero implementation), `docs/approved_
+requirements/REQ-DATASUPPORT-001.md` (Decision 17 — per-channel
+evidence-based data-support classification, zero implementation).
+Addenda (dated, appended, nothing rewritten) to: `REQ-SEARCH-004.md`
+(Decisions 2/4 — minimum taxonomy content), `REQ-SEO-001.md` (Decisions
+5/6/7/8 — metric type, causal role, no spend-ROI, date-meaning
+confirmation), `REQ-FX-002.md`/`REQ-FX-003.md` (Decision 13 — Finance
+constant-dollar default, annual-frequency schema resolution),
+`REQ-EVENT-001.md` (Decision 12 — event-family-to-treatment mapping),
+`REQ-FUTURE-001.md` (Decision 14 — manual-entry-reduction principle and
+the WP2G reconciliation task), `REQ-CAP-001.md` (Decision 18 —
+generalisation direction; also a short Decision 10 cross-reference in
+`REQ-LATENT-001.md`), `REQ-LATENT-001.md` (Decisions 9/10 — Google
+Trends as the approved anchor source; capacity-cap principle
+reaffirmed), `REQ-SCENGINE-001.md` (Decision 19 — PathMC deferral).
+Corresponding status updates to `docs/wp1_search_seo_granularity_
+decision_package.md` (D1, D2, D3 marked resolved by this brief; D4-D7
+remain open), `docs/wp7_governed_fx_finance_decision_package.md` (items
+1 and 6 marked resolved; items 2-5/7-12 remain open), `docs/wp2_
+named_event_statistical_method_decision_package.md` (dimension 5's
+qualitative direction marked resolved; dimensions 1-4/6/7 and the
+numeric lead/lag values remain open), and `docs/wp_structural_causal_
+engine_decision_package.md` (D1 marked resolved as D1-B).
+
+Decisions 3 (SEO shorter date range) and 11 (experiments inform priors/
+calibration) required no REQ-file change: Decision 3 is a direct
+instance of `REQ-COVERAGE-001`'s already-approved "missing is not zero,
+never truncate to the narrowest common window" invariant; Decision 11
+reaffirms `REQ-EXPMODE-001`/`REQ-CALIB-001`'s already-approved
+evidence-mode architecture without itself supplying the missing
+applicability-metadata fields or calibration mechanism, both explicitly
+scoped to Phase C. Decision 15 (evidence-based time-varying baseline
+selection) likewise required no REQ-file change: it approves a
+*selection methodology* (out-of-sample validation, PPC, residual
+autocorrelation, stability, identifiability) for `REQ-BASELINE-001`'s
+existing three-candidate decision package to apply when it is reviewed
+in Phase C, rather than selecting a candidate itself.
+
+New regression tests (see each REQ record's own "Required tests"
+section) guarding: no 36-month FH LTR reference, no £5,000 SEO cost
+reference, no 28-August-2023 SEO-modelling-meaning, GSA/NBT
+non-aliasing, no literal reverse-adstock implementation, and no PathMC
+runtime dependency — all in active code/current documentation.
+`docs/approved_requirements/index.json` updated with every new/amended
+record's entry. No `core`, `application`, or `pages` runtime code
+changes — this is a documentation/contract/test-only pass, per the
+brief's own explicit Phase A scope. The full 19-decision dependency-
+ordered plan for Phases B through F is recorded in
+`D:\Ancestry-MMM\logs\post_ux_business_decisions_2026-08-30.md` (outside
+the repository, per the task's logging convention) for the next work
+package to consume without rediscovery.
+
+**Owner:** Modelling / Platform engineering, implemented autonomously
+per the business-decision brief's explicit pre-authorisation for
+phase-by-phase autonomous execution.
+
+**Status:** Phase A governance/contract recording complete for all 19
+decisions, landed as ten separate, small, reviewable commits (see each
+`REQ-*.md` record's own approval date and this entry's Impact section
+for the full list). `docs/specification_authority.md`'s gap table and
+`docs/approved_requirements/README.md`'s category list are updated in a
+final consolidation commit alongside the full quality-gate run
+(ruff/mypy/tests). Phases B through F remain future, separately-scoped
+work per the dependency plan.

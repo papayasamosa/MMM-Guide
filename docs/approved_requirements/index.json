@@ -132,6 +132,29 @@
       ]
     },
     {
+      "requirement_id": "REQ-OPT-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-OPT-001.md",
+      "affected_modules": [
+        "ancestry_mmm/core/optimization.py",
+        "ancestry_mmm/pages/08_Scenario_Planner.py"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_req_opt_001_optimizer_vocabulary.py::test_objective_kind_vocabulary_is_closed_and_named",
+        "ancestry_mmm/tests/test_req_opt_001_optimizer_vocabulary.py::test_constraint_kind_vocabulary_extends_existing_five_kinds",
+        "ancestry_mmm/tests/test_req_opt_001_optimizer_vocabulary.py::test_seo_excluded_from_cost_based_objectives",
+        "ancestry_mmm/tests/test_req_opt_001_optimizer_vocabulary.py::test_req_opt_001_does_not_invent_numeric_defaults",
+        "ancestry_mmm/tests/test_req_opt_001_optimizer_vocabulary.py::test_req_opt_001_indexed"
+      ]
+    },
+    {
       "requirement_id": "REQ-USE-001",
       "status": "approved_for_implementation",
       "record_path": "docs/approved_requirements/REQ-USE-001.md",
@@ -775,7 +798,11 @@
         "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateLatentStateIdentification::test_candidate_a_fit_with_no_declaration_is_not_identified",
         "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateLatentStateIdentification::test_candidate_a_fit_with_declaration_but_no_chain_draws_is_review_required",
         "ancestry_mmm/tests/test_diagnostics_artefact.py::TestEvaluateLatentStateIdentification::test_section_round_trips_and_is_fingerprinted",
-        "ancestry_mmm/tests/test_diagnostics_wp2_evidence_apptest.py::test_scorecard_reports_not_applicable_latent_state_and_experiment_sections"
+        "ancestry_mmm/tests/test_diagnostics_wp2_evidence_apptest.py::test_scorecard_reports_not_applicable_latent_state_and_experiment_sections",
+        "ancestry_mmm/tests/test_req_latent_001_decisions_9_10.py::test_req_latent_001_approves_google_trends_as_anchor_source",
+        "ancestry_mmm/tests/test_req_latent_001_decisions_9_10.py::test_req_latent_001_forbids_absolute_search_count_interpretation",
+        "ancestry_mmm/tests/test_req_latent_001_decisions_9_10.py::test_req_latent_001_does_not_resolve_full_md_021",
+        "ancestry_mmm/tests/test_req_latent_001_decisions_9_10.py::test_req_latent_001_indexed"
       ]
     },
     {
@@ -887,7 +914,10 @@
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
-        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_req_future_001_decision_14.py::test_req_future_001_addendum_records_wp2g_reconciliation",
+        "ancestry_mmm/tests/test_req_future_001_decision_14.py::test_req_future_001_addendum_does_not_change_shipped_ui",
+        "ancestry_mmm/tests/test_req_future_001_decision_14.py::test_req_future_001_indexed"
       ]
     },
     {
@@ -925,7 +955,11 @@
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
-        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable"
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_req_cap_001_decision_18.py::test_req_cap_001_addendum_does_not_select_g1_over_g3",
+        "ancestry_mmm/tests/test_req_cap_001_decision_18.py::test_req_cap_001_addendum_leaves_cap_hit_vocabulary_open",
+        "ancestry_mmm/tests/test_req_cap_001_decision_18.py::test_req_cap_001_addendum_cross_references_req_opt_001",
+        "ancestry_mmm/tests/test_req_cap_001_decision_18.py::test_req_cap_001_indexed"
       ]
     },
     {
@@ -966,7 +1000,11 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
         "ancestry_mmm/tests/test_structural_causal_authority_reconciliation.py::TestStructuralCausalEngineOverlayReconciled::test_req_scengine_001_indexed_and_classified_incomplete",
-        "ancestry_mmm/tests/test_structural_causal_authority_reconciliation.py::TestStructuralCausalEngineOverlayReconciled::test_decision_package_referenced_by_req_scengine_001"
+        "ancestry_mmm/tests/test_structural_causal_authority_reconciliation.py::TestStructuralCausalEngineOverlayReconciled::test_decision_package_referenced_by_req_scengine_001",
+        "ancestry_mmm/tests/test_req_scengine_001_decision_19.py::test_req_scengine_001_addendum_resolves_d1_as_d1_b",
+        "ancestry_mmm/tests/test_req_scengine_001_decision_19.py::test_wp_package_records_d1_resolution",
+        "ancestry_mmm/tests/test_req_scengine_001_decision_19.py::test_no_pathmc_runtime_dependency",
+        "ancestry_mmm/tests/test_req_scengine_001_decision_19.py::test_req_scengine_001_indexed"
       ]
     },
     {
@@ -1064,7 +1102,13 @@
         "ancestry_mmm/tests/test_persistence.py::TestResolveImportedNamedEvents::test_factual_dates_survive_the_resolver_verbatim",
         "ancestry_mmm/tests/test_persistence.py::TestResolveImportedNamedEvents::test_future_schema_version_is_quarantined",
         "ancestry_mmm/tests/test_persistence.py::TestResolveImportedNamedEvents::test_bundle_without_registry_still_imports_with_no_warnings",
-        "ancestry_mmm/tests/test_named_event_registry_apptest.py::test_adopting_a_row_registers_version_1_with_factual_dates"
+        "ancestry_mmm/tests/test_named_event_registry_apptest.py::test_adopting_a_row_registers_version_1_with_factual_dates",
+        "ancestry_mmm/tests/test_req_event_001_decision_12.py::test_req_event_001_addendum_maps_all_three_families",
+        "ancestry_mmm/tests/test_req_event_001_decision_12.py::test_req_event_001_addendum_does_not_move_factual_dates",
+        "ancestry_mmm/tests/test_req_event_001_decision_12.py::test_req_event_001_addendum_does_not_select_response_structure",
+        "ancestry_mmm/tests/test_req_event_001_decision_12.py::test_no_reverse_adstock_implemented_in_named_events_module",
+        "ancestry_mmm/tests/test_req_event_001_decision_12.py::test_wp2_package_records_partial_dimension_5_resolution",
+        "ancestry_mmm/tests/test_req_event_001_decision_12.py::test_req_event_001_indexed"
       ]
     },
     {
@@ -1178,7 +1222,9 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
-        "ancestry_mmm/tests/test_governed_fx_authority_reconciliation.py::TestGovernedFXOverlayReconciled::test_req_fx_002_indexed_and_classified_incomplete"
+        "ancestry_mmm/tests/test_governed_fx_authority_reconciliation.py::TestGovernedFXOverlayReconciled::test_req_fx_002_indexed_and_classified_incomplete",
+        "ancestry_mmm/tests/test_req_fx_decision_13.py::test_req_fx_002_adds_annual_frequency",
+        "ancestry_mmm/tests/test_req_fx_decision_13.py::test_req_fx_002_and_003_indexed"
       ]
     },
     {
@@ -1198,7 +1244,11 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
-        "ancestry_mmm/tests/test_governed_fx_authority_reconciliation.py::TestGovernedFXOverlayReconciled::test_req_fx_003_indexed_and_classified_incomplete"
+        "ancestry_mmm/tests/test_governed_fx_authority_reconciliation.py::TestGovernedFXOverlayReconciled::test_req_fx_003_indexed_and_classified_incomplete",
+        "ancestry_mmm/tests/test_req_fx_decision_13.py::test_req_fx_003_adds_finance_constant_dollar_annual_method",
+        "ancestry_mmm/tests/test_req_fx_decision_13.py::test_req_fx_003_does_not_invent_actual_rate_values",
+        "ancestry_mmm/tests/test_req_fx_decision_13.py::test_req_fx_003_addendum_leaves_budget_and_constant_currency_basis_open",
+        "ancestry_mmm/tests/test_req_fx_decision_13.py::test_wp7_package_records_items_1_and_6_resolved"
       ]
     },
     {
@@ -1281,7 +1331,12 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
         "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_search_004_indexed_and_classified_incomplete",
-        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_all_three_records_reference_the_decision_package"
+        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_all_three_records_reference_the_decision_package",
+        "ancestry_mmm/tests/test_req_search_004_taxonomy_addendum.py::test_req_search_004_addendum_names_brand_non_brand_taxonomy",
+        "ancestry_mmm/tests/test_req_search_004_taxonomy_addendum.py::test_req_search_004_addendum_treats_platform_as_orthogonal_axis",
+        "ancestry_mmm/tests/test_req_search_004_taxonomy_addendum.py::test_req_search_004_addendum_excludes_pmax_demand_gen_youtube",
+        "ancestry_mmm/tests/test_req_search_004_taxonomy_addendum.py::test_req_search_004_addendum_does_not_invent_d4_threshold",
+        "ancestry_mmm/tests/test_req_search_004_taxonomy_addendum.py::test_req_search_004_indexed"
       ]
     },
     {
@@ -1326,7 +1381,12 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
         "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_seo_001_indexed_and_classified_incomplete",
         "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_all_three_records_reference_the_decision_package",
-        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_seo_001_defers_causal_role"
+        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_seo_001_defers_causal_role",
+        "ancestry_mmm/tests/test_req_seo_001_decisions_5_6_7_8.py::test_no_seo_5k_month_cost_assumption_in_active_code_or_docs",
+        "ancestry_mmm/tests/test_req_seo_001_decisions_5_6_7_8.py::test_no_28_august_2023_seo_modelling_meaning_in_active_code_or_docs",
+        "ancestry_mmm/tests/test_req_seo_001_decisions_5_6_7_8.py::test_req_seo_001_addendum_resolves_causal_role_and_metric_type",
+        "ancestry_mmm/tests/test_req_seo_001_decisions_5_6_7_8.py::test_wp1_package_records_d1_d2_d3_resolved_d4_d7_open",
+        "ancestry_mmm/tests/test_req_seo_001_decisions_5_6_7_8.py::test_req_seo_001_indexed"
       ]
     },
     {
@@ -1461,6 +1521,52 @@
         "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_005_indexed_and_classified_incomplete",
         "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_req_econ_005_resolves_d5_without_a_residual",
         "ancestry_mmm/tests/test_outcome_valuation_roi_authority_reconciliation.py::TestOutcomeValuationAuthority::test_design_note_proves_reconciliation_is_order_independent"
+      ]
+    },
+    {
+      "requirement_id": "REQ-OUT-003",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-OUT-003.md",
+      "affected_modules": [
+        "ancestry_mmm/core/outcome_valuation.py",
+        "ancestry_mmm/core/planning/value.py",
+        "ancestry_mmm/core/net_billthrough.py"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_req_out_003_stale_assumptions.py::test_no_36_month_fh_ltr_reference_in_active_code_or_docs",
+        "ancestry_mmm/tests/test_req_out_003_stale_assumptions.py::test_no_fourth_fh_segment_defined",
+        "ancestry_mmm/tests/test_req_out_003_stale_assumptions.py::test_gsa_and_net_bill_through_remain_distinct_metric_keys",
+        "ancestry_mmm/tests/test_req_out_003_stale_assumptions.py::test_req_out_003_indexed_and_classified"
+      ]
+    },
+    {
+      "requirement_id": "REQ-DATASUPPORT-001",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-DATASUPPORT-001.md",
+      "affected_modules": [
+        "ancestry_mmm/core/prefit_identifiability.py",
+        "ancestry_mmm/core/coverage.py",
+        "ancestry_mmm/core/market_data_capability.py",
+        "ancestry_mmm/core/identification_diagnostics.py"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_req_datasupport_001.py::test_three_state_classification_named_and_no_threshold_invented",
+        "ancestry_mmm/tests/test_req_datasupport_001.py::test_all_twelve_evidence_dimensions_named",
+        "ancestry_mmm/tests/test_req_datasupport_001.py::test_req_datasupport_001_indexed"
       ]
     }
   ]
