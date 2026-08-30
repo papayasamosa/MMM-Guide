@@ -1568,6 +1568,39 @@
         "ancestry_mmm/tests/test_req_datasupport_001.py::test_all_twelve_evidence_dimensions_named",
         "ancestry_mmm/tests/test_req_datasupport_001.py::test_req_datasupport_001_indexed"
       ]
+    },
+    {
+      "requirement_id": "REQ-NBT-003",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-NBT-003.md",
+      "affected_modules": [
+        "ancestry_mmm/core/fh_subscription_events.py",
+        "ancestry_mmm/core/outcomes.py",
+        "ancestry_mmm/core/outcome_valuation.py",
+        "ancestry_mmm/pages/07_Results_Curve_Bank.py"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_fh_subscription_events.py::TestGsaDate::test_hard_offer_counted_same_day_as_signup",
+        "ancestry_mmm/tests/test_fh_subscription_events.py::TestGsaDate::test_successful_free_trial_counted_on_later_gsa_date",
+        "ancestry_mmm/tests/test_fh_subscription_events.py::TestGsaDate::test_unsuccessful_trial_excluded_from_gsa",
+        "ancestry_mmm/tests/test_fh_subscription_events.py::TestNetBillthroughDate::test_successful_free_trial_pulled_back_to_signup_date",
+        "ancestry_mmm/tests/test_fh_subscription_events.py::TestNetBillthroughDate::test_refunded_subscriber_excluded_from_nbt",
+        "ancestry_mmm/tests/test_fh_subscription_events.py::TestSegmentDerivation::test_new_winback_and_dna_cross_sell_remain_distinct",
+        "ancestry_mmm/tests/test_fh_subscription_events.py::TestSegmentDerivation::test_dna_cross_sell_derivation_uses_120_day_window",
+        "ancestry_mmm/tests/test_fh_subscription_events.py::TestSegmentDerivation::test_derivation_fails_closed_when_ambiguous",
+        "ancestry_mmm/tests/test_fh_subscription_events.py::TestComputeFhOutcomes::test_gsa_and_nbt_cannot_be_silently_swapped",
+        "ancestry_mmm/tests/test_fh_subscription_events.py::TestFhLtrHorizon::test_48_month_horizon_constant",
+        "ancestry_mmm/tests/test_outcome_valuation.py::TestRecordConstruction::test_fh_ltr_record_requires_48_month_horizon",
+        "ancestry_mmm/tests/test_outcome_valuation.py::TestRecordConstruction::test_fh_ltr_record_rejects_a_different_stale_horizon",
+        "ancestry_mmm/tests/test_outcome_valuation.py::TestRecordConstruction::test_dna_revenue_record_must_not_carry_a_horizon"
+      ]
     }
   ]
 }

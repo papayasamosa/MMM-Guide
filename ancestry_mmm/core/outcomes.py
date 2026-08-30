@@ -137,6 +137,34 @@ METRIC_KEY_DNA_KIT_SALE_GIFTED_ACTIVATED = "dna_kit_sale_gifted_activated"
 METRIC_KEY_DNA_KIT_SALE_UNACTIVATED = "dna_kit_sale_unactivated"
 METRIC_KEY_DNA_KIT_SALE_TOTAL = "dna_kit_sale_total"
 
+# ---------------------------------------------------------------------------
+# REQ-OUT-003: approved governed numeric facts (Decision 1, 2026-08-30).
+#
+# Both figures are first concrete numbers - a repository-wide audit at
+# approval time found zero prior reference to either. `FH_LTR_HORIZON_MONTHS`
+# is the approved Family History lifetime-value horizon that any future
+# LTR/valuation calculation, label, or governed input must use and must not
+# silently default away from (see `core.outcome_valuation`'s
+# `WeeklyOutcomeValuationRecord.horizon_months`). `DNA_CROSS_SELL_WINDOW_DAYS`
+# is the approved qualifying window for the DNA Cross-sell segment - only
+# used when a segment genuinely needs deriving from raw dates; a source
+# system's own supplied segment classification is always authoritative and
+# is never independently re-derived against this window (see
+# `core.fh_subscription_events.derive_fh_segment`).
+# ---------------------------------------------------------------------------
+FH_LTR_HORIZON_MONTHS = 48
+DNA_CROSS_SELL_WINDOW_DAYS = 120
+
+# The three approved Family History segments (REQ-OUT-003 §3) - never a
+# fourth. Matches the existing canonical segment-name spelling used by
+# `core.schema.DEFAULT_SEGMENTS`/`core.simulation.DEFAULT_SEGMENTS`
+# ("DNA_CrossSell", not "DNA Cross-sell") so this module's segment vocabulary
+# and the pre-existing default-segment lists never silently diverge.
+FH_SEGMENT_NEW = "New"
+FH_SEGMENT_WINBACK = "Winback"
+FH_SEGMENT_DNA_CROSS_SELL = "DNA_CrossSell"
+FH_SEGMENTS = (FH_SEGMENT_NEW, FH_SEGMENT_WINBACK, FH_SEGMENT_DNA_CROSS_SELL)
+
 # Explicit migration aliases for the historical UK source registry.  The raw
 # workbook continues to use these source columns, but they are not canonical
 # outcome identities.  Callers must opt into this migration at a governed

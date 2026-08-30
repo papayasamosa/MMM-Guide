@@ -34,7 +34,11 @@ from .coverage import (
     STATE_UNAVAILABLE_SOURCE,
     STATE_UNKNOWN,
 )
-from .outcomes import SEGMENT_DIMENSIONS, SEGMENT_DIMENSION_UNSPECIFIED
+from .outcomes import (
+    FH_LTR_HORIZON_MONTHS,
+    SEGMENT_DIMENSIONS,
+    SEGMENT_DIMENSION_UNSPECIFIED,
+)
 
 VALUATION_KIND_FH_LTR = "fh_ltr"
 VALUATION_KIND_DNA_REVENUE = "dna_revenue"
@@ -80,6 +84,17 @@ class WeeklyOutcomeValuationRecord:
     present and is never inferred from ``market`` (Requirement 7).
     ``quality_status`` uses the existing `core.coverage` canonical
     missingness vocabulary rather than a bespoke boolean (Requirement 8).
+
+    ``horizon_months`` (REQ-OUT-003 §1/§6): for ``valuation_kind ==
+    VALUATION_KIND_FH_LTR``, the lifetime-value horizon the supplied
+    ``aggregate_value`` was projected over must be declared explicitly and
+    must equal ``FH_LTR_HORIZON_MONTHS`` (48) - the approved governed
+    horizon. This is a fail-closed check at construction time: a missing or
+    mismatched horizon (e.g. a stale, incorrect duration, or an unlabelled one)
+    raises immediately rather than being silently accepted and later
+    guessed to be correct by a downstream value/ROI calculation. Not
+    applicable to ``VALUATION_KIND_DNA_REVENUE`` records, which carry no
+    LTR-horizon concept; ``horizon_months`` must be left ``None`` for those.
     """
 
     valuation_kind: str
@@ -94,6 +109,7 @@ class WeeklyOutcomeValuationRecord:
     source: str = ""
     source_version: str = ""
     schema_version: int = 1
+    horizon_months: Optional[int] = None
 
     def __post_init__(self) -> None:
         if self.valuation_kind not in VALUATION_KINDS:
@@ -169,6 +185,26 @@ class WeeklyOutcomeValuationRecord:
             raise ValueError(
                 "WeeklyOutcomeValuationRecord: quality_status 'observed_zero' "
                 f"requires aggregate_value == 0, got {self.aggregate_value!r}."
+            )
+        # REQ-OUT-003 §1/§6: the 48-month FH LTR horizon must be declared
+        # and correct, or the value/ROI calculation this record feeds must
+        # be blocked rather than guessing it is fine.
+        if self.valuation_kind == VALUATION_KIND_FH_LTR:
+            if self.horizon_months != FH_LTR_HORIZON_MONTHS:
+                raise ValueError(
+                    "WeeklyOutcomeValuationRecord: valuation_kind "
+                    f"'{VALUATION_KIND_FH_LTR}' requires horizon_months == "
+                    f"{FH_LTR_HORIZON_MONTHS} (REQ-OUT-003's approved FH "
+                    f"lifetime-value horizon); got {self.horizon_months!r}. "
+                    "This blocks rather than guesses on an LTR/outcome "
+                    "horizon mismatch."
+                )
+        elif self.horizon_months is not None:
+            raise ValueError(
+                "WeeklyOutcomeValuationRecord: horizon_months is only "
+                f"meaningful for valuation_kind '{VALUATION_KIND_FH_LTR}'; "
+                f"got horizon_months={self.horizon_months!r} for "
+                f"valuation_kind '{self.valuation_kind}'."
             )
 
     def cell_key(self) -> tuple:

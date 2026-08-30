@@ -27,6 +27,7 @@ from ancestry_mmm.core.outcome_valuation import (
 )
 from ancestry_mmm.core.outcomes import (
     FAMILY_HISTORY,
+    FH_LTR_HORIZON_MONTHS,
     METRIC_KEY_FH_GSA,
     OutcomeDefinition,
     outcome_catalogue_fingerprint_payload,
@@ -243,6 +244,7 @@ def _january_records() -> list[WeeklyOutcomeValuationRecord]:
             quality_status=STATE_ESTIMATED,
             aggregate_value=500.0,
             currency="GBP",
+            horizon_months=FH_LTR_HORIZON_MONTHS,
         )
         for week in _january_2024_weeks()
     ]

@@ -77,6 +77,7 @@ from ancestry_mmm.core.fingerprint import (
 )
 from ancestry_mmm.core.causal_graph import current_structural_fingerprint_for_identity
 from ancestry_mmm.core.outcomes import (
+    FH_LTR_HORIZON_MONTHS,
     fh_gsa_outcome_ids,
     fh_signup_outcome_ids,
     dna_kit_sale_outcome_ids,
@@ -248,7 +249,10 @@ def _render_outcome_valuation_catalogue_editor(meta, outcome_definitions, record
         "Family History rows value projected LTR against an approved "
         "outcome (e.g. sign-ups); DNA rows value revenue against an "
         "approved outcome (e.g. kit sales). Leave 'Value' blank only for "
-        "a quality status that denotes a genuinely absent value."
+        "a quality status that denotes a genuinely absent value. Family "
+        f"History LTR rows always use the approved {FH_LTR_HORIZON_MONTHS}"
+        "-month lifetime-value horizon (REQ-OUT-003) - this is applied "
+        "automatically, not an editable field."
     )
     edited_df = st.data_editor(
         _outcome_valuation_editor_df(records),
@@ -291,10 +295,20 @@ def _render_outcome_valuation_catalogue_editor(meta, outcome_definitions, record
             agg_value = None if pd.isna(agg_value) else float(agg_value)
             currency = row.get("currency")
             currency = None if pd.isna(currency) or not currency else str(currency)
+            valuation_kind = str(row["valuation_kind"])
+            # REQ-OUT-003 sections 1/6: the FH LTR horizon is a fixed governed
+            # fact, not an analyst-typed number - applied automatically so
+            # it can never be mistyped or silently omitted. DNA revenue
+            # rows carry no horizon concept at all.
+            horizon_months = (
+                FH_LTR_HORIZON_MONTHS
+                if valuation_kind == VALUATION_KIND_FH_LTR
+                else None
+            )
             try:
                 candidate_records.append(
                     WeeklyOutcomeValuationRecord(
-                        valuation_kind=str(row["valuation_kind"]),
+                        valuation_kind=valuation_kind,
                         market=str(row["market"]),
                         week=str(row["week"]),
                         segment=str(row["segment"]),
@@ -302,6 +316,7 @@ def _render_outcome_valuation_catalogue_editor(meta, outcome_definitions, record
                         quality_status=str(row["quality_status"]),
                         aggregate_value=agg_value,
                         currency=currency,
+                        horizon_months=horizon_months,
                     )
                 )
             except ValueError as exc:
