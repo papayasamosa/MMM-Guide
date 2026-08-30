@@ -395,9 +395,11 @@ def compute_model_diagnostics(trace: az.InferenceData) -> Dict[str, Any]:
         else rhat[var].values.tolist()
         for var in rhat.data_vars
     }
-    diagnostics["rhat_max"] = max(
-        np.max(v) if isinstance(v, (list, np.ndarray)) else v
-        for v in diagnostics["rhat"].values()
+    diagnostics["rhat_max"] = float(
+        max(
+            np.max(v) if isinstance(v, (list, np.ndarray)) else v
+            for v in diagnostics["rhat"].values()
+        )
     )
 
     # Effective sample size
@@ -406,9 +408,11 @@ def compute_model_diagnostics(trace: az.InferenceData) -> Dict[str, Any]:
         var: float(ess[var].values) if ess[var].ndim == 0 else ess[var].values.tolist()
         for var in ess.data_vars
     }
-    diagnostics["ess_min"] = min(
-        np.min(v) if isinstance(v, (list, np.ndarray)) else v
-        for v in diagnostics["ess"].values()
+    diagnostics["ess_min"] = float(
+        min(
+            np.min(v) if isinstance(v, (list, np.ndarray)) else v
+            for v in diagnostics["ess"].values()
+        )
     )
 
     # MCSE (Monte Carlo Standard Error)
@@ -426,8 +430,20 @@ def compute_model_diagnostics(trace: az.InferenceData) -> Dict[str, Any]:
     else:
         diagnostics["divergences"] = 0
 
-    # Summary of convergence
-    diagnostics["converged"] = (
+    # Summary of convergence. UX-021: `rhat_max`/`ess_min` above are now
+    # native Python floats (not numpy.float64), so this comparison chain
+    # produces a native Python bool, not numpy.bool_ - important because
+    # this dict is embedded (as "convergence") in a ModelComparisonCandidate
+    # and other diagnostics payloads that get JSON-serialised via
+    # `json.dumps(..., default=str)` when a project bundle is exported
+    # (core/persistence.py). A numpy.bool_(False) is not natively
+    # JSON-serialisable, so `default=str` silently stringifies it to the
+    # literal text "False" - which is truthy on read-back, silently
+    # flipping a non-converged candidate's status to "Converged" on the
+    # Compare Models page after any export/import round-trip. Casting to
+    # `bool()` here (the root cause) fixes every downstream consumer at
+    # once rather than special-casing each serialisation call site.
+    diagnostics["converged"] = bool(
         diagnostics["rhat_max"] < 1.05
         and diagnostics["ess_min"] > 100
         and diagnostics["divergences"] == 0

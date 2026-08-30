@@ -101,7 +101,26 @@ def page_readiness(key: str) -> str:
 
 
 def group_readiness(keys: Iterable[str]) -> str:
-    """Aggregate canonical page states into one workflow-area status."""
+    """Aggregate canonical page states into one workflow-area status.
+
+    Overnight UI/UX pass (2026-08-29, severity semantics / empty-state
+    finding): a plain per-page ``"blocked"`` status by itself only ever
+    means "this page's own upstream prerequisite in the same workflow
+    hasn't been done yet" (see ``workflow_page_state`` - e.g. "Load data
+    before joining and transforming sources"). On a brand-new project
+    every not-yet-reached group is in exactly this state, so treating it
+    the same as a genuine attention condition previously made 4 of 5
+    Home workflow-map areas render the same red "Blocked" badge used for
+    a real problem, before the analyst had done anything at all
+    (violates the severity semantics in the UX guidance: Error/Blocking
+    should mean the workflow cannot safely continue, not "you haven't
+    started this yet"). ``"stale"``/``"review"``/``"unavailable"`` remain
+    genuine attention conditions (something changed or became invalid
+    after real progress was made) and still surface as "blocked" here;
+    only the ordinary sequential-gate case is now reported as
+    "not_started", matching the neutral treatment every other
+    not-yet-started group already receives.
+    """
     scored = [s for s in (page_readiness(k) for k in keys) if s != "optional"]
     if not scored:
         return "not_started"
@@ -118,7 +137,7 @@ def group_readiness(keys: Iterable[str]) -> str:
         return "complete"
     if done > 0:
         return "current"
-    if any(s in {"blocked", "stale", "review", "unavailable"} for s in scored):
+    if any(s in {"stale", "review", "unavailable"} for s in scored):
         return "blocked"
     return "not_started"
 

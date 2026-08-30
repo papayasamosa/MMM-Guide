@@ -384,10 +384,20 @@ def get_data_summary(df: pd.DataFrame) -> Dict[str, Any]:
         "missing_pct": df.isna().sum().sum() / (len(df) * len(df.columns)) * 100,
     }
 
-    # Try to detect date range
+    # Try to detect date range. This is a deliberately best-effort scan over
+    # every column (already tolerant of columns that are not dates at all,
+    # via the ValueError/TypeError catch below) - pandas' own "could not
+    # infer format, falling back to dateutil" UserWarning for a column it
+    # still successfully parses is exactly the same kind of best-effort
+    # ambiguity this loop already accepts, not a new failure mode. Silencing
+    # it here (Overnight UI/UX pass, 2026-08-29, UX-003 follow-up) only
+    # suppresses console/log noise for this best-effort guess; it does not
+    # change which column is picked or the resulting date range.
     for col in df.columns:
         try:
-            dates = pd.to_datetime(df[col])
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                dates = pd.to_datetime(df[col])
             summary["date_range"] = {
                 "start": dates.min().strftime("%Y-%m-%d"),
                 "end": dates.max().strftime("%Y-%m-%d"),

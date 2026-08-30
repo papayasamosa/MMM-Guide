@@ -2101,6 +2101,18 @@ if st.button("Save structure and validate", type="primary"):
                 width="stretch",
                 column_config=dataframe_column_config(outcomes_df),
             )
+        # UX-011: the "Saved structure summary" panel and the page-header
+        # readiness badge are both computed near the top of this script, so
+        # without a rerun they kept showing the PRE-save snapshot ("Saved
+        # state: Not saved", header "Not started") in the same view as the
+        # "Structure saved." confirmation just rendered above - the exact
+        # same missing-rerun pattern already fixed elsewhere in this app
+        # (01_Data_Upload.py, 02_Transform_Pipeline.py,
+        # 10_Channel_Media_Units.py, 15_Data_Coverage.py). Safe here for the
+        # same reason as those fixes: this branch is gated by a one-shot
+        # st.button() click, not raw widget/file presence, so it cannot
+        # cause a reprocessing loop.
+        st.rerun()
 _validation_section.__exit__(None, None, None)
 
 if get_state("model_spec"):

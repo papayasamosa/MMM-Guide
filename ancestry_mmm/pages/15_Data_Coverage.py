@@ -484,6 +484,14 @@ if variable_columns:
                 f"Built coverage matrix version {new_matrix.matrix_version} "
                 f"with {len(new_matrix.records)} record(s)."
             )
+            # Overnight UI/UX pass (2026-08-29, UX-010): live-reproduced -
+            # the page-header badge above (computed earlier in this same
+            # script run) stayed "Not started" right next to this success
+            # message on the very first matrix build. Same rerun-after-
+            # state-change fix as UX-003/004/009; safe here since the
+            # enclosing "Build coverage matrix" button is a one-shot
+            # st.button() flag.
+            st.rerun()
         except ValueError as e:
             st.error(f"Could not build the coverage matrix: {e}")
 
@@ -838,6 +846,14 @@ else:
                 f"Saved gap classifications as matrix version "
                 f"{new_matrix.matrix_version}."
             )
+            # UX-010 (see "Build coverage matrix" above): same fix - the
+            # "Coverage summary" Unresolved/Gap segments metrics and
+            # ready/blocked badge (matrix.blocking_issues, core/coverage.py)
+            # are computed earlier in this run from the pre-save matrix. A
+            # reclassification away from "unknown"/"missing_expected"
+            # changes blocking_issues, so this can go visibly stale exactly
+            # like the matrix-build case already reproduced above.
+            st.rerun()
 
 st.markdown("---")
 _treatment_section = SectionCard(
@@ -940,6 +956,11 @@ if st.button("Save treatment decisions", type="primary"):
         st.success(
             f"Saved treatment decisions as matrix version {new_matrix.matrix_version}."
         )
+        # UX-010 (see "Build coverage matrix" above): same fix - approving a
+        # treatment (approved_for_official_use) changes is_officially_
+        # unresolved for that record, which the "Coverage summary" section
+        # above reads from the pre-save matrix in this same script run.
+        st.rerun()
 _treatment_section.__exit__(None, None, None)
 
 with st.expander("Coverage matrix version history"):

@@ -357,6 +357,13 @@ with SectionCard(
             st.success(
                 f"Joined {len(sources)} source(s) into {joined.shape[0]} rows x {joined.shape[1]} columns."
             )
+            # Overnight UI/UX pass (2026-08-29, UX-003 pattern): without a
+            # rerun, this page's own header status badge (computed earlier in
+            # this same script run) kept showing "Not started" in the same
+            # view as this success message - the same rerun-after-state-
+            # change fix already used a few lines below for "Transformation
+            # added" and applied across ancestry_mmm/pages/01_Data_Upload.py.
+            st.rerun()
         except ValueError as e:
             st.error(
                 f"Could not join sources: {e} Check that the selected date/market columns exist in every source."

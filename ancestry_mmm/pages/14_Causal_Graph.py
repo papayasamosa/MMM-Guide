@@ -405,10 +405,23 @@ _structural_unsaved, _layout_unsaved, _has_saved_version = _graph_change_state(
     graph, _saved_versions
 )
 
+_causal_graph_readiness_badge = page_readiness("causal_graph")
 render_page_header(
     "causal_graph",
     task_prompt="Which causal pathways should guide this model?",
-    badges=[page_readiness("causal_graph"), graph.status],
+    # UX-013: workflow_state.py's _causal_graph_status() returns
+    # graph.status directly as the canonical readiness label once any
+    # graph has been persisted (draft/approved/etc.) - only differing from
+    # it beforehand ("optional", since no graph is saved yet). Passing
+    # graph.status unconditionally as a second badge produced a literal
+    # "· Draft · Draft" duplicate for the entire rest of a normal session
+    # after the first edit. Only show it separately when it adds
+    # information the readiness badge doesn't already carry.
+    badges=(
+        [_causal_graph_readiness_badge]
+        if _causal_graph_readiness_badge == graph.status
+        else [_causal_graph_readiness_badge, graph.status]
+    ),
 )
 render_workspace_note(
     "Authoritative structure",

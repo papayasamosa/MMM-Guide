@@ -272,5 +272,15 @@ for market in spec.markets:
             )
             set_state("market_spec_config", market_config.to_dict())
             st.success(f"Saved profile for {market}.")
+            # UX-012 (same missing-rerun pattern as UX-003/004/009/010/011):
+            # the "Context summary" card above (Currencies set / Optional
+            # profiles counts) and the page-header readiness badge are both
+            # computed earlier in this same script run, so without a rerun
+            # they kept showing the pre-save counts next to this exact
+            # confirmation. Safe here for the same reason as the prior
+            # sites: gated by a one-shot st.button() click, not raw widget
+            # presence, and there is no dedicated AppTest for this page
+            # whose assertions depend on the pre-rerun transient text.
+            st.rerun()
 
 render_next_step("market_descriptors")

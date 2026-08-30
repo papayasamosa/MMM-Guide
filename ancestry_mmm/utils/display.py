@@ -464,6 +464,7 @@ CONSTRAINT_KIND_LABELS = {
 FIELD_HELP = {
     "adstock_decay": "Adstock controls how long the effect of media carries over after spend occurs.",
     "hill_saturation": "Saturation describes how each extra unit of spend produces a smaller incremental effect as spend increases.",
+    "saturation_shape": "Saturation shape controls how sharply the response curve bends as spend increases, separate from where saturation starts.",
     "partial_pooling": "Partial pooling lets segments or markets share information, borrowing strength where data is thin and diverging where the data supports it.",
     "dna_halo_lag": "The DNA halo lag is the extra delay, beyond normal media carryover, before DNA-targeted media affects other segments.",
     "ltv": "Lifetime value (LTV) is the long-run value of one acquisition, used to weight outcomes when planning for value rather than raw volume.",

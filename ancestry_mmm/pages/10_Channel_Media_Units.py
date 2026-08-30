@@ -164,6 +164,22 @@ with st.container(border=True):
     summary_cols[2].metric("Saved Search objects", len(saved_search_object_items))
     summary_cols[3].metric("Physical mappings", saved_media_unit_count)
 
+# Codex review (PR #348, P2): the save handlers below persist a notice here
+# instead of calling st.warning()/st.success() directly, because they then
+# call st.rerun() (UX-009) so the "Mapping summary" above reflects the just-
+# saved state in the same view - but a message rendered immediately before
+# st.rerun() is discarded by that rerun before the analyst can ever see it.
+# This is most important for the invalidation warning ("the fitted model,
+# approval, curves, and scenarios were invalidated"), which is actionable
+# governance information, not a transient confirmation - losing it silently
+# would leave the analyst unaware their save just cleared a trained model.
+# Shown once, on the render immediately following the save, then cleared so
+# a later unrelated rerun does not keep re-showing a stale notice.
+_pending_activity_notice = get_state("activity_mapping_notice")
+if _pending_activity_notice:
+    getattr(st, _pending_activity_notice["kind"])(_pending_activity_notice["message"])
+    set_state("activity_mapping_notice", None)
+
 with st.container(border=True):
     st.markdown("#### Mapping stages")
     _mapping_stage_columns = st.columns(3)
@@ -586,9 +602,16 @@ with SectionCard(
             if refit_required and get_state("model_trained"):
                 clear_model_state()
                 set_state("scenarios", [])
-                st.warning(
-                    "Saved. The activity role or media-input mapping changed, so "
-                    "the fitted model, approval, curves, and scenarios were invalidated."
+                set_state(
+                    "activity_mapping_notice",
+                    {
+                        "kind": "warning",
+                        "message": (
+                            "Saved. The activity role or media-input mapping changed, "
+                            "so the fitted model, approval, curves, and scenarios "
+                            "were invalidated."
+                        ),
+                    },
                 )
             else:
                 if rebuild_curves:
@@ -601,14 +624,36 @@ with SectionCard(
                         _cleared_outputs.append("affected curve/economics references")
                     if rebuild_scenarios:
                         _cleared_outputs.append("affected scenarios")
-                    st.warning(
-                        "Activity mapping saved. "
-                        + " and ".join(_cleared_outputs).capitalize()
-                        + " were cleared because this change affects downstream results."
+                    set_state(
+                        "activity_mapping_notice",
+                        {
+                            "kind": "warning",
+                            "message": (
+                                "Activity mapping saved. "
+                                + " and ".join(_cleared_outputs).capitalize()
+                                + " were cleared because this change affects "
+                                "downstream results."
+                            ),
+                        },
                     )
                 else:
-                    st.success("Activity mapping saved.")
+                    set_state(
+                        "activity_mapping_notice",
+                        {"kind": "success", "message": "Activity mapping saved."},
+                    )
             st.session_state["activity_detail_mode"] = "edit"
+            # Overnight UI/UX pass (2026-08-29, UX-009): "Mapping summary"
+            # above (Governed activities/Saved Search objects/Physical
+            # mappings counts) is computed earlier in this same script run,
+            # before this form's handler - live-reproduced showing "0" here
+            # immediately after a successful save while sections lower on
+            # the page (rendered after this handler) already reflected the
+            # new activity. Same rerun-after-state-change fix as UX-003/
+            # UX-004; safe here since save_activity is a one-shot
+            # st.form_submit_button flag. The notice set above (rather than
+            # an st.warning()/st.success() called here) is what survives
+            # this rerun - see its definition near "Mapping summary".
+            st.rerun()
         except (TypeError, ValueError) as exc:
             st.error(f"Nothing was saved. Resolve this activity first: {exc}")
 
@@ -948,6 +993,11 @@ if save_search:
             if _is_new_search_object:
                 st.session_state["search_selected_index"] = len(updated) - 1
             st.success("Search setup saved.")
+            # UX-009 (see "Save activity mapping" above): same fix - the
+            # "Mapping summary" Saved Search objects count is computed
+            # earlier in this run. save_search is a one-shot
+            # st.form_submit_button flag, so this is safe.
+            st.rerun()
     except (TypeError, ValueError) as exc:
         st.error(f"Nothing was saved. Resolve this Search object first: {exc}")
 
@@ -1134,6 +1184,9 @@ if st.button("Save delivery & cost mapping"):
         f"{len(unit_markets) * len(unit_channels)} channel/market "
         "combinations have a media-unit mapping."
     )
+    # UX-009 (see "Save activity mapping" above): same fix - the "Mapping
+    # summary" Physical mappings count is computed earlier in this run.
+    st.rerun()
 _media_unit_section.__exit__(None, None, None)
 
 render_next_step("channel_media_units")

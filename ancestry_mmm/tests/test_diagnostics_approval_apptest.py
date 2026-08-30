@@ -736,6 +736,36 @@ def test_scorecard_recompute_immediately_clears_prior_governance_evidence():
     assert at.session_state["validation_results"] is None
     assert at.session_state["approval_readiness"] is None
     assert at.session_state["validation_service_result"] is None
+    # UX-018 (overnight UI/UX review, third pass, critic pass): before this
+    # fix, the four keys above were cleared with no on-screen trace at all -
+    # an analyst who had approved this model, then clicked "Compute
+    # scorecard" again (e.g. after adding a coverage matrix or fixing a
+    # data issue), would simply find an empty "Approve this model" form
+    # where "Approved by <name>" used to be, with nothing explaining that
+    # their own click just discarded it. invalidate_governance_evidence()
+    # now warns, naming who the discarded approval was by, every time it
+    # actually had something to clear.
+    assert any(
+        "previous model approval" in (w.value or "")
+        and "Test Reviewer" in (w.value or "")
+        for w in at.warning
+    )
+
+
+def test_invalidate_governance_evidence_is_silent_when_nothing_to_invalidate():
+    """The UX-018 warning must only fire when there was an actual approval
+    to lose - recomputing the scorecard on a never-approved model (the
+    ordinary, most common case) must not scare the analyst with a warning
+    about something that never existed."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_fully_identified_model(at)
+    at.run()
+    compute_button = next(b for b in at.button if b.label == "Compute scorecard")
+    compute_button.click().run()
+
+    assert not at.exception, f"page raised: {at.exception}"
+    assert at.session_state["model_approval"] is None
+    assert not any("previous model approval" in (w.value or "") for w in at.warning)
 
 
 def test_backtest_failure_immediately_clears_approval_and_validation_results():

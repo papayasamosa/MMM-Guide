@@ -142,7 +142,18 @@ def _convergence_domain(
     ess = conv.get("min_ess", conv.get("ess_min"))
     div = conv.get("divergences")
     if rhat is not None and ess is not None and div is not None:
-        detail = f"max R-hat {rhat:.3f}, min ESS {ess:,.0f}, {div} divergence(s)."
+        # UX-019 (overnight UI/UX review, third pass, critic pass): rhat/ess
+        # can legitimately be NaN (core.models.py's own rank-normalised
+        # R-hat/ESS 0/0 case for a zero-variance or single-chain run) - a
+        # real, reachable non-convergence signal, not an error. Formatting
+        # NaN straight through f"{...:.3f}"/f"{...:,.0f}" renders the bare
+        # literal "max R-hat nan, min ESS nan" here, which the sibling
+        # per-metric st.metric on the page's own Convergence tab already
+        # avoids (see pages/06_Diagnostics.py). Match that same "Not
+        # available" wording here instead of leaking the raw float.
+        rhat_text = "not available" if rhat != rhat else f"{rhat:.3f}"
+        ess_text = "not available" if ess != ess else f"{ess:,.0f}"
+        detail = f"max R-hat {rhat_text}, min ESS {ess_text}, {div} divergence(s)."
     else:
         detail = "Convergence computed."
     return DomainHealth("Convergence", status, detail)
@@ -222,9 +233,17 @@ def _identification_domain(diag_artefact: Any) -> DomainHealth:
             section.error or "Identification diagnostics failed.",
         )
     flags = (section.payload or {}).get("flags", [])
-    if any(f.get("level") == "error" for f in flags):
-        status = "fail"
-    elif any(f.get("level") == "warning" for f in flags):
+    # Overnight UI/UX pass (2026-08-29): identification/collinearity flags
+    # are informational evidence for analyst review, not a validation-policy
+    # gate (no gate reads them - see core/validation_policy.py and this
+    # domain's own "descriptive evidence" framing on the Diagnostics page).
+    # "fail" is reserved for a domain whose evidence actually blocks
+    # approval (see _approval_evidence_domain); an "error"-severity
+    # identification flag is a stronger review signal than a "warning"-
+    # severity one, but neither is a blocking failure, so both map to
+    # "review" here - distinguished by wording, not by borrowing the
+    # blocking-severity colour/icon used elsewhere for a real gate failure.
+    if any(f.get("level") in ("error", "warning") for f in flags):
         status = "review"
     else:
         status = "pass"
@@ -399,8 +418,21 @@ def derive_primary_concern(
     """The single most significant issue, as a plain-language sentence
     deterministically derived from already-computed evidence, in a fixed
     severity order (policy blocking failure > missing required gate >
-    identification error flag > non-convergence > coverage-capability gap >
+    non-convergence > coverage-capability gap > identification error flag >
     identification warning flag > plausibility flag > policy review item).
+
+    Overnight UI/UX pass (2026-08-29): identification/collinearity flags
+    (correlation, condition-number, posterior-CV) are informational
+    evidence for analyst review, never a validation-policy gate - see
+    ``core/validation_policy.py`` (no identification-derived gate exists)
+    and this page's own tab caption. They previously ranked above
+    non-convergence here even at "error" severity, which could hide a
+    genuine fit-quality problem (a model that has not converged) behind a
+    statistical caveat that does not by itself block anything - the exact
+    "do not upgrade a warning to an error simply because a number looks
+    unusual" anti-pattern the UX guidance warns against. Both
+    identification severities now rank together, below the two conditions
+    that reflect an actual blocking or fit-quality problem.
     Returns ``None`` - never a fabricated sentence - once none of these
     apply, e.g. before anything has been computed."""
     if readiness is not None and readiness.blocking_failures:
@@ -414,18 +446,12 @@ def derive_primary_concern(
             f"Main concern: required gate '{readiness.missing_required_gates[0]}' "
             "has no result yet under the active policy."
         )
-    ident_section = getattr(diag_artefact, "identification", None)
-    ident_flags = []
-    if ident_section is not None and ident_section.status == "computed":
-        ident_flags = (ident_section.payload or {}).get("flags", [])
-    error_flags = [f for f in ident_flags if f.get("level") == "error"]
-    if error_flags:
-        f = error_flags[0]
-        return f"Main concern: weak identification for {f.get('channel', '')} - {f.get('message', '')}"
     conv = (scorecard or {}).get("convergence")
     if conv and conv.get("converged") is False:
         rhat = conv.get("max_rhat", conv.get("rhat_max"))
-        if rhat is not None:
+        # UX-019: same NaN-safe formatting as _convergence_domain above -
+        # never leak the bare "nan" literal into this banner either.
+        if rhat is not None and rhat == rhat:
             return (
                 "Main concern: convergence diagnostics are outside typical thresholds "
                 f"(max R-hat {rhat:.3f})."
@@ -434,6 +460,14 @@ def derive_primary_concern(
     if capability_result is not None and not capability_result.supported:
         issue = capability_result.issues[0]
         return f"Main concern: {issue.market} / {issue.channel} - {issue.reason}"
+    ident_section = getattr(diag_artefact, "identification", None)
+    ident_flags = []
+    if ident_section is not None and ident_section.status == "computed":
+        ident_flags = (ident_section.payload or {}).get("flags", [])
+    error_flags = [f for f in ident_flags if f.get("level") == "error"]
+    if error_flags:
+        f = error_flags[0]
+        return f"Main concern: weak identification for {f.get('channel', '')} - {f.get('message', '')}"
     warning_flags = [f for f in ident_flags if f.get("level") == "warning"]
     if warning_flags:
         f = warning_flags[0]

@@ -114,7 +114,17 @@ def _run_export(monkeypatch, tmp_path, *, project_name: str) -> Path:
     build_button.click().run()
     assert not at.exception, f"export click raised: {at.exception}"
 
-    return export_root / f"{project_name}.zip"
+    # Codex review (PR #348, P1 follow-up): the build no longer writes to
+    # (or leaves behind) `export_root / f"{project_name}.zip"` - each build
+    # uses a session-unique temporary filename, read into memory, then
+    # deleted (see 09_Project_Export.py) - specifically so two sessions
+    # building the same project name can never race on one shared path.
+    # Callers that need an actual file to hand to `import_project()` write
+    # the session's own cached bytes out to their own fresh path instead of
+    # relying on any canonical on-disk location.
+    bundle_path = tmp_path / f"{project_name}-readback.zip"
+    bundle_path.write_bytes(at.session_state["export_last_bundle_bytes"])
+    return bundle_path
 
 
 def test_export_reaches_official_curves_checkpoint_with_a_loaded_artifact(
@@ -155,7 +165,9 @@ def test_export_falls_back_to_legacy_curves_checkpoint_without_official_artifact
     build_button.click().run()
     assert not at.exception, f"export click raised: {at.exception}"
 
-    imported = import_project(export_root / "proj-legacy.zip")
+    bundle_path = tmp_path / "proj-legacy-readback.zip"
+    bundle_path.write_bytes(at.session_state["export_last_bundle_bytes"])
+    imported = import_project(bundle_path)
     assert imported["manifest"]["workflow_checkpoint"] == "curves"
     assert imported["manifest"]["contains"]["official_curve_artifacts"] is False
 
@@ -309,7 +321,9 @@ def test_export_includes_causal_graph_state(monkeypatch, tmp_path):
     build_button.click().run()
     assert not at.exception, f"export click raised: {at.exception}"
 
-    imported = import_project(export_root / "proj-with-graph.zip")
+    bundle_path = tmp_path / "proj-with-graph-readback.zip"
+    bundle_path.write_bytes(at.session_state["export_last_bundle_bytes"])
+    imported = import_project(bundle_path)
     graphs, warnings = resolve_imported_causal_graphs(imported)
     assert warnings == []
     assert {g["graph_id"] for g in graphs} == {"g1"}
@@ -550,7 +564,17 @@ def test_build_bundle_updates_project_status_and_shows_included_checklist(
     activity (for the "Project status" panel) and shows a checklist of
     what the bundle actually contains, read back from the bundle's own
     manifest.json rather than re-derived - so it can never disagree with
-    what import_project() itself reports for the same bundle."""
+    what import_project() itself reports for the same bundle.
+
+    Pass 4 redesign (closing the gap passes 2-3 identified but deliberately
+    left unfixed): the checklist and download button are now rendered from
+    the already-persisted `export_last_bundle_summary` state, not from the
+    button's own transient scope - this test proves both (a) they appear
+    immediately after the build (the original working behaviour, still
+    intact) and (b) they survive a later, unrelated rerun instead of
+    vanishing (the actual regression fix - previously this exact rerun
+    would have made the download button disappear until the analyst
+    clicked "Build export bundle" again)."""
     export_root = tmp_path / "exports"
     artifact_root = tmp_path / "artifact-root"
 
@@ -582,14 +606,197 @@ def test_build_bundle_updates_project_status_and_shows_included_checklist(
     )
     assert "Original source files and tables" in checklist_copy
     assert "Coverage and frequency review history" in checklist_copy
+    assert any(
+        d.label == "Download project bundle (.zip)" for d in at.download_button
+    ), "the download control must be present immediately after a real build"
 
-    # A fresh rerun (e.g. the analyst's next interaction) reflects the
-    # updated activity in the "Project status" panel rendered at the top of
-    # the page - this does not re-click the button, so it does not rebuild.
+    # A fresh, unrelated rerun (e.g. the analyst's next interaction, or
+    # simply revisiting the page) must NOT re-click the button (so it must
+    # not rebuild the bundle), reflects the updated activity in the
+    # "Project status" panel, AND - the actual regression this redesign
+    # fixes - must still show the checklist and a working download button,
+    # since both are now derived from persisted state rather than the
+    # button's own transient scope.
     at.run()
     assert not at.exception, f"follow-up rerun raised: {at.exception}"
     assert any("Last bundle built this session" in (c.value or "") for c in at.caption)
     assert any("proj-status" in (c.value or "") for c in at.caption)
+    assert any("What's included in this bundle" in e.label for e in at.expander), (
+        "the checklist must still be present after an unrelated rerun, not just "
+        "immediately after the click"
+    )
+    assert any(
+        d.label == "Download project bundle (.zip)" for d in at.download_button
+    ), (
+        "the download control must still be present (and usable) after an unrelated rerun"
+    )
+
+    # A second, unrelated rerun again - proves this is stable, not a
+    # one-off artefact of exactly one extra rerun, and that re-reading the
+    # manifest/file from disk on every render does not itself raise or
+    # regress anything.
+    at.run()
+    assert not at.exception, f"second follow-up rerun raised: {at.exception}"
+    assert any(
+        d.label == "Download project bundle (.zip)" for d in at.download_button
+    ), "the download control must remain usable across repeated reruns"
+
+
+def test_build_bundle_download_degrades_gracefully_when_session_bytes_are_lost(
+    monkeypatch, tmp_path
+):
+    """Pass-4 originally re-read the bundle from
+    `PROJECT_EXPORT_ROOT/<project_name>.zip` on every rerun; Codex review on
+    PR #348 (P1) flagged that as a cross-session data leak, since that path
+    is shared filesystem state, not session-scoped - a second session
+    building the same-named project in between could silently overwrite it,
+    and this session would then read and offer *that* session's bundle for
+    download. Fixed by caching the built bytes/manifest in this session's own
+    private `st.session_state` at build time and never re-opening the shared
+    path afterwards.
+
+    This test proves the resulting degrade-gracefully behaviour for the
+    realistic case that replaces "the shared file was deleted": this
+    session's own cached bytes are gone (e.g. a full app/server restart,
+    which clears `st.session_state`) - not a crash, not a stale/foreign
+    bundle, just a clear message - while the session's own record of having
+    built a bundle is not erased just because the in-memory bytes are gone.
+    """
+    export_root = tmp_path / "exports"
+    artifact_root = tmp_path / "artifact-root"
+
+    import ancestry_mmm.utils as utils_pkg
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(utils_pkg, "PROJECT_EXPORT_ROOT", export_root)
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", artifact_root)
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    at.session_state["project_name"] = "proj-deleted"
+    build_button = next(b for b in at.button if b.label == "Build export bundle")
+    build_button.click().run()
+    assert not at.exception, f"export click raised: {at.exception}"
+    assert at.session_state["export_last_bundle_bytes"], (
+        "the build must cache this session's own bundle bytes privately"
+    )
+
+    # Simulate this session's cached bytes being gone (e.g. a server
+    # restart) without touching any shared filesystem path - the bug this
+    # test now guards against was specifically about that shared path, so a
+    # correct fix must not depend on it at all any more.
+    del at.session_state["export_last_bundle_bytes"]
+    del at.session_state["export_last_bundle_manifest"]
+
+    at.run()
+    assert not at.exception, f"rerun after losing session bytes raised: {at.exception}"
+    assert not any(
+        d.label == "Download project bundle (.zip)" for d in at.download_button
+    ), "no download control should be offered once this session's bytes are gone"
+    assert any(
+        "no longer available in memory" in (w.value or "") for w in at.warning
+    ), "a clear, actionable message must explain why the download is unavailable"
+    # The session's own record of having built a bundle is not erased just
+    # because the in-memory bytes were lost - it stays an honest log.
+    assert any("Last bundle built this session" in (c.value or "") for c in at.caption)
+    assert any("proj-deleted" in (c.value or "") for c in at.caption)
+
+
+def test_build_bundle_download_is_isolated_from_a_shared_project_name_being_overwritten(
+    monkeypatch, tmp_path
+):
+    """Codex review on PR #348 (P1): reproduce the actual multi-session leak
+    scenario directly, not just the degrade-gracefully path. Two sessions
+    build a project under the same name (a realistic default/duplicate
+    project name in a multi-user deployment); the second session's build
+    overwrites the first session's file on the shared
+    `PROJECT_EXPORT_ROOT/<project_name>.zip` path. The first session's next
+    rerun must still offer *its own* bundle for download, never the second
+    session's, because it must not depend on that shared path at all any
+    more."""
+    export_root = tmp_path / "exports"
+    artifact_root = tmp_path / "artifact-root"
+
+    import ancestry_mmm.utils as utils_pkg
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(utils_pkg, "PROJECT_EXPORT_ROOT", export_root)
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", artifact_root)
+
+    session_a = AppTest.from_file(str(PAGE), default_timeout=60)
+    session_a.run()
+    session_a.session_state["project_name"] = "shared-name"
+    session_a.session_state["project_notes"] = "session-a-marker"
+    build_a = next(b for b in session_a.button if b.label == "Build export bundle")
+    build_a.click().run()
+    assert not session_a.exception, (
+        f"session A export click raised: {session_a.exception}"
+    )
+    bytes_a = session_a.session_state["export_last_bundle_bytes"]
+
+    # A second, independent session (a different analyst, or the same
+    # analyst in another tab) builds a project under the identical name,
+    # overwriting the shared on-disk file session A's old code would have
+    # re-read from.
+    session_b = AppTest.from_file(str(PAGE), default_timeout=60)
+    session_b.run()
+    session_b.session_state["project_name"] = "shared-name"
+    session_b.session_state["project_notes"] = "session-b-marker"
+    build_b = next(b for b in session_b.button if b.label == "Build export bundle")
+    build_b.click().run()
+    assert not session_b.exception, (
+        f"session B export click raised: {session_b.exception}"
+    )
+    bytes_b = session_b.session_state["export_last_bundle_bytes"]
+    assert bytes_a != bytes_b, (
+        "test setup sanity check: the two sessions' bundles must actually differ"
+    )
+
+    # Codex review follow-up (PR #348, P1): "fresh evidence beyond the
+    # earlier comment is that this revision only isolates the bytes after
+    # the shared-path write has completed... [and] does not cover this
+    # write/read race" - true of running the two builds strictly
+    # sequentially (as the AppTest calls above do; genuinely concurrent
+    # writes aren't reliably reproducible in a synchronous unit test). The
+    # deterministic property this second fix actually provides - and that a
+    # sequential test *can* prove - is structural, not timing-dependent:
+    # each build now writes to a session-unique temporary filename, so two
+    # sessions building "shared-name" can never target the same path at all,
+    # racing or not. Confirmed directly: the shared canonical path was never
+    # written to by either build, and neither build leaves a temp file
+    # behind (each session's own bytes/manifest were already cached in
+    # memory and the on-disk temp file deleted before this assertion).
+    shared_canonical_path = export_root / "shared-name.zip"
+    assert not shared_canonical_path.exists(), (
+        "no build should ever write to the shared project-name path - each "
+        "build must use a session-unique filename instead"
+    )
+    leftover_files = sorted(p.name for p in export_root.glob("*.zip"))
+    assert leftover_files == [], (
+        "each build's temporary file must be deleted once its bytes/manifest "
+        f"are cached, not left on disk to accumulate or collide; found: {leftover_files}"
+    )
+
+    # Session A's next, unrelated rerun (its actual regression-fix scenario)
+    # must still serve session A's own bytes, not session B's, even though
+    # the shared filesystem path now holds session B's file.
+    session_a.run()
+    assert not session_a.exception, (
+        f"session A follow-up rerun raised: {session_a.exception}"
+    )
+    assert session_a.session_state["export_last_bundle_bytes"] == bytes_a, (
+        "session A's cached bundle bytes must never be affected by another "
+        "session's build under the same project name"
+    )
+    assert any(
+        d.label == "Download project bundle (.zip)" for d in session_a.download_button
+    ), "session A's download control must still be present after its follow-up rerun"
+    # `st.download_button`'s underlying bytes are not introspectable via
+    # AppTest's DownloadButton element (it exposes only label/help/value),
+    # so the strongest available proof that session A is offered its own
+    # bundle - not session B's, silently substituted via the shared on-disk
+    # path - is that the exact session-private state the widget is built
+    # from (asserted above) is untouched by session B's build.
 
 
 def test_import_bundle_updates_project_status_and_shows_included_checklist(

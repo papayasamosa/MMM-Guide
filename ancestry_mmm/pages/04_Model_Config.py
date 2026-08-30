@@ -279,7 +279,11 @@ with st.expander("Advanced response assumptions", expanded=False):
             0.5,
             float(prior_config["decay_sigma"]),
             0.05,
-            help="Technical name: adstock decay prior standard deviation.",
+            help=FIELD_HELP["adstock_decay"]
+            + " This controls how much uncertainty surrounds the typical-carryover "
+            "value above - increase it if you are unsure that value is right for "
+            "this channel, decrease it if you are confident in the current "
+            "setting. Technical name: adstock decay prior standard deviation.",
         )
         prior_config["K_scale"] = st.slider(
             "Spend level where saturation starts",
@@ -297,7 +301,11 @@ with st.expander("Advanced response assumptions", expanded=False):
             10.0,
             float(prior_config["S_alpha"]),
             0.5,
-            help="Technical name: saturation-shape Gamma alpha.",
+            help=FIELD_HELP["saturation_shape"]
+            + " Higher values assume a more pronounced, well-defined bend; keep "
+            "the default unless response curves look implausibly flat or sharp "
+            "compared to known business experience. Technical name: "
+            "saturation-shape Gamma alpha.",
         )
         prior_config["S_beta"] = st.slider(
             "Saturation curve uncertainty",
@@ -305,7 +313,11 @@ with st.expander("Advanced response assumptions", expanded=False):
             10.0,
             float(prior_config["S_beta"]),
             0.5,
-            help="Technical name: saturation-shape Gamma beta.",
+            help=FIELD_HELP["saturation_shape"]
+            + " This controls how much uncertainty surrounds that shape "
+            "assumption - increase it to let the data have more influence over "
+            "the curve's shape, decrease it only with strong prior evidence for "
+            "a specific curve. Technical name: saturation-shape Gamma beta.",
         )
 
     st.markdown("#### How much markets and segments may differ")
@@ -715,6 +727,16 @@ if st.button("Save governed calendar"):
             "Governed project calendar saved. Re-run official preparation review."
         )
         _canonical_calendar = _saved_calendar
+        # UX-014 (same missing-rerun pattern as UX-003/004/009/010/011/012):
+        # the page-header readiness badge (rendered near the top of the
+        # script, before this button) reads official_preparation_result
+        # from session state as it was at the START of this run - one
+        # script-run behind the "Official preparation blocked" panel below,
+        # which is recomputed fresh every run using the just-updated
+        # calendar. Without a rerun, the header lagged one step behind its
+        # own page's detail panel for exactly one render after every save.
+        # Safe here: gated by a one-shot st.button() click.
+        st.rerun()
     except (TypeError, ValueError) as exc:
         st.error(f"Governed calendar was not saved: {exc}")
 
@@ -933,6 +955,16 @@ else:
                 f"{len(frame['channels'])} channels, {len(frame['outcome_ids'])} outcomes, "
                 f"{len(frame['markets'])} market(s). Model structure: {model_type_labels[model_type]}."
             )
+            # UX-015 (same missing-rerun pattern as UX-003/004/009/010/011/
+            # 012/014): the "Model setup summary" panel near the top of
+            # this page (rendered before this button) reads
+            # get_state("frame") early in the same script pass and showed
+            # "Prepared frame: Not prepared" in the same view as this exact
+            # confirmation - this is also the state that gates access to
+            # Fit Model, so keeping the header/summary honest here matters
+            # more than most sites in this family. Safe: gated by a
+            # one-shot st.button() click.
+            st.rerun()
         except (OfficialPreparationDataError, ValueError) as e:
             st.error(
                 f"Could not prepare the modelling frame: {e} Review the structure and try again."

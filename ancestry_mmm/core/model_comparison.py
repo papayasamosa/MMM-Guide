@@ -105,7 +105,27 @@ class ModelComparisonCandidate:
     @classmethod
     def from_dict(cls, d: dict) -> "ModelComparisonCandidate":
         known = set(cls.__dataclass_fields__)
-        return cls(**{k: v for k, v in d.items() if k in known})
+        filtered = {k: v for k, v in d.items() if k in known}
+        # Migration (core/AGENTS.md "Persistence boundaries": migrations
+        # belong at the import boundary, not scattered across consumers).
+        # Codex review, PR #348 (P2): bundles saved before the UX-021 fix
+        # persisted `convergence["converged"]` as `numpy.bool_`, which
+        # `json.dumps(..., default=str)` stringified to the literal text
+        # "True"/"False" - truthy on naive read-back. Normalize that legacy
+        # string form to a real bool here so `pandas.astype("boolean")` in
+        # candidates_to_dataframe()/candidates_to_metrics_dataframe() never
+        # sees a non-empty string it cannot interpret (which would raise and
+        # break the Compare Models page for exactly the historical bundles
+        # the UX-021 fix was meant to repair).
+        convergence = filtered.get("convergence")
+        if isinstance(convergence, dict) and isinstance(
+            convergence.get("converged"), str
+        ):
+            filtered["convergence"] = {
+                **convergence,
+                "converged": convergence["converged"].strip().lower() == "true",
+            }
+        return cls(**filtered)
 
     @classmethod
     def from_scorecard(
@@ -152,7 +172,21 @@ def candidates_decision_summary_dataframe(candidates: list) -> pd.DataFrame:
                 "plausibility_flags": c.n_plausibility_flags,
             }
         )
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        # UX-022: a "converged" value of None (no convergence evidence
+        # recorded for this candidate) must render as a blank/indeterminate
+        # cell on the page's st.dataframe, never the literal text "None".
+        # With only one candidate (or every candidate missing this
+        # evidence), a plain object-dtype column showing raw Python `None`
+        # is exactly what a generic dtype-based column_config picker
+        # (utils.display.dataframe_column_config) falls back to a
+        # TextColumn for - pandas' nullable "boolean" dtype keeps this
+        # column recognised as boolean (so it still renders as a checkbox)
+        # while preserving the missing value as pd.NA instead of a literal
+        # string.
+        df = df.astype({"converged": "boolean"})
+    return df
 
 
 def candidates_to_dataframe(candidates: list) -> pd.DataFrame:
@@ -189,4 +223,27 @@ def candidates_to_dataframe(candidates: list) -> pd.DataFrame:
                 "plausibility_flags": c.n_plausibility_flags,
             }
         )
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        # UX-022 (see candidates_decision_summary_dataframe above for the
+        # full explanation): force the columns that can legitimately be
+        # None (no evidence recorded for that dimension - e.g. no PPC
+        # coverage was ever computed for this candidate's trace) onto a
+        # pandas nullable numeric/boolean dtype, so a column that happens
+        # to be all-None (a real, reachable case: exactly one saved
+        # candidate lacking a given evidence dimension) still renders as a
+        # blank numeric/checkbox cell via dataframe_column_config's
+        # dtype-based NumberColumn/CheckboxColumn selection, rather than
+        # falling back to a TextColumn that displays the raw word "None".
+        df = df.astype(
+            {
+                "rhat_max": "Float64",
+                "ess_min": "Float64",
+                "divergences": "Int64",
+                "converged": "boolean",
+                "mean_r_squared": "Float64",
+                "mean_mape_pct": "Float64",
+                "mean_ppc_coverage_pct": "Float64",
+            }
+        )
+    return df

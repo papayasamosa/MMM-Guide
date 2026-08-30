@@ -116,7 +116,14 @@ def test_save_button_persists_valid_search_object_rows():
     save_button = next(b for b in at.button if b.label == "Save Search setup")
     save_button.click().run()
     assert not at.exception, f"save click raised: {at.exception}"
-    assert any(s.value == "Search setup saved." for s in at.success)
+    # Overnight UI/UX pass (2026-08-29, UX-009): the save handler now calls
+    # st.rerun() after st.success() so the page's "Mapping summary" counts
+    # (computed earlier in the script) reflect the save in the same view,
+    # matching the already-fixed pattern on 01_Data_Upload.py/
+    # 02_Transform_Pipeline.py. The transient success message from the
+    # pre-rerun script pass is not retained across the rerun (same known
+    # trade-off as those pages) - assert on the actually-persisted state
+    # instead, which is the meaningful outcome.
     saved = at.session_state["search_objects"]
     assert len(saved) == 1
     assert saved[0]["search_object_id"] == "uk_paid_search_spend"
@@ -218,6 +225,7 @@ def test_cap_with_matching_channel_spend_saves():
     save_button = next(b for b in at.button if b.label == "Save Search setup")
     save_button.click().run()
     assert not at.exception, f"save click raised: {at.exception}"
-    assert any(s.value == "Search setup saved." for s in at.success)
+    # UX-009 (see test_save_button_persists_valid_search_object_rows above):
+    # same rerun-after-success trade-off - assert on persisted state.
     saved = at.session_state["search_objects"]
     assert len(saved) == 2
