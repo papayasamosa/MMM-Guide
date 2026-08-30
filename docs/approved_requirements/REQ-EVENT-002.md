@@ -168,3 +168,45 @@ Modelling / Product
 ## Approval date
 
 2026-08-19
+
+
+## Addendum, 2026-08-30 (Phase C): statistical response method and family-specific windows resolved (Decision 12)
+
+This record's own "Explicitly excluded" section tracked "the
+statistical event-response kernel/basis and its parameters" and "which
+concrete event families are planning-eligible" via `docs/wp2_named_
+event_statistical_method_decision_package.md`. The user's 2026-08-29
+brief, confirmed in-session 2026-08-30, explicitly delegates the
+statistical-method/priors/pooling/window-selection portion of that
+package to research and validation. This addendum records the
+resulting resolution: full decision record, including the Work Package
+2 synthetic evidence relied on, in
+`docs/named_event_response_method_decision_record.md`; implementation
+in the new `ancestry_mmm/core/named_event_response.py`.
+
+**Resolved:** the event-response structure (S3, regularised cubic
+B-spline basis with a shared HalfNormal(1.0) shrinkage prior - selected
+over S1/S2/S4 per WP2's own recorded synthetic-recovery evidence, not
+guessed); the kernel/basis family and its knot-placement formula
+(generalised from WP2's fixed +/-4-week evidence testbed to an
+arbitrary family-specific window, fixing a degenerate-knot edge case
+for a single-sided window along the way); the pooling policy (unpooled
+by default, gated fail-closed on an approved repeated-occurrence
+threshold this record does not invent); and family-specific maximum
+lead/lag windows for gifting (6-week anticipatory lead), remembrance
+(2-week post-event lag), and promotional (bounded to the actual
+promotion's own declared window) families - grounded in general
+retail-seasonality research and explicitly disclosed as a starting
+default, not an Ancestry-data-validated final business number.
+
+**Still not resolved:** validation thresholds that decide planning
+eligibility (Part 7) - the user's authorisation named "statistical
+method, priors, pooling and window selection" specifically, not
+accept/reject numeric thresholds; this remains open, per `docs/wp2_
+named_event_statistical_method_decision_package.md`'s own unaffected
+dimensions 6-7. No actual PyMC model-fitting integration accompanies
+this addendum - `core.named_event_response` implements the
+deterministic basis-construction and window-policy contract only, a
+separate, materially statistical follow-up requiring its own
+synthetic-recovery validation at these real family-specific windows
+(WP2's own evidence used a generic testbed window, not these).

@@ -1147,7 +1147,9 @@
         "docs/approved_requirements/REQ-EVENT-002.md",
         "docs/approved_requirements/index.json",
         "docs/specification_authority.md",
-        "docs/wp2_named_event_statistical_method_decision_package.md"
+        "docs/wp2_named_event_statistical_method_decision_package.md",
+        "ancestry_mmm/core/named_event_response.py",
+        "docs/named_event_response_method_decision_record.md"
       ],
       "required_tests": [
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
@@ -1157,7 +1159,11 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
-        "ancestry_mmm/tests/test_named_event_authority_reconciliation.py::TestNamedEventOverlayReconciled::test_req_event_002_indexed_and_classified_incomplete"
+        "ancestry_mmm/tests/test_named_event_authority_reconciliation.py::TestNamedEventOverlayReconciled::test_req_event_002_indexed_and_classified_incomplete",
+        "ancestry_mmm/tests/test_named_event_response.py::TestFamilyWindowPolicies::test_gifting_is_anticipatory_only",
+        "ancestry_mmm/tests/test_named_event_response.py::TestBuildSplineBasis::test_partition_of_unity_lead_only",
+        "ancestry_mmm/tests/test_named_event_response.py::TestBuildEventRelativeDesignMatrix::test_factual_dates_are_never_shifted",
+        "ancestry_mmm/tests/test_named_event_response.py::TestAssessFamilyPoolingEligibility::test_no_threshold_is_never_eligible"
       ]
     },
     {
