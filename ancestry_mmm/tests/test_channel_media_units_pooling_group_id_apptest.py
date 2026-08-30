@@ -83,6 +83,21 @@ def test_save_preserves_pooling_group_id_through_an_unrelated_edit():
     assert saved[0]["marketing_objective"] == "brand awareness"
     assert saved[0]["funnel_stage"] == "brand_upper"
 
+    # Codex review (PR #348, P2): the save handler persists its confirmation
+    # via `activity_mapping_notice` rather than calling st.success() directly,
+    # specifically so it survives the st.rerun() the save triggers (UX-009)
+    # instead of being discarded before ever being shown - AppTest processes
+    # that rerun within this single `.click().run()` call, so a message lost
+    # to the rerun would simply never appear in `at.success` here.
+    assert any("Activity mapping saved." in (s.value or "") for s in at.success), (
+        "the save confirmation must survive the st.rerun() this save triggers"
+    )
+    # Shown once: an unrelated later rerun must not keep re-showing it.
+    at.run()
+    assert not any("Activity mapping saved." in (s.value or "") for s in at.success), (
+        "the notice must not persist across later, unrelated reruns"
+    )
+
 
 def test_save_does_not_fabricate_pooling_group_id_for_a_new_row():
     df, spec = _base_state()
