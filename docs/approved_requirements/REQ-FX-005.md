@@ -136,3 +136,20 @@ respectively).
 ## Approval date
 
 2026-08-27
+
+
+
+## Addendum, 2026-08-30 (Phase D): architecture implemented (Decision 13 build-out)
+
+Per the user's explicit 2026-08-30 authorisation (see wp7's updated
+text), `ancestry_mmm/core/fx_future_assumption.py` now implements
+`FutureFXAssumption` (Requirement 1, the closed five-value method
+vocabulary), `WithinMarketPlanTranslation`/`translate_within_market_
+plan` (Requirement 3), and `CurrencyResource`/`validate_cross_market_
+currency_translation` (Requirement 4, the pre-solve validation check -
+not wired into `core.optimization` itself). Full detail in
+`docs/governed_fx_contract_implementation_decision_record.md`. No
+future-FX method default, typed-resource naming convention beyond this
+module's own introduced shape, or actual rate/forward-curve value is
+invented - every item under "Explicitly excluded" above remains exactly
+as open as before this addendum.

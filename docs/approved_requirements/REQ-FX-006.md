@@ -124,3 +124,22 @@ Finance-owned).
 ## Approval date
 
 2026-08-27
+
+
+
+## Addendum, 2026-08-30 (Phase D): architecture implemented (Decision 13 build-out)
+
+Per the user's explicit 2026-08-30 authorisation (see wp7's updated
+text), `ancestry_mmm/core/fx_reporting.py` now implements the four-value
+currency-view vocabulary (Requirement 1), `label_currency_figure`
+(Requirement 2, fails closed when a figure's currency is ambiguous),
+`FxTranslationDecompositionComponent` (Requirement 4's FX component,
+deliberately self-contained since none of the other seven decomposition
+components this requirement lists exist anywhere in this repository
+yet - see the decision record's explicit scope boundary), and
+`FxDependencySnapshot`/`assess_fx_staleness_triggers` (Requirement 5).
+Full detail in
+`docs/governed_fx_contract_implementation_decision_record.md`. No
+reference-rate-set default for the constant-currency view, or display/
+rounding precision, is invented - every item under "Explicitly
+excluded" above remains exactly as open as before this addendum.

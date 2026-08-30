@@ -128,3 +128,20 @@ changes. This is a contract-shape decision only; no actual annual rate
 values are invented or supplied by this addendum (the real Finance rate
 table remains a separate, external, Finance-supplied input per this
 record's existing "Explicitly excluded" section).
+
+
+
+## Addendum, 2026-08-30 (Phase D): architecture implemented (Decision 13 build-out)
+
+Per the user's explicit 2026-08-30 authorisation (see wp7's updated
+text), `ancestry_mmm/core/fx_rates.py` now implements `FXRateRecord`
+(Requirement 1, including the `annual` frequency this record's own
+prior 2026-08-30 addendum added), `FXRateSet` (Requirement 2, immutable-
+identity/new-version-on-change), and `derive_cross_rate`/`build_
+derived_cross_rate_record` (Requirement 3, with round-trip identity
+verified by a regression test). Full detail in
+`docs/governed_fx_contract_implementation_decision_record.md`. No
+provider or authoritative-rate-set selection is made, and no actual
+rate value appears anywhere in the new module or its tests - every item
+under "Explicitly excluded" above remains exactly as open as before
+this addendum.

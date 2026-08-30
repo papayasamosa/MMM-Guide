@@ -126,3 +126,22 @@ selection remains Finance-owned).
 ## Approval date
 
 2026-08-27
+
+
+
+## Addendum, 2026-08-30 (Phase D): protocol and manual-upload tier implemented (Decision 13 build-out)
+
+Per the user's explicit 2026-08-30 authorisation (see wp7's updated
+text), `ancestry_mmm/core/fx_provider.py` now implements the
+`FXProvider` `Protocol` (Requirement 1), `ManualUploadFXProvider` (a
+genuine, working, network-free reference implementation of the source
+hierarchy's third tier, Requirement 2), the network-free ingestion
+validation controls from Requirement 4 (`validate_rate_records`,
+`find_missing_periods`), and `assert_no_embedded_credentials`
+(Requirement 5). Full detail in
+`docs/governed_fx_contract_implementation_decision_record.md`. **No
+live network provider adapter (ECB, FRED, or a corporate feed) is
+implemented or selected** - this addendum does not choose a provider,
+exactly as this record's own text requires; every item under
+"Explicitly excluded" above remains exactly as open as before this
+addendum.

@@ -200,3 +200,22 @@ a candidate input to that decomposition but does not itself select
 prior-year/current-year/budget-rate as the constant-currency basis). The
 actual Finance rate table remains external and Finance-supplied; this
 addendum invents no rate value.
+
+
+
+## Addendum, 2026-08-30 (Phase D): architecture implemented (Decision 13 build-out)
+
+Per the user's explicit 2026-08-30 authorisation (see wp7's updated
+text), `ancestry_mmm/core/fx_conversion.py` now implements the closed
+eight-value method vocabulary (including `finance_constant_dollar_
+annual`, this record's own prior 2026-08-30 default-method addendum) and
+the conversion computations for Requirements 2-5:
+`convert_daily_spend`, `convert_weekly_average` (fails closed against a
+CALLER-SUPPLIED minimum-observation threshold - this module invents no
+default), `convert_spend_weighted_weekly`, `apply_previous_business_
+day_fallback`, and `apply_finance_constant_dollar_annual`. Full detail
+in `docs/governed_fx_contract_implementation_decision_record.md`. No
+default-method selection for weekly-spend conversion beyond this
+record's own already-resolved default, and no minimum-observation
+threshold, is invented - every item under "Explicitly excluded" above
+remains exactly as open as before this addendum.

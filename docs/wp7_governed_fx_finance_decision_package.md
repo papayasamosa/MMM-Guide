@@ -253,3 +253,35 @@ approval — the brief's decision is about historical/reporting
 consistency with Finance, not a selection of the budget-planning rate or
 the constant-currency comparison basis. No actual Finance rate value is
 supplied or invented by this update.
+
+
+## Update, 2026-08-30: architecture build-out completed, per the user's explicit authorisation and its rate-value exception
+
+The user's "Post-UI/UX Implementation Instructions: Approved Business
+Decisions" brief (2026-08-29), a later human instruction, explicitly
+established a source-of-truth order placing the brief's own approved
+decisions and instructions above an older decision package such as this
+one, and explicitly authorised (2026-08-30, in-session confirmation)
+building the full REQ-FX-001 through REQ-FX-006 architecture in code:
+"Proceed with the FX contract, validation, upload/input mechanism,
+versioning, Finance constant-dollar mode, optional market-rate
+architecture, and all code/tests that do not require the real rates."
+This authorisation carries one explicit, unambiguous exception this
+package's own "no coding agent mistakes an approved architecture for an
+approved business policy" caution remains fully honoured by: "do not
+invent the Finance exchange-rate values or claim official Finance
+sign-off. The actual annual currency-to-USD rate table remains an
+external business input that I will need to provide."
+
+Six new modules (`ancestry_mmm/core/fx_currency.py`, `fx_rates.py`,
+`fx_conversion.py`, `fx_provider.py`, `fx_future_assumption.py`,
+`fx_reporting.py`) now implement the approved architecture from
+REQ-FX-001 through REQ-FX-006 - full detail, including the explicit
+scope boundary against every item on this package's own "Open
+questions" list (none of which this build-out resolves), is recorded in
+`docs/governed_fx_contract_implementation_decision_record.md`. Every
+open question on this package's own list above remains exactly as open
+as before this update - no currency list, default currency mapping,
+provider selection, rounding policy, minimum-observation threshold, or
+future-FX-method default is chosen, and no actual rate value is
+invented anywhere in the new modules or their tests.
