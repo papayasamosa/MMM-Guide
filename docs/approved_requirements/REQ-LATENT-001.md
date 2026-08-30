@@ -234,3 +234,67 @@ Modelling
 ## Approval date
 
 2026-08-17
+
+## Addendum, 2026-08-30: Google Trends approved as the identifying anchor source (partially resolves `MD-021`)
+
+The business-decision brief "Post-UI/UX Implementation Instructions:
+Approved Business Decisions" (Decision 9, "Anchor hidden Brand Demand to
+Google Trends") approves **Google Trends for Ancestry branded search
+terms** as the identifying anchor *source* for Candidate A's latent
+`latent_branded_search_demand` state — the single most concrete open
+item `MD-021` named. This addendum records that source-level resolution;
+it does not implement the anchoring mechanism, does not amend
+`core.search_capacity` (unmodified, per this record's existing text),
+and does not fully resolve `MD-021` (the exact anchoring/normalisation
+mathematics remains open, below).
+
+**Approved at the contract level:**
+
+- the branded query set feeding the Google Trends series must be a
+  governed definition (not an ad-hoc keyword list assembled at
+  extraction time);
+- geography, time range, category/filter settings, and extraction date
+  must be recorded alongside the series, mirroring this record's
+  existing versioned-declaration pattern;
+- the raw Google Trends series must be kept as evidence, never discarded
+  after use;
+- any normalisation/rescaling applied before using the series as an
+  anchor must be deterministic and documented;
+- the latent state must never be presented as an absolute count of
+  searches unless the data actually support that interpretation — Google
+  Trends is a relative index, not an absolute volume (Decision 9's own
+  explicit caution, and consistent with Decision 10's separate
+  prohibition on using Google Trends alone as an absolute search-opportunity
+  count, see `REQ-CAP-001`'s Decision 10 note below);
+- the branded-demand trend must be shown in diagnostics in a form
+  comparable to the observed Google Trends series, so a reviewer can see
+  what the anchor is actually doing to the fitted latent state.
+
+**Still genuinely open** (this addendum does not resolve): the exact
+identifying constraint/measurement-model mathematics that ties the
+Google Trends series to `latent_branded_search_demand`'s scale (the
+remainder of `MD-021`), and the business interpretation of one unit of
+the resulting latent state. Both remain Phase B implementation and
+identification work, requiring the same synthetic-recovery validation
+this record's own Requirement 4 already anticipates.
+
+No `core`, `application`, or `pages` code changes accompany this
+addendum.
+
+## Addendum, 2026-08-30: capacity-cap principle reaffirmed (Decision 10, cross-reference only)
+
+Decision 10 ("Paid Search must not claim more demand than it can
+realistically capture") approves, as a business principle, that official
+Paid Search contribution must be constrained by realistic capacity —
+already the approved direction of `REQ-SEARCH-002` (Candidate A's
+existing `P_t = min(P*_t, K_t)` hard-cap structure) and `REQ-CAP-001`.
+This addendum records that Decision 10 explicitly does not supply a
+specific capacity formula, and explicitly prohibits using Google Trends
+alone as an absolute count of available searches "because it is a
+relative index" — directly reinforcing this record's own Decision 9
+addendum above. Where a valid absolute or otherwise defensible capacity
+evidence source does not exist, Decision 10 requires the *framework* to
+still be implemented while the *capped official result* fails closed —
+consistent with `REQ-CAP-001`'s existing fail-closed posture, not a
+change to it. See `REQ-CAP-001`'s own 2026-08-30 addendum for the fuller
+capacity-constraint contract discussion (Decision 18).
