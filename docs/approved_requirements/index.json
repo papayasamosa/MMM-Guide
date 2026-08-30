@@ -779,7 +779,9 @@
         "docs/approved_requirements/REQ-LATENT-001.md",
         "docs/approved_requirements/index.json",
         "ancestry_mmm/application/diagnostics_service.py",
-        "ancestry_mmm/pages/06_Diagnostics.py"
+        "ancestry_mmm/pages/06_Diagnostics.py",
+        "ancestry_mmm/core/google_trends_anchor.py",
+        "docs/google_trends_brand_demand_anchor_decision_record.md"
       ],
       "required_tests": [
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
@@ -802,7 +804,14 @@
         "ancestry_mmm/tests/test_req_latent_001_decisions_9_10.py::test_req_latent_001_approves_google_trends_as_anchor_source",
         "ancestry_mmm/tests/test_req_latent_001_decisions_9_10.py::test_req_latent_001_forbids_absolute_search_count_interpretation",
         "ancestry_mmm/tests/test_req_latent_001_decisions_9_10.py::test_req_latent_001_does_not_resolve_full_md_021",
-        "ancestry_mmm/tests/test_req_latent_001_decisions_9_10.py::test_req_latent_001_indexed"
+        "ancestry_mmm/tests/test_req_latent_001_decisions_9_10.py::test_req_latent_001_indexed",
+        "ancestry_mmm/tests/test_google_trends_anchor.py::TestComputeAnchorSeries::test_ordinary_series_rescales_linearly",
+        "ancestry_mmm/tests/test_google_trends_anchor.py::TestComputeAnchorSeries::test_raw_zero_is_suppressed_not_observed_zero",
+        "ancestry_mmm/tests/test_google_trends_anchor.py::TestComputeAnchorSeries::test_mismatched_query_set_id_is_a_hard_error",
+        "ancestry_mmm/tests/test_google_trends_anchor.py::TestIdentificationDeclaration::test_declaration_uses_anchored_to_observed_strategy",
+        "ancestry_mmm/tests/test_google_trends_anchor.py::TestIdentificationDeclaration::test_declaration_states_business_interpretation_of_one_unit",
+        "ancestry_mmm/tests/test_google_trends_anchor.py::TestIdentificationDeclaration::test_declaration_is_accepted_by_latent_state_identification_module",
+        "ancestry_mmm/tests/test_google_trends_anchor.py::TestDiagnosticComparison::test_pairs_anchor_with_fitted_values"
       ]
     },
     {

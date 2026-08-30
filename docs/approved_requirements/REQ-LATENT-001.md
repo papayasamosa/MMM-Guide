@@ -298,3 +298,71 @@ still be implemented while the *capped official result* fails closed —
 consistent with `REQ-CAP-001`'s existing fail-closed posture, not a
 change to it. See `REQ-CAP-001`'s own 2026-08-30 addendum for the fuller
 capacity-constraint contract discussion (Decision 18).
+
+## Addendum, 2026-08-30 (Phase B): Google Trends anchor implementation
+(further resolves `MD-021`, does not fully resolve it)
+
+The Decision 9 addendum above approved Google Trends as the identifying
+anchor *source* at the contract level and left the anchoring/
+normalisation mathematics open. This addendum records that a governed
+implementation of that mathematics now exists:
+`ancestry_mmm/core/google_trends_anchor.py`, with the full
+options-considered decision record in
+`docs/google_trends_brand_demand_anchor_decision_record.md`.
+
+**Now resolved:**
+
+- the query-set governance shape (`GoogleTrendsQuerySetDefinition`:
+  branded terms, geography, time-range bounds, category, extraction
+  date, methodology version);
+- the deterministic normalisation (`anchor_value = raw_index / 100.0`,
+  a linear rescaling of Google's own already-consistent 0-100 index);
+- the missingness treatment for Google's own documented "low volume
+  appears as 0" behaviour (`coverage_state = "suppressed"`, distinct
+  from a confirmed observed zero and from an undefined ratio — a raw
+  zero is real, transcribed source evidence, kept, never discarded or
+  silently treated as an ordinary observed fact);
+- the hard prohibition on combining rows from more than one extraction/
+  query set into a single series without an approved overlap-rescaling
+  method (raised as a validation error, never silently merged);
+- **the identifying constraint itself**: the loading between
+  `candidate_a_latent_branded_search_demand` and the rescaled anchor
+  series is FIXED at `GOOGLE_TRENDS_ANCHOR_FIXED_LOADING = 1.0` (never
+  estimated) — `STRATEGY_ANCHORED_TO_OBSERVED` per Requirement 1's
+  second listed strategy. `build_google_trends_identification_
+  declaration` assembles the corresponding
+  `LatentStateIdentificationDeclaration`, satisfying Requirement 2's
+  "must be stored... not left implicit in code";
+- **the business interpretation of one unit**: one unit of
+  `latent_branded_search_demand`, under this identifying choice, means
+  one point of the governed, rescaled, relative Google Trends index for
+  the approved branded query set — explicitly NOT one search, one
+  click, or any absolute search volume, closing the specific gap
+  Decision 9's own caution named;
+- a diagnostic comparison function
+  (`compare_anchor_to_fitted_latent_series`) pairing the anchor series
+  with a caller-supplied fitted-latent-value-by-week mapping, satisfying
+  the Decision 9 addendum's "must be shown in diagnostics in a form
+  comparable to the observed Google Trends series" requirement at the
+  computation level.
+
+**Still not resolved by this addendum** (`MD-021` remains only
+partially resolved):
+
+- this fixed-loading constraint is NOT yet imposed inside
+  `core.search_capacity`'s actual linked-PyMC construction of
+  `latent_branded_search_demand` — `core.search_capacity` remains
+  unmodified by this addendum, exactly as this record's own existing
+  text already states. Doing so is a separate, materially statistical
+  model change requiring its own prior-predictive checks and
+  synthetic-recovery validation (Requirement 4), not a configuration
+  change;
+- Requirement 3's compiler-level blocking extension remains deferred,
+  unaffected by this addendum;
+- an actual Google Trends extraction/ingestion mechanism is out of
+  scope for this addendum, mirroring `REQ-SEO-001`'s equivalent GSC
+  ingestion-mechanism boundary.
+
+No `application`/`pages` code changes accompany this addendum; only the
+new standalone `core.google_trends_anchor` module (which does not
+modify `core.latent_state_identification` or `core.search_capacity`).
