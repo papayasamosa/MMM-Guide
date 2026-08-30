@@ -104,6 +104,47 @@ class TestModelComparisonCandidate:
         assert candidate.model_type == "A"
         assert candidate.market is None
 
+    def test_from_dict_migrates_legacy_stringified_converged_value(self):
+        """Codex review, PR #348 (P2): a bundle saved before the UX-021 fix
+        persisted `convergence["converged"]` as `numpy.bool_`, which
+        `json.dumps(..., default=str)` stringified to the literal text
+        "False" - truthy on naive read-back, and a value
+        `candidates_decision_summary_dataframe`'s `pandas.astype("boolean")`
+        cannot interpret and would raise on. `from_dict` must normalize that
+        legacy string form to a real bool at the persistence boundary
+        (core/AGENTS.md "Persistence boundaries": migrations belong here),
+        for both "False" and "True", so the page renders correctly for
+        exactly the historical bundles the UX-021 fix was meant to repair."""
+        legacy_false = ModelComparisonCandidate.from_dict(
+            {
+                "model_type": "A",
+                "label": "Model A (legacy bundle)",
+                "model_run_id": "run-legacy-false",
+                "fitted_at": 1.0,
+                "convergence": {"rhat_max": 1.2, "converged": "False"},
+            }
+        )
+        assert legacy_false.convergence["converged"] is False
+
+        legacy_true = ModelComparisonCandidate.from_dict(
+            {
+                "model_type": "A",
+                "label": "Model A (legacy bundle, converged)",
+                "model_run_id": "run-legacy-true",
+                "fitted_at": 1.0,
+                "convergence": {"rhat_max": 1.0, "converged": "True"},
+            }
+        )
+        assert legacy_true.convergence["converged"] is True
+
+        # The actual regression this guards against: building the decision
+        # summary table must not raise for a legacy-string candidate, and
+        # must show the real (non-converged) status rather than a truthy
+        # stringified one.
+        df = candidates_decision_summary_dataframe([legacy_false, legacy_true])
+        assert df.loc[0, "converged"] is False or df.loc[0, "converged"] == False  # noqa: E712
+        assert df.loc[1, "converged"] is True or df.loc[1, "converged"] == True  # noqa: E712
+
     def test_from_scorecard_extracts_the_relevant_pieces(self):
         scorecard = {
             "convergence": {"rhat_max": 1.02, "converged": True},

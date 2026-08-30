@@ -105,7 +105,27 @@ class ModelComparisonCandidate:
     @classmethod
     def from_dict(cls, d: dict) -> "ModelComparisonCandidate":
         known = set(cls.__dataclass_fields__)
-        return cls(**{k: v for k, v in d.items() if k in known})
+        filtered = {k: v for k, v in d.items() if k in known}
+        # Migration (core/AGENTS.md "Persistence boundaries": migrations
+        # belong at the import boundary, not scattered across consumers).
+        # Codex review, PR #348 (P2): bundles saved before the UX-021 fix
+        # persisted `convergence["converged"]` as `numpy.bool_`, which
+        # `json.dumps(..., default=str)` stringified to the literal text
+        # "True"/"False" - truthy on naive read-back. Normalize that legacy
+        # string form to a real bool here so `pandas.astype("boolean")` in
+        # candidates_to_dataframe()/candidates_to_metrics_dataframe() never
+        # sees a non-empty string it cannot interpret (which would raise and
+        # break the Compare Models page for exactly the historical bundles
+        # the UX-021 fix was meant to repair).
+        convergence = filtered.get("convergence")
+        if isinstance(convergence, dict) and isinstance(
+            convergence.get("converged"), str
+        ):
+            filtered["convergence"] = {
+                **convergence,
+                "converged": convergence["converged"].strip().lower() == "true",
+            }
+        return cls(**filtered)
 
     @classmethod
     def from_scorecard(
