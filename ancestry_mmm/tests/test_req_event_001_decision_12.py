@@ -35,9 +35,7 @@ def test_req_event_001_addendum_does_not_select_response_structure():
     addendum must say so explicitly, not silently imply a structure."""
     text = REQ_EVENT_001_PATH.read_text()
     assert "Still genuinely open" in text
-    assert "S1-S4" in text or "response *structure*" in text.lower().replace(
-        "*", ""
-    )
+    assert "S1-S4" in text or "response *structure*" in text.lower().replace("*", "")
 
 
 def test_no_reverse_adstock_implemented_in_named_events_module():

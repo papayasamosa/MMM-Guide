@@ -44,9 +44,7 @@ def test_req_search_004_addendum_does_not_invent_d4_threshold():
 def test_req_search_004_indexed():
     data = json.loads(INDEX_PATH.read_text())
     matches = [
-        req
-        for req in data["requirements"]
-        if req["requirement_id"] == "REQ-SEARCH-004"
+        req for req in data["requirements"] if req["requirement_id"] == "REQ-SEARCH-004"
     ]
     assert len(matches) == 1
     assert REQ_SEARCH_004_PATH.exists()

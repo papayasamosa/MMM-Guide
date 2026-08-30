@@ -43,9 +43,7 @@ def test_wp7_package_records_items_1_and_6_resolved():
     text = WP7_PACKAGE_PATH.read_text()
     assert "Item 1" in text and "resolved" in text
     assert "Item 6" in text
-    assert (
-        "Items 2, 3, 4, 5, 7, 8, 9, 10, 11, and 12 remain fully open" in text
-    )
+    assert "Items 2, 3, 4, 5, 7, 8, 9, 10, 11, and 12 remain fully open" in text
 
 
 def test_req_fx_002_and_003_indexed():

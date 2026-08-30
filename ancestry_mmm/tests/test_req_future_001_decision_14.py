@@ -25,9 +25,7 @@ def test_req_future_001_addendum_does_not_change_shipped_ui():
 def test_req_future_001_indexed():
     data = json.loads(INDEX_PATH.read_text())
     matches = [
-        req
-        for req in data["requirements"]
-        if req["requirement_id"] == "REQ-FUTURE-001"
+        req for req in data["requirements"] if req["requirement_id"] == "REQ-FUTURE-001"
     ]
     assert len(matches) == 1
     assert REQ_FUTURE_001_PATH.exists()
