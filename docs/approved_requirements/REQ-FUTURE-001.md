@@ -239,3 +239,41 @@ shipped UI or defaults accompanies this addendum either** - `core.
 planning.value.ScenarioValueAssumptions` and `build_scenario_value_
 assumptions` are untouched; every field still defaults to requiring
 explicit analyst entry exactly as WP2G originally shipped it.
+
+
+## Addendum, 2026-08-30 (Phase D, second): bundle architecture resolved (Decision 14 continuation)
+
+This record's own "Unresolved decisions"/traceability text pointed to
+`docs/wp9_future_assumption_bundle_decision_package.md`'s B1-B3/M1-M3/
+F1-F3 candidates as the missing bundle-architecture selection. The
+user's 2026-08-29 brief, confirmed in-session 2026-08-30, explicitly
+delegates that selection: "The exact internal bundle/module architecture
+is an implementation choice. Reconcile it with the work already in the
+repo and document the resulting contract." This addendum records the
+resulting resolution: full decision record in
+`docs/future_assumption_bundle_architecture_decision_record.md`;
+implementation in the new
+`ancestry_mmm/core/planning/future_assumption_bundle.py`.
+
+**Resolved:** the bundle schema (B1 - a thin named wrapper around
+existing `FutureContextResult`s, `core.planning.future_context` itself
+completely unchanged); the materiality-grading policy (M3 - disclosed,
+ungraded consequence evidence only, no verdict field, matching this
+program's own already-established `REQ-CALIB-001` precedent exactly,
+enforced by a dedicated regression test scanning every dataclass field
+for a forbidden verdict-shaped name); and the external-forecaster
+integration policy (F1 - no production integration now, since the
+demand/seasonality "model-derived forecast" need this record's own
+first addendum already noted is satisfied by the existing trend/Fourier
+continuation, and Chronos-2/a method-agnostic interface both require
+their own substantial backtest-validation workstream this record's
+narrower scope should not rush).
+
+**Still not resolved:** any actual external-forecaster integration
+(explicitly future work, not rejected); `REQ-FORECAST-001`'s own
+consequence-assessment mechanism (a separate modelling workstream - this
+addendum resolves only how its evidence would attach to a bundle once
+built, never inventing the mechanism itself); any persistence
+(`core.persistence`), UI (`pages/08_Scenario_Planner.py`), or
+diagnostics-page wiring for a bundle. No change to `core.planning.
+future_context` accompanies this addendum.

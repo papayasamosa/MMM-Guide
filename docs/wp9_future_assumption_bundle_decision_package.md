@@ -220,3 +220,37 @@ review policy).
 **Status:** Decision-support package only. `core.planning.future_context`
 continues to serve one plan window's per-control contract exactly as
 before, with no bundle-level object, pending review of this package.
+
+
+## Update, 2026-08-30: bundle-schema, materiality, and forecaster-integration selection delegated by later approved instructions; resolved
+
+The user's "Post-UI/UX Implementation Instructions: Approved Business
+Decisions" brief (2026-08-29), a later human instruction, explicitly
+established a source-of-truth order placing the brief's own approved
+decisions and instructions above an older decision package such as this
+one, and explicitly authorised (2026-08-30, in-session confirmation)
+proceeding on this package's B1-B3/M1-M3/F1-F3 candidates: "The
+business semantics are in the instructions. Users should provide things
+they actually control, especially planned activity and promotions,
+while demand, seasonality and similar model-derived assumptions should
+come from governed system/model forecasts rather than manual guesses.
+The exact internal bundle/module architecture is an implementation
+choice. Reconcile it with the work already in the repo and document the
+resulting contract." This supersedes this package's original "not
+chosen by the coding agent" reservation.
+
+The resulting resolution - B1 (a thin named wrapper around existing
+`FutureContextResult`s, reusing `core.planning.future_context`
+unchanged), M3 (disclosed, ungraded consequence evidence only, no
+verdict field, matching this program's own already-established
+`REQ-CALIB-001` precedent), and F1 (no production external-forecaster
+integration now, since the demand/seasonality "model-derived forecast"
+need is already satisfied by the existing trend/Fourier continuation,
+and Chronos-2/F2/F3 both require a substantial separate backtest-
+validation workstream this record's narrower scope should not rush) -
+is recorded in full, with every rejected alternative, in
+`docs/future_assumption_bundle_architecture_decision_record.md`. This
+package's original text above is preserved as history and remains an
+accurate record of the state of the decision before 2026-08-30 - it is
+not rewritten, only superseded for the specific choices this update
+describes.

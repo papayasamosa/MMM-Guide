@@ -928,7 +928,9 @@
         "docs/approved_requirements/REQ-FUTURE-001.md",
         "docs/approved_requirements/index.json",
         "ancestry_mmm/core/planning/value_prefill.py",
-        "docs/scenario_value_assumption_prefill_decision_record.md"
+        "docs/scenario_value_assumption_prefill_decision_record.md",
+        "ancestry_mmm/core/planning/future_assumption_bundle.py",
+        "docs/future_assumption_bundle_architecture_decision_record.md"
       ],
       "required_tests": [
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
@@ -943,7 +945,10 @@
         "ancestry_mmm/tests/test_req_future_001_decision_14.py::test_req_future_001_indexed",
         "ancestry_mmm/tests/test_scenario_value_prefill.py::TestSuggestValuePrefill::test_returns_most_recent_matching_rate",
         "ancestry_mmm/tests/test_scenario_value_prefill.py::TestSuggestValuePrefill::test_no_matching_cell_returns_none",
-        "ancestry_mmm/tests/test_scenario_value_prefill.py::TestScenarioValuePrefillSuggestion::test_never_applied_disclaimer_present"
+        "ancestry_mmm/tests/test_scenario_value_prefill.py::TestScenarioValuePrefillSuggestion::test_never_applied_disclaimer_present",
+        "ancestry_mmm/tests/test_future_assumption_bundle.py::TestFutureAssumptionBundle::test_decision_ready_false_if_any_context_used_hold_last_observed",
+        "ancestry_mmm/tests/test_future_assumption_bundle.py::TestSummariseBundleControlProvenance::test_separates_explicit_and_exploratory",
+        "ancestry_mmm/tests/test_future_assumption_bundle.py::TestNoVerdictFieldAnywhere::test_no_dataclass_in_this_module_has_a_verdict_shaped_field"
       ]
     },
     {
