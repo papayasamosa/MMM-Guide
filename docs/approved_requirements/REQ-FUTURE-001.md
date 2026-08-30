@@ -157,3 +157,54 @@ Modelling
 ## Approval date
 
 2026-08-18
+
+## Addendum, 2026-08-30: manual-entry-reduction principle approved; WP2G reconciliation task recorded
+
+The business-decision brief "Post-UI/UX Implementation Instructions:
+Approved Business Decisions" (Decision 14, "Future planning should
+require only assumptions the user actually controls") approves a
+governing *principle* for this record's eventual bundle schema and for
+`core.planning.value.ScenarioValueAssumptions` (WP2G, `REQ-ECON-003`
+Requirement 5). This addendum records the principle and a named
+reconciliation task; it does not itself change the bundle schema
+decision (still open, see "Unresolved decisions" above) or any code.
+
+**Approved principle.** The analyst should not have to manually supply
+an assumption the model, a governed system default, Finance data, or an
+approved forecast method can already provide — specifically: expected
+demand, future seasonality, baseline growth, exchange rates, and
+individual future prices/values. The analyst *should* continue to
+supply: planned marketing activity, promotion periods, and explicit
+governed overrides. This confirms, and does not change, what this
+repository already does correctly: `core.planning.future_context`
+already deterministically auto-continues trend/Fourier seasonality terms
+(never asked manually); `REQ-FX-005`'s future-FX-assumption contract
+already exists (implementation blocked on Finance, per that record and
+`docs/wp7_governed_fx_finance_decision_package.md`, not on this
+principle). This addendum does not create a demand-forecasting
+capability where none exists — where an approved forecasting method does
+not yet exist (baseline/demand — `REQ-BASELINE-001`, still
+decision-required), the analyst is not required to guess merely because
+the forecast engine is unfinished, per Decision 14's own text, but no
+substitute forecast is invented by this addendum either.
+
+**Named reconciliation task (Phase D, not this record, not this pass):**
+WP2G (`4eb91f80`, 2026-08-28) implemented `ScenarioValueAssumptions` so
+that every FH-LTR/DNA-revenue number defaults to `0.0` and requires
+explicit analyst entry every time, by deliberate design, with automatic
+pre-filling from historical valuation explicitly rejected as a
+considered alternative (to avoid a *silent* default). This sits in
+tension with this addendum's principle of reducing unnecessary manual
+entry via "an approved average value/price assumption... rather than
+asking for every individual price." Both halves of Decision 14's own
+text are simultaneously true and must both survive a future
+reconciliation: (a) forward assumptions must stay governed and explicit,
+never silently defaulted from history, and (b) unnecessary manual data
+entry should be reduced via approved defaults where the business
+decision supports them, with every assumption still disclosed in the
+final plan. The reconciliation — adding an **optional**, governed,
+overridable, explicitly-disclosed pre-fill for `ScenarioValueAssumptions`
+sourced from `REQ-ECON-002`/`REQ-ECON-003`'s existing historical
+rate-derivation contract, never mandatory and never silent — is Phase D
+implementation work, not approved or implemented by this addendum. No
+change to WP2G's shipped UI or defaults accompanies this record.
