@@ -921,7 +921,9 @@
       "affected_modules": [
         "docs/wp9_future_assumption_bundle_decision_package.md",
         "docs/approved_requirements/REQ-FUTURE-001.md",
-        "docs/approved_requirements/index.json"
+        "docs/approved_requirements/index.json",
+        "ancestry_mmm/core/planning/value_prefill.py",
+        "docs/scenario_value_assumption_prefill_decision_record.md"
       ],
       "required_tests": [
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
@@ -933,7 +935,10 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
         "ancestry_mmm/tests/test_req_future_001_decision_14.py::test_req_future_001_addendum_records_wp2g_reconciliation",
         "ancestry_mmm/tests/test_req_future_001_decision_14.py::test_req_future_001_addendum_does_not_change_shipped_ui",
-        "ancestry_mmm/tests/test_req_future_001_decision_14.py::test_req_future_001_indexed"
+        "ancestry_mmm/tests/test_req_future_001_decision_14.py::test_req_future_001_indexed",
+        "ancestry_mmm/tests/test_scenario_value_prefill.py::TestSuggestValuePrefill::test_returns_most_recent_matching_rate",
+        "ancestry_mmm/tests/test_scenario_value_prefill.py::TestSuggestValuePrefill::test_no_matching_cell_returns_none",
+        "ancestry_mmm/tests/test_scenario_value_prefill.py::TestScenarioValuePrefillSuggestion::test_never_applied_disclaimer_present"
       ]
     },
     {

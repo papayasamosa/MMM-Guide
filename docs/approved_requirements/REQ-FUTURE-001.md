@@ -208,3 +208,34 @@ sourced from `REQ-ECON-002`/`REQ-ECON-003`'s existing historical
 rate-derivation contract, never mandatory and never silent — is Phase D
 implementation work, not approved or implemented by this addendum. No
 change to WP2G's shipped UI or defaults accompanies this record.
+
+## Addendum, 2026-08-30 (Phase D): optional value-assumption pre-fill implemented (Decision 14 / WP2G reconciliation)
+
+This record's own 2026-08-30 addendum above named a specific,
+Phase-D-scoped reconciliation task: an optional, governed, overridable,
+disclosed pre-fill for `ScenarioValueAssumptions` sourced from
+`REQ-ECON-002`/`REQ-ECON-003`'s existing historical rate-derivation
+contract. This addendum records that the computation-contract half of
+that task is now implemented: full decision record in
+`docs/scenario_value_assumption_prefill_decision_record.md`;
+implementation in `ancestry_mmm/core/planning/value_prefill.py`.
+
+**Resolved:** a suggestion is the most recent (highest-week) observed
+`WeeklyValueRate.value_per_unit` for a `(valuation_kind, market,
+segment)` cell (`suggest_value_prefill`/`suggest_value_prefills`) - no
+new smoothing/averaging statistical step is introduced; a cell with no
+matching historical rate produces `None`, never a fabricated value. The
+suggestion is returned as its own clearly-labelled
+`ScenarioValuePrefillSuggestion` record, carrying an explicit disclaimer
+that it is never applied automatically.
+
+**Still not resolved / deliberately out of scope:** the actual Scenario
+Planner page UI wiring that would show a suggestion and let the analyst
+accept or override it (a future integration pass); this addendum does
+not touch `docs/wp9_future_assumption_bundle_decision_package.md`'s
+separately-reserved "future-assumption bundle" architecture question
+(explicitly not for the coding agent) at all. **No change to WP2G's
+shipped UI or defaults accompanies this addendum either** - `core.
+planning.value.ScenarioValueAssumptions` and `build_scenario_value_
+assumptions` are untouched; every field still defaults to requiring
+explicit analyst entry exactly as WP2G originally shipped it.
