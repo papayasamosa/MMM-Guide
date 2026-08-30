@@ -8697,3 +8697,135 @@ for the full list). `docs/specification_authority.md`'s gap table and
 final consolidation commit alongside the full quality-gate run
 (ruff/mypy/tests). Phases B through F remain future, separately-scoped
 work per the dependency plan.
+
+**Date:** 2026-08-30
+**Decision:** Begin Phase B ("behavioural/statistical implementation")
+of the 19-decision plan, per the handoff recorded at the end of
+`D:\Ancestry-MMM\logs\post_ux_business_decisions_2026-08-30.md`. This
+pass implements Phase B's three named "immediate first steps," each as
+its own commit: (1) GSA/Net Bill Through outcome-support wiring
+(Decision 1); (2) the Search taxonomy platform-axis schema field and
+reporting roll-up (Decisions 2, 4); (3) the SEO positional-visibility
+metric formula, research-first (Decisions 5, 6).
+
+**Step 1 (GSA/NBT outcome support).** A repository-wide audit found no
+raw, event-level (one-row-per-subscriber) Family History data shape
+anywhere in this repository's ingestion code, schemas, or sample data -
+every FH data shape is pre-aggregated to `week x market x segment`.
+Existing authority (`REQ-NBT-002`, `docs/net_billthrough.md`, and PRD
+Part 5's "Net Bill Through working data contract") already prohibits the
+MMM from reconstructing customer-level billing events by default, absent
+a separate approved requirement and privacy review - this is not a
+conflict with Decision 1, since Decision 1's governed rules (hard-offer/
+free-trial GSA timing, the NBT signup-date pull-back, refund exclusion,
+120-day DNA Cross-sell window) describe what these outcomes *mean*, not
+that the MMM itself must reconstruct them from raw events; a supplied,
+already-aggregated feed following those exact rules already satisfies
+the definition (as `REQ-NBT-002`'s existing supplied-NBT path already
+does). New `ancestry_mmm/core/fh_subscription_events.py` implements
+Decision 1's exact rules as a tested reference/reconciliation
+implementation over a well-specified synthetic input shape - explicitly
+NOT wired into any default ingestion/model-training path, per new
+`REQ-NBT-003`. Separately, `ancestry_mmm/core/outcome_valuation.py`'s
+`WeeklyOutcomeValuationRecord` gained a `horizon_months` field, required
+and validated (fail-closed) to equal `REQ-OUT-003`'s approved 48 for any
+FH LTR record - a missing or mismatched horizon now blocks construction
+rather than letting a downstream value/ROI calculation guess it is
+correct, directly implementing `REQ-OUT-003` §6.
+
+**Step 2 (Search taxonomy platform axis).** New
+`ancestry_mmm/core/search_intent_taxonomy.py` implements `REQ-SEARCH-004`
+§1's `SearchIntentGroup` schema plus its 2026-08-30 addendum's approved
+Brand/Non-Brand content, a governed Google/Bing platform axis (kept as a
+field deliberately separate from `search_intent_group_id`, per that
+addendum's explicit "never conflate into one combined enum"
+instruction), and `roll_up_paid_search_reporting`, which computes Total
+Paid Search -> {Brand, Non-Brand} -> {Google/Bing x Brand/Non-Brand}
+purely by summing governed leaf cells (Decision 4: no level ever accepts
+a pre-supplied parent total; an unrecognised leaf combination fails
+closed rather than being silently dropped). `ActivityDefinition`
+(`core.activities`, schema v4 -> v5) gained `search_intent_group_id`
+(named but not implemented by `REQ-SEARCH-004` §3) and `search_platform`
+(new); both reject PMax/Demand Gen/YouTube campaign types carrying a
+taxonomy reference (Decision 2), and both feed
+`activity_reporting_fingerprint` while being excluded from the hard
+`activity_definitions_fingerprint`/`activity_fit_fingerprint` gates
+(mirroring `pooling_group_id`'s existing precedent - a pure taxonomy
+relabelling must not force a refit). A deliberate implementation
+judgement, recorded in `REQ-SEARCH-004`'s addendum: the pre-existing
+free-text `ActivityDefinition.platform` field (used by every activity
+type, not just Search) was left untouched rather than repurposed under a
+closed enum, since collapsing it would reject every unrelated existing
+value; `search_platform` is a new, narrowly-scoped field instead.
+
+**Step 3 (SEO positional-visibility formula).** Research-first, per the
+governing brief's own instruction. Used the Context7 MCP tool to query
+live Google documentation directly (library IDs
+`/websites/developers_google_webmaster-tools_v1` and
+`/websites/support_google_webmasters`) rather than relying on training-
+data recall alone - confirmed the Search Analytics API's exact `rows[]`
+schema, Google's own official BigQuery-export aggregation formula
+(`(sum(sum_top_position) / sum(impressions)) + 1.0`), and the documented
+fact that "a position is only recorded if the result receives an
+impression." The full options-considered record is
+`docs/seo_positional_visibility_metric_decision_record.md`. Chosen
+formula: impression-weighted average position across whatever rows are
+supplied (never a naive mean - a query/page mix shift must not distort
+the metric), transformed via `visibility_index = 1 / weighted_avg_
+position` (bounded `(0, 1]`, higher-is-better - inverting GSC's native
+lower-is-better convention so this metric matches every other MMM media
+variable's sign convention). A zero-total-impression cell produces
+`None` for both fields (undefined, never fabricated), while
+`total_impressions`/`total_clicks` remain real numbers (including a
+genuine `0.0`) whenever source rows were actually supplied - matching
+Google's own documented missingness behaviour and this repository's
+"missing is not zero" doctrine. New
+`ancestry_mmm/core/seo_visibility.py` implements the formula plus
+`REQ-SEO-001` §1/§2's previously-unimplemented
+`dim_seo_visibility_metric_definition`/`fact_seo_visibility_observation`
+schemas, carrying Decision 6's already-approved
+`causal_role = "mediator_or_capture_efficiency_state"`. One implementation-
+level judgement made during this step, recorded in the decision record:
+this repository's existing `core.coverage` eight-state missingness
+vocabulary has no state for "a plain, directly observed, non-zero source
+fact" (every existing consumer is inherently a modelled/projected
+quantity) - GSC data are raw source facts, so an ordinary fully-observed
+week's `coverage_state` is left `None` rather than forced into
+`estimated`/`modelled`, which would misrepresent it (the exact
+mislabelling `REQ-COVERAGE-001` §2 warns against in the opposite
+direction). Not resolved by this step: the functional form this index
+takes inside an actual MMM regression (Decision 6/Phase C's causal-wiring
+scope) and full partial-window SEO coverage policy (Decision 3) - both
+explicitly named as separate, later work.
+
+**Impact:** New `ancestry_mmm/core/fh_subscription_events.py`,
+`ancestry_mmm/core/search_intent_taxonomy.py`,
+`ancestry_mmm/core/seo_visibility.py`, and their test files
+(`test_fh_subscription_events.py`, `test_search_intent_taxonomy.py`,
+`test_seo_visibility.py`); new `docs/approved_requirements/REQ-NBT-003.md`
+and `docs/seo_positional_visibility_metric_decision_record.md`. Modified:
+`ancestry_mmm/core/outcomes.py` (`FH_LTR_HORIZON_MONTHS`,
+`DNA_CROSS_SELL_WINDOW_DAYS`, `FH_SEGMENT_*`), `ancestry_mmm/core/
+outcome_valuation.py` (`horizon_months` field), `ancestry_mmm/core/
+activities.py` (`search_intent_group_id`/`search_platform`, schema v5),
+`ancestry_mmm/pages/07_Results_Curve_Bank.py` (automatic horizon
+application), `docs/approved_requirements/REQ-SEARCH-004.md` and
+`REQ-SEO-001.md` (addenda), `docs/approved_requirements/index.json`.
+Mypy full-core ratchet unchanged at 225 errors throughout (91 source
+files checked by the end of Step 3, up from 88 at the start - each new
+module adds zero errors). No regression in any existing test suite;
+every new/modified test file passes. Landed as three separate commits,
+one per step.
+
+**Owner:** Modelling / Platform engineering (implemented autonomously,
+per the brief's pre-authorisation).
+
+**Status:** Phase B's three named "immediate first steps" complete.
+Remaining Phase B scope (not reached this pass): full partial-window SEO
+handling (Decision 3's own statistical-method half, beyond the
+formula's already-correct handling of an incomplete row set), Google
+Trends brand-demand anchor implementation (Decision 9, `REQ-LATENT-001`),
+and non-paid SEO contribution reporting (Decisions 6/7/8's reporting
+surface). See the handoff section appended to
+`D:\Ancestry-MMM\logs\post_ux_business_decisions_2026-08-30.md` for exact
+next steps.

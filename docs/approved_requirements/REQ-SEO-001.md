@@ -268,3 +268,66 @@ D7 of `docs/wp1_search_seo_granularity_decision_package.md`, and it does
 not resolve the remaining, genuinely open part of D1 (the specific
 estimand/transformation/counterfactual for any given use) or D3
 (taxonomy content — see `REQ-SEARCH-004`'s own addendum instead).
+
+## Addendum, 2026-08-30 (Phase B): exact positional-visibility formula approved and implemented
+
+This addendum supplies the concrete formula the addendum above explicitly
+deferred as research-first Phase B work. Full sources consulted, options
+considered, and rationale are recorded in
+`docs/seo_positional_visibility_metric_decision_record.md`; this
+addendum records only the resulting requirement-level facts.
+
+**Formula.** For a `market x week` cell, given the raw Google Search
+Console rows available for that cell (`position`, `impressions`, each
+row optionally at query/page/day grain — the metric is agnostic to which):
+
+1. `weighted_avg_position = sum(position_i * impressions_i) /
+   sum(impressions_i)` — an impression-weighted average, confirmed to
+   match Google's own official BigQuery-export aggregation formula
+   (`(sum(sum_top_position) / sum(impressions)) + 1.0`), never a naive
+   unweighted mean across rows.
+2. `visibility_index = 1.0 / weighted_avg_position` — bounded `(0, 1]`,
+   `directionality = "higher_is_better"`. This resolves the "clear,
+   unambiguous better-ranking direction" requirement: GSC's native
+   `position` field is lower-is-better, which this transform inverts to
+   match every other media variable's higher-is-better convention in
+   this MMM.
+3. A `market x week` cell with zero total impressions across all
+   supplied rows produces `weighted_avg_position = None` and
+   `visibility_index = None` (undefined, never a fabricated value) —
+   confirmed by Google's own documentation that "a position is only
+   recorded if the result receives an impression." `total_impressions`/
+   `total_clicks` remain real numbers (including a genuine `0.0`)
+   whenever source rows were actually supplied for the cell.
+4. Organic clicks, impressions, and CTR remain retained as supporting
+   diagnostics on the same observation record, never replaced by or
+   conflated with the primary `visibility_index` (this record's existing
+   §3/§6 separation, reaffirmed).
+
+**Implementation.** `ancestry_mmm/core/seo_visibility.py`:
+`SeoVisibilityMetricDefinition`/`SEO_POSITIONAL_VISIBILITY_METRIC` (this
+record's §1 `dim_seo_visibility_metric_definition` schema, now
+implemented — carrying Decision 6's already-approved
+`causal_role = "mediator_or_capture_efficiency_state"`, with
+`direction_relative_to_estimand` deliberately left `"not_yet_approved"`
+per Decision 6's estimand-specific-per-use instruction), and
+`SeoPositionalVisibilityObservation`/`compute_weekly_positional_
+visibility` (this record's §2 `fact_seo_visibility_observation` schema).
+
+**Not resolved by this addendum:** the functional form/transformation
+this index takes if and when it enters an actual MMM regression as a
+treatment variable (this record's still-open "transformation of a
+non-linear ranking metric... for use as a linear treatment" item, now
+explicitly the *only* remaining part of that item — the measurement-level
+transformation is resolved); full partial-window SEO coverage policy
+(Decision 3, tracked separately); any GSC ingestion/scheduling mechanism
+(out of scope of this record entirely).
+
+### Affected modules (this addendum)
+
+- `ancestry_mmm/core/seo_visibility.py` (new)
+- `docs/seo_positional_visibility_metric_decision_record.md` (new)
+
+### Required tests (this addendum)
+
+- `ancestry_mmm/tests/test_seo_visibility.py` (all tests)

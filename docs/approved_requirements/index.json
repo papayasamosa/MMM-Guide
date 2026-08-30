@@ -1379,7 +1379,9 @@
         "ancestry_mmm/core/search_objects.py",
         "ancestry_mmm/core/causal_graph.py",
         "ancestry_mmm/core/persistence.py",
-        "docs/wp1_search_seo_granularity_decision_package.md"
+        "docs/wp1_search_seo_granularity_decision_package.md",
+        "ancestry_mmm/core/seo_visibility.py",
+        "docs/seo_positional_visibility_metric_decision_record.md"
       ],
       "required_tests": [
         "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
@@ -1396,7 +1398,14 @@
         "ancestry_mmm/tests/test_req_seo_001_decisions_5_6_7_8.py::test_no_28_august_2023_seo_modelling_meaning_in_active_code_or_docs",
         "ancestry_mmm/tests/test_req_seo_001_decisions_5_6_7_8.py::test_req_seo_001_addendum_resolves_causal_role_and_metric_type",
         "ancestry_mmm/tests/test_req_seo_001_decisions_5_6_7_8.py::test_wp1_package_records_d1_d2_d3_resolved_d4_d7_open",
-        "ancestry_mmm/tests/test_req_seo_001_decisions_5_6_7_8.py::test_req_seo_001_indexed"
+        "ancestry_mmm/tests/test_req_seo_001_decisions_5_6_7_8.py::test_req_seo_001_indexed",
+        "ancestry_mmm/tests/test_seo_visibility.py::TestComputeWeeklyPositionalVisibility::test_aggregation_is_impression_weighted_not_naive_mean",
+        "ancestry_mmm/tests/test_seo_visibility.py::TestComputeWeeklyPositionalVisibility::test_aggregation_matches_google_bigquery_export_formula_shape",
+        "ancestry_mmm/tests/test_seo_visibility.py::TestComputeWeeklyPositionalVisibility::test_zero_total_impressions_is_missing_not_zero",
+        "ancestry_mmm/tests/test_seo_visibility.py::TestComputeWeeklyPositionalVisibility::test_higher_is_better_direction",
+        "ancestry_mmm/tests/test_seo_visibility.py::TestComputeWeeklyPositionalVisibility::test_partially_observed_window",
+        "ancestry_mmm/tests/test_seo_visibility.py::TestGovernedMetricDefinition::test_causal_role_matches_decision_6",
+        "ancestry_mmm/tests/test_seo_visibility.py::TestGovernedMetricDefinition::test_direction_relative_to_estimand_stays_not_yet_approved"
       ]
     },
     {
