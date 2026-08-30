@@ -172,3 +172,25 @@ thresholds). The coding agent does not select a candidate.
 `REQ-EVENT-001` "Explicitly excluded" and `REQ-EVENT-002` "Explicitly
 excluded"; `docs/approved_requirements/index.json` (2026-08-19);
 `docs/specification_authority.md` named-event overlay section.
+
+## Update, 2026-08-30: family classification and part of dimension 5 resolved
+
+The business-decision brief "Post-UI/UX Implementation Instructions:
+Approved Business Decisions" (Decision 12) resolves the event-family
+classification item this package's "Decision required" list names
+(originally: "the classification of any concrete real-world event
+family" — `REQ-EVENT-001`'s own "Explicitly excluded" bullet). See
+`REQ-EVENT-001`'s 2026-08-30 addendum for the full mapping: gifting
+families -> `anticipatory`; remembrance/commemorative families ->
+`contemporaneous`/`post_event`; promotional/commercial families ->
+`post_event`, bounded to the actual promotion window.
+
+This is a resolution of the *qualitative direction* within **decision
+dimension 5** only (which treatment-vocabulary value applies to which
+family type) — it does not supply the *numeric* maximum lead/lag support
+values dimension 5 also requires, and it does not resolve decision
+dimensions 1-4, 6, or 7, which remain fully open exactly as recorded
+above. The WP2 evidence-gathering programme (`scripts/wp2_named_event_
+response/`, `docs/wp2_named_event_response_evidence.md`) is unaffected
+and remains the source of evidence for whichever response structure
+(S1-S4) a future decision selects.

@@ -240,3 +240,65 @@ Modelling / Product
 ## Approval date
 
 2026-08-19
+
+## Addendum, 2026-08-30: event-family-to-treatment mapping approved (partially resolves an "Explicitly excluded" item)
+
+The business-decision brief "Post-UI/UX Implementation Instructions:
+Approved Business Decisions" (Decision 12, "Different event types need
+different timing patterns") supplies the qualitative mapping this
+record's own "Explicitly excluded" list reserved ("the classification of
+any concrete real-world event family"). This addendum records that
+mapping; it does not rewrite the original record above, does not select
+a response *structure* (decision dimension 1 in `docs/wp2_named_event_
+statistical_method_decision_package.md` — S1/S2/S3/S4 remains open), and
+does not supply any numeric lead/lag window length (decision dimension
+5's actual values remain open).
+
+**Approved family-to-treatment-value mapping**, using this record's
+existing closed four-value vocabulary (§3):
+
+| Event family | Examples | Approved temporal treatment |
+|---|---|---|
+| Gifting | Mother's Day, Father's Day, Valentine's Day, Christmas | `anticipatory` (demand may rise before the event; the model must be able to learn a pre-event effect) |
+| Remembrance / commemorative | Remembrance Day, VE Day | `contemporaneous` or `post_event` (the event itself triggers interest; the main effect may occur in the event week and possibly after it) |
+| Promotional / commercial | Black Friday | `post_event`, bounded to the actual promotion window (the commercial event or promotion period is the main treatment window; no automatic long pre-event effect unless the actual promotion starts earlier or the data support it — see below) |
+
+This is a **type-level mapping approved once**, not a per-occurrence
+choice — a specific real-world event (e.g. "Black Friday 2026") is
+classified into one of these three families (a governed, explicit act
+per this record's existing §2 "never inferred from free-text
+`event_name`"), and the family's approved treatment above then applies,
+still subject to this record's existing §4 requirement that a maximum
+lead/lag *support* window is only support, never evidence that every
+period inside it has a material effect, and subject to whatever response
+structure (S1-S4) a future decision selects.
+
+**Explicit non-goal, reaffirmed:** this addendum does not implement, and
+does not approve, literal reverse adstock, and does not move any factual
+event date — the named event date remains factual per this record's
+existing §1 and §6, which this addendum does not relax. "Anticipatory"
+demand for a gifting event is implemented, when a future decision
+selects a response structure, as an event-time lead effect relative to
+the unmoved factual date — never as a reversed decay of the media
+adstock mechanism itself.
+
+**Promotional events do not receive an automatic pre-event effect.** Per
+Decision 12's explicit instruction, a promotional/commercial event's
+treatment window is the actual promotion period, not an invented
+lead window — if the real promotion starts before the named calendar
+date (e.g. a "Black Friday" promotion that commercially begins the
+preceding Monday), that earlier start must be represented via the
+promotion's own governed start date/window (`core.promotions`,
+distinct from the named-event occurrence per this record's existing §6
+media/promotion separation), not by silently extending the named event's
+own lead-support window.
+
+**Still genuinely open**, exactly as `docs/wp2_named_event_statistical_
+method_decision_package.md` already records: the response *structure*
+(dimension 1: fixed governed profile vs. estimated kernel vs. regularised
+basis vs. unconstrained dummies), the kernel/basis family (dimension 2),
+priors/regularisation (dimension 3), pooling/heterogeneity (dimension 4),
+the actual numeric lead/lag window *lengths* per family (the remainder of
+dimension 5 — this addendum supplies only the treatment-*type* mapping,
+not a number of weeks), and validation/planning-eligibility thresholds
+(dimensions 6-7). None of these is chosen by this addendum.
