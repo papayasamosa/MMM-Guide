@@ -161,3 +161,47 @@ Modelling
 ## Approval date
 
 2026-08-18
+
+## Addendum, 2026-08-30: generalisation direction approved (Decision 18), G1/G2/G3 remains genuinely open
+
+The business-decision brief "Post-UI/UX Implementation Instructions:
+Approved Business Decisions" (Decision 18, "Real-world capacity
+constraints belong in the optimiser") approves the *business
+requirement* that capacity constraints must be flexible, user-editable,
+and shared consistently across Scenario Planner, Optimiser, and
+Search-specific capped contribution — this is directionally **Candidate
+G1** ("generalise now: a shared module") from `docs/wp11_capacity_cap_
+semantics_decision_package.md`, since a Candidate-A-scoped-only module
+(G2) cannot serve TV inventory, sponsorship inventory, or any other
+non-Search capacity example Decision 18 names.
+
+This addendum does **not** select G1 over G3 (approve the vocabulary now,
+defer only the shared module) — both remain compatible with Decision
+18's business requirement, and the engineering-risk tradeoff between them
+(encoding accidental Candidate-A-specific assumptions into a premature
+generalisation, vs. leaving the gap unimplementable in any pathway-
+agnostic sense) is exactly the kind of question this package's own text
+reserves for a future implementation-time decision, not a business
+policy this brief settles. **Candidate S1/S2/S3 (the cap-hit status
+vocabulary's concrete definition) also remains fully open** — Decision
+18 does not specify how "ambiguous" or "unavailable" should be
+represented.
+
+**What this addendum does approve, at the contract level:** capacity
+constraints must be expressible for at least the categories Decision 18
+names (spend limits, delivery/exposure limits, availability on/off,
+fixed commitments, minimum/maximum ranges) and usable by Scenario
+Planner, Optimiser (see `REQ-OPT-001`'s Requirement 4, which cross-
+references this record rather than duplicating it), and Search-specific
+capped contribution from one governed source — never three independently
+diverging capacity representations. A non-money-denominated limit (e.g.
+impressions) must never be silently treated as a spend cap absent a
+valid, governed mapping — reaffirming, not changing, `AGENTS.md`'s
+existing invariant this record's §1 already cites. The optimisation
+result must disclose which constraints (of any kind) were binding, per
+`REQ-OPT-001`'s Requirement 5.
+
+No code, schema, or module is created by this addendum. Phase E
+implementation must still resolve G1/G2/G3 and S1/S2/S3 via
+`docs/wp11_capacity_cap_semantics_decision_package.md` before building
+anything.
