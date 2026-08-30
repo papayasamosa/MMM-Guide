@@ -726,7 +726,7 @@ def test_build_bundle_download_is_isolated_from_a_shared_project_name_being_over
     session_a = AppTest.from_file(str(PAGE), default_timeout=60)
     session_a.run()
     session_a.session_state["project_name"] = "shared-name"
-    session_a.session_state["outcome_data"] = {"outcome": "session-a-marker"}
+    session_a.session_state["project_notes"] = "session-a-marker"
     build_a = next(b for b in session_a.button if b.label == "Build export bundle")
     build_a.click().run()
     assert not session_a.exception, (
@@ -741,7 +741,7 @@ def test_build_bundle_download_is_isolated_from_a_shared_project_name_being_over
     session_b = AppTest.from_file(str(PAGE), default_timeout=60)
     session_b.run()
     session_b.session_state["project_name"] = "shared-name"
-    session_b.session_state["outcome_data"] = {"outcome": "session-b-marker"}
+    session_b.session_state["project_notes"] = "session-b-marker"
     build_b = next(b for b in session_b.button if b.label == "Build export bundle")
     build_b.click().run()
     assert not session_b.exception, (
