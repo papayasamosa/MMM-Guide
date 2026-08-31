@@ -264,3 +264,34 @@ real market/channel (this addendum supplies the governed shape, never
 invents a number); wiring `CapacityLimitDefinition` into the Scenario
 Planner/Optimiser UI (a separate integration pass, `REQ-OPT-001`'s own
 scope).
+
+## Addendum, 2026-08-31: generalised plan-application layer implemented (Decision 18 continuation)
+
+The previous addendum's "wiring `CapacityLimitDefinition` into the
+Scenario Planner/Optimiser UI" item is partially resolved: the
+underlying *application logic* (as opposed to the UI itself) now exists,
+usable identically by Scenario Planner and Optimiser. Full decision
+record in `docs/capacity_plan_application_decision_record.md`;
+implementation in the new `ancestry_mmm/core/capacity_plan_
+application.py`.
+
+**Resolved:** `classify_capacity_limit_binding` (report-only, reuses
+`classify_cap_hit_status` unchanged) for Scenario-Planner-style
+disclosure; `apply_capacity_limits_to_bounds` (tightens a scipy bounds
+list in the same shape `core.optimization_constraint_vocabulary`
+produces) for Optimiser-style bounds application - both read one
+governed `CapacityLimitDefinition` source, satisfying `REQ-OPT-001`
+Requirement 4's "usable together... disclosing which constraints of
+either kind were binding." A non-money-denominated limit
+(`delivery_exposure_limit`, `fixed_commitment`, `bounded_range`) is
+applied to spend bounds only when the caller supplies an explicit
+`unit_to_spend_rate`; absent one it is disclosed as advisory-only, never
+silently treated as a spend cap - reaffirming, not changing, this
+record's own §1 invariant. `availability_toggle` off forces a `(0, 0)`
+bound, disclosed as a distinct fact from an analyst's own zero-spend
+choice.
+
+**Still not resolved / deliberately out of scope:** actual UI wiring in
+`pages/08_Scenario_Planner.py`; integration into `core.optimization.
+optimize_scenario`'s SLSQP call sites; any real capacity value or
+unit-to-spend conversion rate for an actual market/channel.
