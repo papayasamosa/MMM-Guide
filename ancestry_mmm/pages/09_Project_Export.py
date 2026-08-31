@@ -727,6 +727,19 @@ if st.button("Build export bundle", type="primary"):
                 "backtest_results": get_state("backtest_results"),
                 "prefit_identifiability": get_state("prefit_identifiability"),
                 "prefit_screening": get_state("prefit_screening"),
+                # Production integration (Decision 17, REQ-DATASUPPORT-001):
+                # the analyst's chosen governed response per channel for the
+                # consolidated data-support classification tab on
+                # Diagnostics (pages/06_Diagnostics.py) - a plain
+                # channel -> governed-response-string dict, JSON-
+                # serialisable like every other key in this bag. Without
+                # this, re-importing a project would silently lose a
+                # recorded governed response and force the analyst to
+                # re-select it, even though the underlying evidence itself
+                # (prefit_identifiability, above) is preserved.
+                "data_support_governed_response_by_channel": get_state(
+                    "data_support_governed_response_by_channel"
+                ),
             },
             notes=get_state("project_notes"),
             calibration_records=get_state("calibration_records") or [],
@@ -1261,6 +1274,10 @@ if uploaded_zip is not None and st.button("Import bundle"):
             imported_diagnostics.get("prefit_identifiability"),
         )
         set_state("prefit_screening", imported_diagnostics.get("prefit_screening"))
+        set_state(
+            "data_support_governed_response_by_channel",
+            imported_diagnostics.get("data_support_governed_response_by_channel") or {},
+        )
         if imported.get("curve_bank_files") or imported.get("curve_bank_binary_files"):
             restored_curve_dir = curve_bank_dir()
             restored_curve_dir.mkdir(parents=True, exist_ok=True)

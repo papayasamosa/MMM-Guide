@@ -731,6 +731,86 @@ def test_bundle_manifest_workflow_diagnostics_notes_and_curve_state_round_trip(
     assert audit_project_resumability(imported)["resumable"]
 
 
+def test_data_support_governed_response_by_channel_round_trips_via_diagnostics_bag(
+    tmp_path, sample_project
+):
+    """Production integration (Decision 17, REQ-DATASUPPORT-001): the
+    analyst's per-channel governed-response choice for the consolidated
+    data-support classification tab (pages/06_Diagnostics.py) travels
+    through the existing generic `diagnostics` bag - exactly like
+    `scorecard`/`prefit_identifiability` above - so it survives export and
+    re-import without a new `core.persistence` schema field or version
+    bump (this bag has never enforced an allowlist or per-key version)."""
+    project = dict(sample_project)
+    project["diagnostics"] = {
+        "data_support_governed_response_by_channel": {
+            "TV_Brand": "stronger_regularisation",
+        }
+    }
+
+    imported = import_project(export_project(tmp_path / "bundle.zip", **project))
+
+    assert imported["diagnostics"]["data_support_governed_response_by_channel"] == {
+        "TV_Brand": "stronger_regularisation",
+    }
+
+
+def test_data_support_governed_response_absent_for_legacy_bundle(
+    tmp_path, sample_project
+):
+    """A bundle exported before this key existed (or with no governed
+    response chosen yet) must not fabricate one on import - absence stays
+    absence, matching every other optional key in this bag."""
+    imported = import_project(export_project(tmp_path / "bundle.zip", **sample_project))
+
+    assert (
+        imported["diagnostics"].get("data_support_governed_response_by_channel") is None
+    )
+
+
+def test_capacity_binding_reports_and_version_round_trip_on_a_saved_scenario(
+    tmp_path, sample_project
+):
+    """Production integration (REQ-CAP-001/REQ-OPT-001 Decision 18): once
+    `pages/08_Scenario_Planner.py` saves `capacity_binding_reports`/
+    `capacity_plan_application_version` onto a scenario dict alongside the
+    pre-existing `capacity_disclosures` (all three come from the same
+    `optimize_scenario` result block), they must survive export/import
+    through the scenario dict's existing generic passthrough - no
+    allowlist strips an unrecognised key, mirroring how
+    `objective_kind_vocabulary_selection`/`governed_constraint_
+    disclosures`/`capacity_disclosures` already round-trip today."""
+    project = dict(sample_project)
+    scenario = dict(project["scenarios"][0])
+    scenario["capacity_disclosures"] = [
+        {
+            "kind": "spend_limit",
+            "channel": "TV_Brand",
+            "period": "2024-01",
+            "disposition": "binding",
+            "detail": "capped at the governed spend limit",
+        }
+    ]
+    scenario["capacity_binding_reports"] = [
+        {
+            "limit_id": "tv-brand-spend-cap",
+            "binding": True,
+            "realised": 100.0,
+            "limit_value": 100.0,
+        }
+    ]
+    scenario["capacity_plan_application_version"] = "capacity-plan-application-v1"
+    project["scenarios"] = [scenario]
+
+    imported = import_project(export_project(tmp_path / "bundle.zip", **project))
+
+    restored = imported["scenarios"][0]
+    assert restored["capacity_binding_reports"] == scenario["capacity_binding_reports"]
+    assert (
+        restored["capacity_plan_application_version"] == "capacity-plan-application-v1"
+    )
+
+
 def test_candidate_a_engine_identity_round_trips_through_model_meta(
     tmp_path, sample_project
 ):

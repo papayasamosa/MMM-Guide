@@ -3178,6 +3178,20 @@ with tab_constrained:
                 "governed_constraint_disclosures"
             ]
             s["capacity_disclosures"] = result["capacity_disclosures"]
+            # Production-integration follow-up (persistence item): the two
+            # sibling capacity fields `optimize_scenario` already returns
+            # alongside `capacity_disclosures` (core.optimization, same
+            # `_capacity_application_result` block) were not yet being
+            # saved onto the scenario - an analyst reopening a saved
+            # scenario could see *that* a capacity limit disclosed as
+            # binding/non-binding, but not the full binding-report detail
+            # or which version of core.capacity_plan_application produced
+            # it. Both are already plain JSON-serialisable values in
+            # `result` (list-of-dicts / str-or-None) - no new computation.
+            s["capacity_binding_reports"] = result["capacity_binding_reports"]
+            s["capacity_plan_application_version"] = result[
+                "capacity_plan_application_version"
+            ]
             scenarios.append(s)
             set_state("scenarios", scenarios)
             st.success(f"Saved scenario '{name}'.")
