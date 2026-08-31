@@ -486,6 +486,27 @@ class DataSupportClassification:
         }
 
 
+def preview_data_support_state(
+    evidence: DataSupportEvidence,
+    *,
+    combination_policy: Optional[
+        Callable[[DataSupportEvidence], Tuple[str, Tuple[str, ...]]]
+    ] = None,
+) -> Tuple[str, Tuple[str, ...]]:
+    """Read-only preview of the `(state, reasons)` `classify_data_support`
+    would compute, without constructing a `DataSupportClassification` -
+    which fails closed (raises) when the state is non-sufficient and no
+    `governed_response` has been supplied yet (Requirement 3). A caller
+    that needs to know *whether* an explicit governed response will be
+    required - e.g. a UI deciding whether to show the response selector at
+    all - before an analyst has chosen one calls this first; it always
+    uses the same policy function `classify_data_support` uses (the
+    default worst-dimension-wins rule, or a caller-supplied
+    `combination_policy`), never a separately re-derived rule."""
+    policy = combination_policy or _default_combination_policy
+    return policy(evidence)
+
+
 def classify_data_support(
     evidence: DataSupportEvidence,
     *,

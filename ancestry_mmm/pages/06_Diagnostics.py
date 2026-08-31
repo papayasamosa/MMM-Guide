@@ -63,6 +63,16 @@ from ancestry_mmm.core.search_objects import (
 )
 from ancestry_mmm.core.coverage import VariableCoverageMatrix
 from ancestry_mmm.core.market_data_capability import check_market_channel_capability
+from ancestry_mmm.core.data_support_classification import (
+    DATA_SUPPORT_CLASSIFICATION_VERSION,
+    DATA_SUPPORT_NOT_SUFFICIENT,
+    DATA_SUPPORT_SUFFICIENT,
+    DATA_SUPPORT_WEAK,
+    GOVERNED_RESPONSES,
+)
+from ancestry_mmm.application.data_support_service import (
+    assemble_project_data_support_overview,
+)
 from ancestry_mmm.application.diagnostics_service import (
     DiagnosticsService,
     DiagnosticsInput,
@@ -848,13 +858,22 @@ st.caption(
     "separately."
 )
 if scorecard:
-    tab_conv, tab_fit, tab_ppc, tab_plaus, tab_ident, tab_candidate_a = st.tabs(
+    (
+        tab_conv,
+        tab_fit,
+        tab_ppc,
+        tab_plaus,
+        tab_ident,
+        tab_support,
+        tab_candidate_a,
+    ) = st.tabs(
         [
             "Convergence",
             "In-sample fit & error metrics",
             "Posterior predictive coverage",
             "Plausibility flags",
             "Identification & collinearity",
+            "Data support classification",
             "Candidate A Search",
         ]
     )
@@ -1073,6 +1092,178 @@ if scorecard:
                     )
                 elif stab_section.status == "failed":
                     st.error(f"Coefficient stability failed: {stab_section.error}")
+
+    with tab_support:
+        st.caption(
+            "Consolidated per-channel data-support verdict (Decision 17, "
+            "REQ-DATASUPPORT-001): sufficient to attempt estimation / "
+            "weak-support-limited / not sufficient for a separate "
+            "coefficient. This rolls up evidence already computed "
+            "elsewhere - the Identification & collinearity tab above, the "
+            "pre-fit support review on Model Config, and the Data Coverage "
+            "review - into one verdict per channel. It never recomputes "
+            "any of them, and never replaces their own detail tabs, which "
+            "remain the place to review the full evidence behind this "
+            "rollup."
+        )
+        render_decision_help(
+            "How the consolidated verdict is built",
+            controls=(
+                "Whether a channel's evidence is strong enough to estimate "
+                "a separate coefficient for it at all, across up to twelve "
+                "named evidence dimensions (Decision 17)."
+            ),
+            why=(
+                "A model can converge and fit well while still not being "
+                "able to separately identify a channel's own effect - this "
+                "rollup surfaces that risk per channel, before relying on "
+                "its estimated coefficient."
+            ),
+            options={
+                "Sufficient to attempt estimation": (
+                    "No evidence dimension with an approved severity "
+                    "threshold raised a concern."
+                ),
+                "Weak support-limited": (
+                    "At least one dimension raised a moderate concern - "
+                    "review before trusting this channel's separate effect."
+                ),
+                "Not sufficient for a separate coefficient": (
+                    "At least one dimension raised a severe concern - an "
+                    "explicit governed response (group into a higher-level "
+                    "channel, stronger regularisation, partial pooling, or "
+                    "exclude and retain in aggregate) is required before "
+                    "this classification can be recorded."
+                ),
+            },
+            normal_path=(
+                "Most channels with a reasonable history and clean "
+                "identification evidence come back sufficient with no "
+                "action needed."
+            ),
+            downstream=(
+                "This is a diagnostic verdict only - it does not change the "
+                "fitted model, select channels, or refit anything by "
+                "itself. Choosing a governed response below records the "
+                "analyst's decision alongside the evidence; it does not by "
+                "itself alter model inputs."
+            ),
+            invalidates=(
+                "No - this reads already-computed evidence and never "
+                "refits or changes any existing approval."
+            ),
+        )
+        _support_channels = (
+            list(model_spec_dict.get("channels") or []) if model_spec_dict else []
+        )
+        if not _support_channels:
+            st.info("No channels configured for the current model spec.")
+        else:
+            _support_prefit_report = get_state("prefit_identifiability")
+            _support_identification_payload = (
+                ident_section.payload
+                if ident_section is not None and ident_section.status == "computed"
+                else None
+            )
+            _support_response_key = "data_support_governed_response_by_channel"
+            _support_response_by_channel = dict(get_state(_support_response_key) or {})
+            _support_overview = assemble_project_data_support_overview(
+                _support_channels,
+                prefit_report=_support_prefit_report,
+                identification_payload=_support_identification_payload,
+                coverage_matrix_dict=coverage_matrix_dict,
+                governed_response_by_channel=_support_response_by_channel,
+            )
+            _support_state_to_badge = {
+                DATA_SUPPORT_SUFFICIENT: "pass",
+                DATA_SUPPORT_WEAK: "review",
+                DATA_SUPPORT_NOT_SUFFICIENT: "fail",
+            }
+            for _support_row in _support_overview:
+                _support_cols = st.columns([2, 1, 5])
+                with _support_cols[0]:
+                    st.markdown(f"**{_support_row['channel']}**")
+                with _support_cols[1]:
+                    render_status_badge(
+                        _support_state_to_badge.get(_support_row["state"], "neutral")
+                    )
+                with _support_cols[2]:
+                    if _support_row["reasons"]:
+                        st.caption(
+                            "Concern raised by: "
+                            + ", ".join(
+                                r.replace("_", " ") for r in _support_row["reasons"]
+                            )
+                        )
+                    else:
+                        st.caption(
+                            "No dimension with an approved severity threshold "
+                            "raised a concern."
+                        )
+                if _support_row["needs_governed_response"]:
+                    _support_response_options = ["(not yet chosen)"] + list(
+                        GOVERNED_RESPONSES
+                    )
+                    _support_current_response = _support_response_by_channel.get(
+                        _support_row["channel"]
+                    )
+                    _support_default_index = (
+                        _support_response_options.index(_support_current_response)
+                        if _support_current_response in _support_response_options
+                        else 0
+                    )
+                    _support_chosen_response = st.selectbox(
+                        f"Governed response for {_support_row['channel']}",
+                        _support_response_options,
+                        index=_support_default_index,
+                        key=f"data_support_response_select__{_support_row['channel']}",
+                        help=(
+                            "Required before this channel's weak/not-"
+                            "sufficient verdict can be recorded (Decision 17 "
+                            "Requirement 3) - never silently defaulted."
+                        ),
+                    )
+                    if (
+                        _support_chosen_response != "(not yet chosen)"
+                        and _support_chosen_response != _support_current_response
+                    ):
+                        _support_response_by_channel[_support_row["channel"]] = (
+                            _support_chosen_response
+                        )
+                        set_state(_support_response_key, _support_response_by_channel)
+                        st.rerun()
+                    if _support_row["classification"] is None:
+                        st.warning(
+                            f"{_support_row['channel']}: pending an explicit "
+                            "governed response before a verdict can be recorded."
+                        )
+                with st.expander(f"{_support_row['channel']}: evidence detail"):
+                    _support_evidence_dict = _support_row["evidence"].to_dict()
+                    _support_evidence_rows = [
+                        {
+                            "Dimension": rec["dimension"].replace("_", " "),
+                            "Available": rec["available"],
+                            "Value": rec["value"],
+                            "Source": rec["source_module"],
+                            "Severity": rec["severity"].replace("_", " "),
+                        }
+                        for rec in _support_evidence_dict["dimension_records"]
+                    ]
+                    st.dataframe(
+                        pd.DataFrame(_support_evidence_rows),
+                        width="stretch",
+                        hide_index=True,
+                    )
+                st.markdown("---")
+            render_technical_details(
+                details={
+                    "Evidence version": DATA_SUPPORT_CLASSIFICATION_VERSION,
+                    "Combination policy": (
+                        "worst_dimension_wins_default (disclosed convention, "
+                        "not an approved business threshold - see Decision 17)"
+                    ),
+                }
+            )
 
     with tab_candidate_a:
         st.caption(
