@@ -195,6 +195,15 @@ class OptimisationInput:
     # avoid a hard import-time dependency on that module from every caller
     # of this service, matching `constraints: Optional[List[Any]]` above.
     governed_constraints: Optional[List[Any]] = None
+    # REQ-CAP-001/REQ-OPT-001 Requirement 4 (Decision 18): generalised
+    # capacity-limit application (`core.capacity_plan_application.
+    # apply_capacity_limits_to_bounds`) - composable with `constraints`/
+    # `governed_constraints` in the same run, never a separate/duplicate
+    # rule set. Typed `Any` for the same reason as governed_constraints
+    # above.
+    capacity_limits: Optional[List[Any]] = None
+    capacity_realised_by_limit_and_period: Optional[Dict[str, Dict[str, float]]] = None
+    capacity_unit_to_spend_rate_by_limit_id: Optional[Dict[str, float]] = None
 
 
 @dataclass
@@ -447,6 +456,9 @@ class ScenarioService:
                 approval_readiness=opt_input.approval_readiness,
                 current_policy=opt_input.current_policy,
                 governed_constraints=opt_input.governed_constraints,
+                capacity_limits=opt_input.capacity_limits,
+                capacity_realised_by_limit_and_period=opt_input.capacity_realised_by_limit_and_period,
+                capacity_unit_to_spend_rate_by_limit_id=opt_input.capacity_unit_to_spend_rate_by_limit_id,
             )
         except Exception as exc:
             errors.append(f"Optimisation failed: {exc}")

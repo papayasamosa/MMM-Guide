@@ -99,6 +99,7 @@ from ancestry_mmm.core.optimization_objective_vocabulary import resolve_objectiv
 from ancestry_mmm.core.optimization_constraint_vocabulary import (
     GovernedSpendConstraint,
 )
+from ancestry_mmm.core.capacity import CapacityLimitDefinition
 from ancestry_mmm.core.uncertainty import evaluate_scenario_with_uncertainty
 from ancestry_mmm.core.outcome_group_totals import aggregate_outcome_groups
 from ancestry_mmm.core.evidence_tiers import classify_market_evidence
@@ -2885,6 +2886,81 @@ with tab_constrained:
             st.session_state["governed_scenario_constraints"].pop(i)
             st.rerun()
 
+    st.markdown("#### Capacity limits (Decision 18)")
+    st.caption(
+        "Real-world capacity/cap limits (e.g. a Search spend ceiling, or a channel "
+        "toggled unavailable this month) - reaches the same optimiser bounds the "
+        "constraints above do (`core.capacity_plan_application`), composable with "
+        "them in the same run, never a separate/duplicate rule set. Only the two "
+        "kinds with no unit-conversion input required (spend limit, availability "
+        "toggle) are entered here; a non-money-denominated limit (delivery "
+        "exposure, fixed commitment, bounded range) requires a governed unit-to-"
+        "spend rate this UI does not yet collect."
+    )
+    if "capacity_limits" not in st.session_state:
+        st.session_state["capacity_limits"] = []
+
+    with st.expander("+ Add a capacity limit"):
+        cap_kind = st.selectbox(
+            "Limit type",
+            ["spend_limit", "availability_toggle"],
+            format_func=lambda k: {
+                "spend_limit": "Spend limit",
+                "availability_toggle": "Availability toggle",
+            }.get(k, k),
+            key="cap_kind",
+        )
+        cap_ch = st.selectbox(
+            "Channel",
+            meta.channels,
+            key="cap_channel",
+            format_func=lambda c: model_input_display_label(
+                c, activity_definitions=activity_definitions, market=market
+            ),
+        )
+        cap_mo = st.selectbox("Month", months, key="cap_month")
+        if cap_kind == "spend_limit":
+            cap_value = st.number_input(
+                "Spend limit", min_value=0.0, value=0.0, key="cap_value"
+            )
+        else:
+            cap_available = st.checkbox(
+                "Available this month (unchecked = toggled off, forced to zero spend)",
+                value=True,
+                key="cap_available",
+            )
+            cap_value = 1.0 if cap_available else 0.0
+        cap_owner = st.text_input(
+            "Owner (optional, disclosure only)", value="", key="cap_owner"
+        )
+        if st.button("Add capacity limit"):
+            try:
+                limit = CapacityLimitDefinition(
+                    limit_id=f"cap-{len(st.session_state['capacity_limits'])}-{cap_ch}-{cap_mo}",
+                    limit_version=1,
+                    kind=cap_kind,
+                    unit="GBP" if cap_kind == "spend_limit" else "boolean",
+                    applies_to=cap_ch,
+                    value_by_period={cap_mo: cap_value},
+                    owner=cap_owner,
+                )
+            except ValueError as exc:
+                st.error(f"Cannot add capacity limit: {exc}")
+            else:
+                st.session_state["capacity_limits"].append(limit)
+                st.rerun()
+
+    for i, cl in enumerate(st.session_state["capacity_limits"]):
+        cl1, cl2 = st.columns([5, 1])
+        cl1.markdown(
+            f"**{i + 1}.** {cl.kind} - channel="
+            f"{model_input_display_label(cl.applies_to, activity_definitions=activity_definitions, market=market)}"
+            f", values={dict(cl.value_by_period)}"
+        )
+        if cl2.button("Remove", key=f"rm_capacity_limit_{i}"):
+            st.session_state["capacity_limits"].pop(i)
+            st.rerun()
+
     if st.button("Run constrained optimisation", type="primary"):
         if _objective_vocab_error:
             st.error(
@@ -2935,6 +3011,7 @@ with tab_constrained:
                         governed_constraints=(
                             st.session_state["governed_scenario_constraints"] or None
                         ),
+                        capacity_limits=(st.session_state["capacity_limits"] or None),
                         artefact_kind="constrained_optimisation",
                         conserve_total_budget=True,
                         activity_definitions=activity_definitions or None,
@@ -3051,6 +3128,17 @@ with tab_constrained:
                     f"{_d['disposition']}, {_bound_note}. {_d['detail']}"
                 )
 
+        # REQ-CAP-001/REQ-OPT-001 Requirement 4 (Decision 18): disclose
+        # every capacity limit's disposition at this solution.
+        _cap_disclosures = result.get("capacity_disclosures") or []
+        if _cap_disclosures:
+            st.markdown("**Capacity limits: disposition**")
+            for _cd in _cap_disclosures:
+                st.caption(
+                    f"{_cd['kind']} ({_cd.get('channel') or 'any'}, {_cd.get('period') or 'any'}) - "
+                    f"{_cd['disposition']}. {_cd['detail']}"
+                )
+
         name = st.text_input(
             "Scenario name *",
             value=f"constrained-{market}-{months[0]}",
@@ -3089,6 +3177,7 @@ with tab_constrained:
             s["governed_constraint_disclosures"] = result[
                 "governed_constraint_disclosures"
             ]
+            s["capacity_disclosures"] = result["capacity_disclosures"]
             scenarios.append(s)
             set_state("scenarios", scenarios)
             st.success(f"Saved scenario '{name}'.")

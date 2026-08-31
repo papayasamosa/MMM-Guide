@@ -31,6 +31,7 @@ from ancestry_mmm.core.fingerprint import (
 )
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.media_costs import CostMappingRegistry, IdentitySpendMapping
+from ancestry_mmm.core.capacity import CapacityLimitDefinition
 from ancestry_mmm.core.model_identity import ModelIdentity
 from ancestry_mmm.core.optimization import SpendConstraint
 from ancestry_mmm.core.optimization_constraint_vocabulary import (
@@ -1921,3 +1922,79 @@ class TestGovernedConstraintVocabularyReachableFromTheRealPage:
         assert any(
             "never combined in a single optimisation run" in e for e in errors
         ), errors
+
+
+class TestCapacityLimitVocabularyReachableFromTheRealPage:
+    """REQ-CAP-001/REQ-OPT-001 (Decision 18): a capacity limit added
+    through the real Scenario Planner page's session state must actually
+    reach `optimize_scenario`'s real SLSQP call and change the displayed
+    optimised spend plan - not sit beside the page unused. Production-
+    integration phase, 2026-08-31."""
+
+    def _run_constrained(self, at: AppTest):
+        run_buttons = [
+            b for b in at.button if b.label == "Run constrained optimisation"
+        ]
+        assert run_buttons, "Run constrained optimisation button not found"
+        run_buttons[0].click().run()
+        assert not at.exception, f"running the optimiser raised: {at.exception}"
+
+    def test_capacity_spend_limit_changes_displayed_allocation(self):
+        baseline_at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_two_channel_session_state(baseline_at)
+        baseline_at.run()
+        objective_radio = [
+            r for r in baseline_at.radio if r.label == "Optimisation objective"
+        ]
+        objective_radio[0].set_value("fh_gsa").run()
+        baseline_at.session_state["scenario_constraints"] = []
+        baseline_at.session_state["governed_scenario_constraints"] = []
+        baseline_at.session_state["capacity_limits"] = []
+        self._run_constrained(baseline_at)
+        baseline_plan = baseline_at.session_state["constrained_result"]["spend_plan"]
+        first_month = next(iter(baseline_plan))
+        dominant_channel = max(
+            ("TV_Brand", "Digital"), key=lambda c: baseline_plan[first_month][c]
+        )
+        baseline_dominant_value = baseline_plan[first_month][dominant_channel]
+        baseline_total = sum(
+            v for month in baseline_plan.values() for v in month.values()
+        )
+        assert baseline_dominant_value > 200.0
+
+        capped_at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_two_channel_session_state(capped_at)
+        capped_at.run()
+        objective_radio = [
+            r for r in capped_at.radio if r.label == "Optimisation objective"
+        ]
+        objective_radio[0].set_value("fh_gsa").run()
+        cap_value = baseline_dominant_value * 0.1
+        capped_at.session_state["scenario_constraints"] = []
+        capped_at.session_state["governed_scenario_constraints"] = []
+        capped_at.session_state["capacity_limits"] = [
+            CapacityLimitDefinition(
+                limit_id="apptest-cap",
+                limit_version=1,
+                kind="spend_limit",
+                unit="GBP",
+                applies_to=dominant_channel,
+                value_by_period={first_month: cap_value},
+            )
+        ]
+        self._run_constrained(capped_at)
+        capped_result = capped_at.session_state["constrained_result"]
+        capped_plan = capped_result["spend_plan"]
+        capped_dominant_value = capped_plan[first_month][dominant_channel]
+        capped_total = sum(v for month in capped_plan.values() for v in month.values())
+
+        assert capped_dominant_value <= cap_value + 1e-6
+        assert capped_dominant_value < baseline_dominant_value, (
+            "a capacity limit added to the real page's session state must "
+            "actually reach optimize_scenario's real SLSQP call and change "
+            "the displayed allocation"
+        )
+        assert capped_total == pytest.approx(baseline_total, rel=1e-6)
+        assert capped_result["capacity_disclosures"], (
+            "capacity_disclosures must be populated on the real page's result"
+        )

@@ -61,6 +61,7 @@ from typing import (
 if TYPE_CHECKING:
     from .validation_policy import ApprovalReadiness, ThresholdPolicy
     from .optimization_constraint_vocabulary import GovernedSpendConstraint
+    from .capacity import CapacityLimitDefinition
 
 import numpy as np
 import pandas as pd
@@ -226,6 +227,17 @@ class GovernedConstraintInfeasibleError(PlanningGovernanceError):
     (potentially slow) SLSQP call runs — an infeasible cell is reported
     explicitly, never silently clamped, dropped, or left to produce a
     confusing/wrong optimiser result."""
+
+
+class CapacityLimitInfeasibleError(PlanningGovernanceError):
+    """`optimize_scenario(capacity_limits=...)` (`REQ-CAP-001`/`REQ-OPT-001`
+    Requirement 4, Decision 18): applying one or more `CapacityLimitDefinition`
+    bounds-tightenings on top of whatever the constraint vocabulary (legacy
+    or governed) already produced resulted in a lower bound exceeding the
+    upper bound for at least one cell. Raised before the SLSQP call runs -
+    `core.capacity_plan_application.apply_capacity_limits_to_bounds` itself
+    performs no feasibility check (it composes with whatever bounds it is
+    given), so the composing caller (this function) is responsible for it."""
 
 
 # ---------------------------------------------------------------------------
@@ -3234,6 +3246,9 @@ def optimize_scenario(
     approval_readiness: Optional["ApprovalReadiness"] = None,
     current_policy: Optional["ThresholdPolicy"] = None,
     governed_constraints: Optional[List["GovernedSpendConstraint"]] = None,
+    capacity_limits: Optional[List["CapacityLimitDefinition"]] = None,
+    capacity_realised_by_limit_and_period: Optional[Dict[str, Dict[str, float]]] = None,
+    capacity_unit_to_spend_rate_by_limit_id: Optional[Dict[str, float]] = None,
 ) -> Dict:
     """
     Optimise a spend plan. `constraints=None` (or empty) + conserve_total_budget=True
@@ -3277,6 +3292,22 @@ def optimize_scenario(
     `governed_constraint_disclosures` names every governed constraint's
     disposition plus whether it was actually binding at the optimised
     solution (Requirement 4 - binding-constraint reporting).
+
+    `capacity_limits` (`REQ-CAP-001`/`REQ-OPT-001` Requirement 4, Decision
+    18): an optional list of `core.capacity.CapacityLimitDefinition`,
+    applied as a further bounds-tightening pass via `core.
+    capacity_plan_application.apply_capacity_limits_to_bounds` on top of
+    whichever `constraints`/`governed_constraints` bounds were already
+    resolved - composable with either, never a separate/duplicate rule
+    set (Decision 18's own "both must be usable together" instruction).
+    A resulting infeasible cell raises `CapacityLimitInfeasibleError`
+    before SLSQP runs, same discipline as governed constraints.
+    `capacity_realised_by_limit_and_period`/`capacity_unit_to_spend_rate_
+    by_limit_id` pass through unchanged to `apply_capacity_limits_to_
+    bounds` - see that function's own docstring for what they control
+    (report-only binding classification, and the explicit non-money-unit
+    -> spend conversion a non-monetary limit requires to ever tighten a
+    spend bound, respectively).
     """
     require_matching_approval(
         approval,
@@ -3537,6 +3568,44 @@ def optimize_scenario(
             constraints,
             resource_channels=resource_channels,
         )
+
+    _capacity_application_result = None
+    if capacity_limits:
+        # REQ-CAP-001/REQ-OPT-001 Requirement 4 (Decision 18): composable
+        # with whichever constraint bounds were already resolved above -
+        # apply_capacity_limits_to_bounds performs no feasibility check
+        # itself (it composes with whatever bounds it is given), so this
+        # function checks feasibility of the combined result.
+        from .capacity_plan_application import apply_capacity_limits_to_bounds
+
+        _capacity_application_result = apply_capacity_limits_to_bounds(
+            bounds,
+            months=months,
+            channels=channels,
+            limits=capacity_limits,
+            realised_by_limit_and_period=capacity_realised_by_limit_and_period,
+            unit_to_spend_rate_by_limit_id=capacity_unit_to_spend_rate_by_limit_id,
+        )
+        bounds = [
+            (float(lo), float(hi)) for lo, hi in _capacity_application_result.bounds
+        ]
+        _capacity_infeasible_cells = [
+            (months[i // len(channels)], channels[i % len(channels)], lo, hi)
+            for i, (lo, hi) in enumerate(bounds)
+            if lo > hi
+        ]
+        if _capacity_infeasible_cells:
+            cells_desc = "; ".join(
+                f"{month}/{channel} (lower={lo}, upper={hi})"
+                for month, channel, lo, hi in _capacity_infeasible_cells
+            )
+            raise CapacityLimitInfeasibleError(
+                "Optimisation is infeasible after applying the supplied capacity "
+                f"limits: {len(_capacity_infeasible_cells)} cell(s) have a lower "
+                f"bound exceeding the upper bound: {cells_desc}. Relax or remove a "
+                "conflicting capacity limit or constraint - results are never "
+                "silently clamped or dropped."
+            )
 
     if activity_definitions is not None:
         # Every channel outside this optimisation resource - not just the
@@ -3816,6 +3885,23 @@ def optimize_scenario(
         "governed_constraint_vocabulary_version": (
             _governed_constraint_resolution.vocabulary_version
             if _governed_constraint_resolution is not None
+            else None
+        ),
+        # REQ-CAP-001/REQ-OPT-001 Requirement 4: only populated when
+        # capacity_limits was supplied - empty (never None) otherwise.
+        "capacity_disclosures": (
+            [d.to_dict() for d in _capacity_application_result.disclosures]
+            if _capacity_application_result is not None
+            else []
+        ),
+        "capacity_binding_reports": (
+            [r.to_dict() for r in _capacity_application_result.binding_reports]
+            if _capacity_application_result is not None
+            else []
+        ),
+        "capacity_plan_application_version": (
+            _capacity_application_result.version
+            if _capacity_application_result is not None
             else None
         ),
     }
