@@ -164,3 +164,42 @@ Modelling / Platform engineering
 ## Approval date
 
 2026-08-30
+
+## Addendum, 2026-08-31: consolidation architecture implemented
+
+The user's 2026-08-29 "Post-UI/UX Implementation Instructions" brief,
+confirmed in-session, explicitly delegates this record's own deferred
+"precise module/function consolidation architecture" question (not the
+numeric-threshold or combination-rule questions, both still excluded
+below) to research-based technical resolution. This addendum records the
+resulting implementation: full decision record in `docs/data_support_
+classification_decision_record.md`; implementation in the new
+`ancestry_mmm/core/data_support_classification.py`.
+
+**Resolved:** the consolidation architecture - `assemble_data_support_
+evidence` performs the real integration work, reading each existing
+module's already-computed output (`core.prefit_identifiability`, `core.
+coverage`, `core.identification_diagnostics`, and a fourth pre-existing
+relevant source this record's own "Capability status" section did not
+name, `core.fold_data_support`) and mapping it onto the twelve named
+evidence dimensions, with every dimension always represented even when
+`available=False`. `classify_data_support` rolls the assembled evidence
+into the closed three-state verdict via a disclosed, non-numeric,
+fully-overridable structural default (worst-dimension-wins) - never
+asserted as approved combination policy. A non-sufficient verdict always
+requires an explicit, closed-vocabulary governed response (Requirement
+3) and cites the specific triggering dimension(s) (Requirement 4),
+enforced structurally.
+
+**Still not resolved / deliberately out of scope, exactly as this
+record's own "Explicitly excluded" section already states:** any
+concrete numeric threshold for any evidence dimension; the exact
+weighting/combination rule as approved business policy (the shipped
+default is a disclosed convention, not an assertion of correctness);
+which of `core.prefit_identifiability`'s four existing tiers maps onto
+which severity value (left to the caller, since that mapping itself
+requires a numeric-threshold judgement this record does not make);
+wiring this classification into `pages/06_Diagnostics.py`, the fitting
+pipeline, or the optimiser. `core.prefit_identifiability`, `core.
+coverage`, `core.identification_diagnostics`, and `core.fold_data_
+support` are all completely unchanged.
