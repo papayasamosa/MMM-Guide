@@ -642,6 +642,123 @@ def test_official_curve_artifact_renders_when_authorized(monkeypatch, tmp_path):
     assert all("outcome_id" not in dataframe.columns for dataframe in reporting_tables)
 
 
+def _write_official_artifact_with_governance_disclosures(
+    store_dir: Path, approval_dict: dict
+) -> None:
+    """Same as `_write_official_artifact`, plus the extra creation-time
+    evidence the new disclosure captions read (production-integration
+    follow-up: Results/exports disclosure labels) - an outcome metric_key
+    (GSA vs net bill-through identity), a computed experiment_calibration
+    section with two linked experiment uses, and a computed search_capacity
+    section whose use_gate did not clear official use."""
+    metadata = CurveArtifactMetadata(
+        artifact_id="art-official-2",
+        creation_timestamp="2026-07-01T00:00:00+00:00",
+        model_identity_snapshot={
+            "model_run_id": approval_dict["model_run_id"],
+            "data_fingerprint": approval_dict["data_fingerprint"],
+            "model_spec_fingerprint": approval_dict["model_spec_fingerprint"],
+            "posterior_fingerprint": approval_dict["posterior_fingerprint"],
+        },
+        outcome_definition_snapshot={
+            "outcome_id": "New",
+            "definition_version": "1.0",
+            "metric_key": METRIC_KEY_FH_GSA,
+        },
+        outcome_approval_snapshot={
+            "approval_id": "apr-official-1",
+            "allowed_uses": ["curve_publication", "headline_reporting"],
+        },
+        activity_governance_snapshot={
+            "activities": ["tv-paid"],
+            "fingerprint": activity_definitions_fingerprint(
+                [ActivityDefinition.from_dict(_official_activity_dict())]
+            ),
+        },
+        diagnostics_snapshot={
+            "experiment_calibration": {
+                "status": "computed",
+                "payload": {
+                    "experiments": {
+                        "entries": [
+                            {
+                                "experiment_id": "exp-1",
+                                "evidence_mode": "prior_calibration",
+                            }
+                        ]
+                    }
+                },
+            },
+            "search_capacity": {
+                "status": "computed",
+                "payload": {"use_gate": {"official_use_eligible": False}},
+            },
+        },
+    )
+    metadata = dataclasses.replace(
+        metadata,
+        fingerprints=dict(compute_curve_artifact_fingerprints(metadata)),
+    )
+    draws = pd.DataFrame(
+        {
+            "model_run_id": [approval_dict["model_run_id"]] * 4,
+            "reference_context_id": ["ref-official"] * 4,
+            "market": ["UK"] * 4,
+            "product": ["Family History"] * 4,
+            "segment": ["New"] * 4,
+            "outcome_id": ["New"] * 4,
+            "metric_key": ["GSA"] * 4,
+            "channel": ["TV_Brand"] * 4,
+            "component_type": ["media"] * 4,
+            "pathway_role": ["direct"] * 4,
+            "spend_point": [0.0, 100.0, 200.0, 300.0],
+            "local_spend": [0.0, 100.0, 200.0, 300.0],
+            "posterior_draw": [0] * 4,
+            "incremental_response": [0.0, 2.0, 3.0, 3.5],
+            "planning_support_eligible": [True] * 4,
+            "planning_blocked_reason": [""] * 4,
+        }
+    )
+    summaries = draws.drop(
+        columns=[
+            "local_spend",
+            "posterior_draw",
+            "incremental_response",
+            "planning_support_eligible",
+            "planning_blocked_reason",
+        ]
+    )
+    write_curve_artifact(store_dir, metadata=metadata, draws=draws, summaries=summaries)
+
+
+def test_official_artifact_discloses_outcome_metric_calibration_and_search_capacity(
+    monkeypatch, tmp_path
+):
+    """Production-integration follow-up (Results/exports disclosure
+    labels): an analyst viewing an approved response curve must see, without
+    opening the technical-details expander, (a) which metric the outcome
+    definition identifies (GSA vs net bill-through etc.), (b) whether the
+    underlying model had experiment evidence linked, and (c) a clear warning
+    when the model's Search-capacity evidence did not clear the official-use
+    gate - all read from the artifact's own creation-time
+    diagnostics_snapshot, never recomputed on this page."""
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed_official_artifact_governance(at)
+    _patch_store_root(monkeypatch, tmp_path)
+    _write_official_artifact_with_governance_disclosures(
+        Path(tmp_path) / "test-project", at.session_state["model_approval"]
+    )
+    at.run()
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any("Outcome definition: GSA" in (c.value or "") for c in at.caption)
+    assert any(
+        "1 registered experiment use(s) linked" in (c.value or "") for c in at.caption
+    )
+    assert any(
+        "did not clear the official-use gate" in (w.value or "") for w in at.warning
+    )
+
+
 def test_official_section_empty_store_shows_info(monkeypatch, tmp_path):
     """An empty (or missing) store directory must show the informational
     empty state, never an exception or a silent section."""

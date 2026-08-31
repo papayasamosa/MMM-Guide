@@ -1464,6 +1464,38 @@ def _render_official_artifact(
         width="stretch",
         column_config=dataframe_column_config(meta_df),
     )
+    _governed_context = governed_context_fields(md)
+    # Production-integration follow-up (Results/exports disclosure labels):
+    # a compact, prominent caption alongside the meta table - not buried in
+    # the "Technical details" expander below, which stays the place for the
+    # full governed-context dump. Every disclosure here is read straight
+    # from `_governed_context` (computed once, reused below too); nothing
+    # is recomputed or asserted beyond what that dict already reports, and
+    # a disclosure line is only shown when there is something real to say -
+    # "not_applicable" (the honest, common case for experiment/Search-
+    # capacity evidence today - see governed_context_fields' own docstring)
+    # renders no line at all, never a fabricated "N/A" or "0".
+    _outcome_metric_label = _governed_context.get("outcome_metric_label")
+    if _outcome_metric_label:
+        st.caption(f"Outcome definition: {_outcome_metric_label}")
+    if _governed_context.get("experiment_calibration_status") == "computed":
+        _n_experiments = _governed_context.get("linked_experiment_count") or 0
+        st.caption(
+            f"Calibrated: this model has {_n_experiments} registered experiment "
+            "use(s) linked at creation time (see Diagnostics for evidence detail)."
+        )
+    if _governed_context.get("search_capacity_status") == "computed":
+        if _governed_context.get("search_capacity_official_use_eligible") is False:
+            st.warning(
+                "Search capacity: this model's Candidate A Search evidence did "
+                "not clear the official-use gate at creation time (see "
+                "Diagnostics · Candidate A Search for the blocking reason)."
+            )
+        else:
+            st.caption(
+                "Search capacity: Candidate A Search evidence was assessed for "
+                "this model (see Diagnostics · Candidate A Search for detail)."
+            )
     render_technical_details(
         title="Technical details · saved response curve",
         details={
@@ -1477,7 +1509,7 @@ def _render_official_artifact(
             "Historical integrity": md.historical_integrity,
             "Current authorization status": authorization.current_authorization_status,
             "Requested-use eligibility": authorization.requested_use_eligibility,
-            **{key: value for key, value in governed_context_fields(md).items()},
+            **{key: value for key, value in _governed_context.items()},
         },
     )
     _render_official_artifact_curves(artifact, outcome_labels)
