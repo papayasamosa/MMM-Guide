@@ -213,6 +213,34 @@ class TestPredictMuMarketSpecific:
         assert np.all(high >= low - 1e-9)
 
 
+class TestPredictMuMarketSpecificFailsClosedForNamedEvents:
+    """Production integration (Decision 12): mirrors `core.predict.
+    predict_mu`'s identical guard - a Model C fit that consumed a
+    named-event response definition must raise rather than silently
+    produce a `mu` missing that pathway's contribution."""
+
+    def test_raises_for_a_meta_with_a_consumed_response_definition(
+        self, meta, params, frame
+    ):
+        import dataclasses
+
+        from ancestry_mmm.core.market_specific_predict import (
+            NamedEventReplayNotSupportedError,
+        )
+
+        named_event_meta = dataclasses.replace(
+            meta,
+            named_event_response_definitions_at_fit=[("mothers-day-def", 1)],
+        )
+        with pytest.raises(NamedEventReplayNotSupportedError):
+            predict_mu_market_specific(frame, named_event_meta, params)
+
+    def test_ordinary_fit_with_no_named_events_is_unaffected(self, meta, params, frame):
+        assert meta.named_event_response_definitions_at_fit == []
+        # Must not raise.
+        predict_mu_market_specific(frame, meta, params)
+
+
 class TestSteadyStateSegmentResponseMarketSpecific:
     def test_zero_spend_matches_hand_computed_baseline(self, meta, params):
         result = steady_state_segment_response_market_specific("UK", {}, meta, params)

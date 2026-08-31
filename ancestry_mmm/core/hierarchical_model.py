@@ -57,6 +57,11 @@ from .pathways import (
     resolve_pathway_masks,
 )
 from .net_billthrough import assert_model_frame_net_billthrough_complete
+from .named_event_fit_inputs import NamedEventFitInputs
+from .named_event_response import (
+    EVENT_RESPONSE_SHRINKAGE_PRIOR_DEFAULT_SCALE,
+    NAMED_EVENT_RESPONSE_STRUCTURE,
+)
 
 
 @dataclass
@@ -194,6 +199,19 @@ class FHModelMeta:
     # remain loadable and replay identically.
     media_input_scale_method: str = ""
     media_input_scales: Dict[str, float] = field(default_factory=dict)
+    # Production integration (Decision 12, `core.named_event_fit_inputs`):
+    # which governed `EventResponseDefinition` records (by
+    # `(response_definition_id, response_definition_version)`) were
+    # actually consumed to build this fit's additive event-response `eta`
+    # term, and which statistical method structure was used - durable
+    # fit-time provenance, mirroring `causal_graph_id`/`_version`'s own
+    # "which governed identity was authoritative for this fit" pattern.
+    # Empty list / "" (never None) when no named event was consumed - every
+    # fit before this field existed, and every fit today with no named
+    # event opted in, round-trips through FHModelMeta(**meta_dict)
+    # unchanged.
+    named_event_response_definitions_at_fit: List[Any] = field(default_factory=list)
+    named_event_response_method_version: str = ""
 
     def __post_init__(self) -> None:
         if not self.direct_dna_outcome_ids:
@@ -573,6 +591,7 @@ def build_fh_hierarchical_model(
     direct_dna_outcome_ids: Optional[List[str]] = None,
     causal_graph: Optional[CausalGraph] = None,
     search_candidate_a: Optional[CandidateASearchFitInputs] = None,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> "tuple[pm.Model, FHModelMeta]":
     """
     Build the joint hierarchical FH model.
@@ -618,6 +637,19 @@ def build_fh_hierarchical_model(
             alongside the ordinary direct/cross-product terms. None (the
             default) reproduces exactly today's behaviour and never touches
             `FHModelMeta.causal_graph_engine`.
+        named_event_fit_inputs: Decision 12 / `core.named_event_fit_inputs.
+            build_named_event_fit_inputs` - the additive event-response
+            `eta` term for every `(market, family)` that has opted in to
+            production fitting (an `EventResponseDefinition` whose
+            `transformation_method_reference` matches `core.
+            named_event_response.NAMED_EVENT_RESPONSE_STRUCTURE`). Each
+            `(market, family)` block gets its own independent spline-basis
+            coefficient vector (unpooled per market/family by default,
+            Decision 12 dimension 4), regularised by one shared per-family
+            `HalfNormal` shrinkage scale. None (the default, and every
+            project with no named event opted in) reproduces exactly
+            today's behaviour - no event term exists in the model graph at
+            all, byte-for-byte identical to before this parameter existed.
 
     Returns:
         (unfit PyMC Model, FHModelMeta). Fit the model with core.models.fit_model;
@@ -1305,6 +1337,62 @@ def build_fh_hierarchical_model(
             "eta_controls", eta_controls, dims=("obs", "outcome")
         )
 
+        # -----------------------------------------------------------------
+        # Named-event response (Decision 12, `core.named_event_fit_inputs`):
+        # additive, per-(market, family) regularised spline-basis
+        # contribution - unpooled per market/family by default (each block
+        # gets its own independent coefficient vector; a single per-family
+        # HalfNormal shrinkage scale is shared across that family's markets,
+        # a disclosed default - see `core.named_event_fit_inputs`'s own
+        # docstring). None (the default) adds nothing to `eta` at all - no
+        # `event_*` variable exists in the model graph, so a project with no
+        # named event opted in fits byte-for-byte identically to before this
+        # parameter existed.
+        # -----------------------------------------------------------------
+        consumed_response_definitions: List[Any] = []
+        named_event_response_method_version = ""
+        if named_event_fit_inputs is not None:
+            named_event_response_method_version = NAMED_EVENT_RESPONSE_STRUCTURE
+            consumed_response_definitions = list(
+                named_event_fit_inputs.consumed_response_definitions()
+            )
+            eta_events = pt.zeros((n_obs, n_outcomes))
+            for family_id in named_event_fit_inputs.family_ids:
+                family_tau = pm.HalfNormal(
+                    f"event_tau_{family_id}",
+                    sigma=named_event_fit_inputs.shrinkage_prior_scale_by_family.get(
+                        family_id, EVENT_RESPONSE_SHRINKAGE_PRIOR_DEFAULT_SCALE
+                    ),
+                )
+                for event_block in named_event_fit_inputs.blocks_for_family(family_id):
+                    n_basis = event_block.design.shape[1]
+                    coord_name = f"event_basis_{family_id}_{event_block.market}"
+                    model.add_coord(coord_name, np.arange(n_basis))
+                    event_coefs = pm.Normal(
+                        f"event_coefs_{family_id}_{event_block.market}",
+                        mu=0,
+                        sigma=family_tau,
+                        dims=coord_name,
+                    )
+                    contrib = pm.math.dot(
+                        pt.as_tensor_variable(event_block.design), event_coefs
+                    )
+                    if event_block.outcome_scope:
+                        for scoped_outcome in event_block.outcome_scope:
+                            if scoped_outcome not in outcome_ids:
+                                continue
+                            o_idx = outcome_ids.index(scoped_outcome)
+                            eta_events = pt.set_subtensor(
+                                eta_events[:, o_idx],
+                                eta_events[:, o_idx] + contrib,
+                            )
+                    else:
+                        eta_events = eta_events + contrib[:, None]
+            eta_events = pm.Deterministic(
+                "eta_events", eta_events, dims=("obs", "outcome")
+            )
+            eta = eta + eta_events
+
         # Clip is a numerical safety net (not a modelling assumption): eta is
         # a sum of several additive terms before this exp(), so pathological
         # prior draws (e.g. during prior-predictive checks) can otherwise
@@ -1376,5 +1464,7 @@ def build_fh_hierarchical_model(
         ),
         media_input_scale_method=media_input_scale_method,
         media_input_scales=media_input_scales,
+        named_event_response_definitions_at_fit=consumed_response_definitions,
+        named_event_response_method_version=named_event_response_method_version,
     )
     return model, meta

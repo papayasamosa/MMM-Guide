@@ -83,6 +83,7 @@ from .planning.value import AdstockState
 from .predict import (
     CandidateAReplayNotSupportedError,
     FHPosteriorParams,
+    NamedEventReplayNotSupportedError,
     predict_mu,
 )
 from .search_capacity import (
@@ -645,6 +646,13 @@ def simulate_sequential_outcomes(
             "outcome - same boundary as core.predict.predict_mu (WP3). See "
             "simulate_candidate_a_mediator_state_sequentially for the "
             "bounded diagnostic mediator-state replay."
+        )
+    if meta.named_event_response_definitions_at_fit:
+        raise NamedEventReplayNotSupportedError(
+            "simulate_sequential_outcomes does not represent this fit's "
+            "named-event response term (event_coefs_<family>_<market>) - "
+            "same boundary as core.predict.predict_mu (Decision 12). "
+            f"Consumed: {meta.named_event_response_definitions_at_fit!r}."
         )
     _validate_plan_matches_carry_in(plan, carry_in, meta)
 

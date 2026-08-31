@@ -64,6 +64,36 @@ class CandidateAReplayNotSupportedError(ValueError):
     """
 
 
+class NamedEventReplayNotSupportedError(ValueError):
+    """Raised by `predict_mu` (and therefore every caller: curves, scenario
+    planning, backtest, optimisation) for a fit that consumed a named-event
+    response term (`core.named_event_fit_inputs`, Decision 12) -
+    `meta.named_event_response_definitions_at_fit` non-empty.
+
+    Mirrors `CandidateAReplayNotSupportedError` exactly, for the identical
+    reason: this NumPy replay reconstructs `eta` from intercept/market/
+    trend/season/channels/promo/controls only - it has no term for the
+    `event_coefs_<family>_<market>` contribution `core.hierarchical_model`/
+    `core.market_specific_model` add when `named_event_fit_inputs` is
+    supplied at fit time. Recomputing that term for an arbitrary
+    (possibly future/hypothetical) `frame` also needs the governed
+    registry itself (which family/occurrences/response definitions
+    applied), which this function is never given - unlike the fit-time
+    design matrix, it cannot simply be recomputed from `frame` alone.
+    Before this guard existed, curves/scenario planning/backtest/
+    optimisation for any project using named events would silently
+    evaluate a `mu` missing that entire pathway's contribution - never
+    raising, never warning, and biased specifically in the weeks that
+    matter most (the planted event windows). A hard failure here rather
+    than a plausible-but-wrong number is the correct way to keep this
+    disabled until predict/scenario-replay integration (a separate,
+    materially statistical follow-up of its own - it also requires
+    deciding whether/how a *future*, not-yet-occurred event should be
+    represented in a scenario frame, which no record approves today) is
+    done.
+    """
+
+
 @dataclass
 class FHPosteriorParams:
     """Posterior point estimates (defaults to the mean) needed to replay the model."""
@@ -388,6 +418,15 @@ def predict_mu(
             "pathway (search_eta_contribution) - curves, scenario planning, "
             "backtest, and optimisation are not yet available for a "
             "Candidate A fit. See REPO_REVIEW_AND_NEXT_STEPS.md."
+        )
+    if meta.named_event_response_definitions_at_fit:
+        raise NamedEventReplayNotSupportedError(
+            "predict_mu does not yet represent this fit's named-event "
+            "response term (event_coefs_<family>_<market>) - curves, "
+            "scenario planning, backtest, and optimisation are not yet "
+            "available for a fit that consumed a named-event response "
+            f"definition. Consumed: "
+            f"{meta.named_event_response_definitions_at_fit!r}."
         )
     outcome_ids = meta.outcome_ids
     n_obs = (

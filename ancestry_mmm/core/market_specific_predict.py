@@ -27,6 +27,7 @@ from .outcomes import (
     fh_signup_outcome_ids,
 )
 from .predict import (
+    NamedEventReplayNotSupportedError,
     _cross_product_strength_matrix,
     _pathway_weight,
     extract_pathway_strength,
@@ -203,7 +204,20 @@ def predict_mu_market_specific(
     as core.predict.predict_mu.
 
     `precomputed_sat_media` - see `core.predict.predict_mu`'s identical
-    parameter (WP5, `Media-Mix-Lab: Coding LLM Next Steps After PR #253`)."""
+    parameter (WP5, `Media-Mix-Lab: Coding LLM Next Steps After PR #253`).
+
+    Raises `NamedEventReplayNotSupportedError` for a fit that consumed a
+    named-event response term - see that exception's docstring in
+    `core.predict` (identical reasoning, mirrored here for Model C)."""
+    if meta.named_event_response_definitions_at_fit:
+        raise NamedEventReplayNotSupportedError(
+            "predict_mu_market_specific does not yet represent this fit's "
+            "named-event response term (event_coefs_<family>_<market>) - "
+            "curves, scenario planning, backtest, and optimisation are not "
+            "yet available for a fit that consumed a named-event response "
+            f"definition. Consumed: "
+            f"{meta.named_event_response_definitions_at_fit!r}."
+        )
     outcome_ids = meta.outcome_ids
     markets = frame["markets"]
     n_obs = (

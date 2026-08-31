@@ -1152,6 +1152,30 @@ class TestUnsupportedGraphRolesFailClosed:
         with pytest.raises(CandidateAReplayNotSupportedError):
             simulate_sequential_outcomes(plan, carry_in, meta, params)
 
+    def test_named_event_meta_raises_for_outcome_level_replay(self):
+        """Production integration (Decision 12): mirrors the Candidate A
+        guard above - a fit that consumed a named-event response
+        definition has no term for it here either."""
+        import dataclasses
+
+        from ancestry_mmm.core.predict import NamedEventReplayNotSupportedError
+
+        meta = dataclasses.replace(
+            _meta(),
+            named_event_response_definitions_at_fit=[("mothers-day-def", 1)],
+        )
+        params = _params()
+        carry_in = SequentialCarryInState(
+            market="UK",
+            channels=tuple(CHANNELS),
+            starting_adstock={"TV": 0.0, "DNA_Media": 0.0},
+            lag_context_sat_media=np.zeros((DNA_LAG_WEEKS, len(CHANNELS))),
+            lag_context_length=DNA_LAG_WEEKS,
+        )
+        plan = _plan_from_media("UK", ["w0"], np.zeros((1, 2)))
+        with pytest.raises(NamedEventReplayNotSupportedError):
+            simulate_sequential_outcomes(plan, carry_in, meta, params)
+
 
 class TestWeeklyPlanValidation:
     def test_missing_channel_raises(self):

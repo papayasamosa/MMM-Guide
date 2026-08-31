@@ -557,3 +557,49 @@ class TestPredictMuFailsClosedForCandidateA:
         }
         with pytest.raises(CandidateAReplayNotSupportedError):
             predict_mu(frame, candidate_a_meta, params)
+
+
+class TestPredictMuFailsClosedForNamedEvents:
+    """Production integration (Decision 12, `core.named_event_fit_inputs`):
+    `predict_mu` has no term for a fit's `event_coefs_<family>_<market>`
+    contribution - silently running it on a fit that consumed a named-event
+    response definition would produce a `mu` missing that pathway's
+    contribution, biased specifically in the planted event weeks. Must
+    raise instead, mirroring the identical Candidate A guard above."""
+
+    def test_raises_for_a_meta_with_a_consumed_response_definition(self, meta, params):
+        import dataclasses
+
+        from ancestry_mmm.core.predict import NamedEventReplayNotSupportedError
+
+        named_event_meta = dataclasses.replace(
+            meta,
+            named_event_response_definitions_at_fit=[("mothers-day-def", 1)],
+        )
+        frame = {
+            "X_media": np.zeros((3, len(CHANNELS))),
+            "market_bounds": [(0, 3)],
+            "market_idx": np.zeros(3, dtype=int),
+            "promo": np.zeros((3, len(OUTCOME_IDS))),
+            "trend": np.zeros(3),
+            "fourier": np.zeros((3, 2)),
+        }
+        with pytest.raises(NamedEventReplayNotSupportedError):
+            predict_mu(frame, named_event_meta, params)
+
+    def test_ordinary_fit_with_no_named_events_is_unaffected(self, meta, params):
+        """Backward compatibility: a meta with the field left at its
+        default empty list must not trigger the guard - every fit before
+        this field existed keeps working exactly as before."""
+        assert meta.named_event_response_definitions_at_fit == []
+        n_fourier = len(params.gamma_fourier["New"])
+        frame = {
+            "X_media": np.zeros((3, len(CHANNELS))),
+            "market_bounds": [(0, 3)],
+            "market_idx": np.zeros(3, dtype=int),
+            "promo": np.zeros((3, len(OUTCOME_IDS))),
+            "trend": np.zeros(3),
+            "fourier": np.zeros((3, n_fourier)),
+        }
+        # Must not raise.
+        predict_mu(frame, meta, params)
