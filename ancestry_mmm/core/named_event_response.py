@@ -4,8 +4,9 @@ Instructions: Approved Business Decisions" brief).
 
 See `docs/named_event_response_method_decision_record.md` for the full
 options-considered decision record, including the Work Package 2
-synthetic-evidence findings this decision relies on
-(`docs/wp2_named_event_response_evidence.md`).
+synthetic-evidence findings this decision relies on (recorded in this
+repository's own named-event response evidence document, cited in full
+inside that decision record).
 
 Summary (see the decision record for full reasoning):
 
@@ -201,9 +202,10 @@ def build_event_relative_design_matrix(
     (shape `(n_weeks, max_lead_weeks + max_lag_weeks + 1)`): row `t`,
     column `k` is `1.0` when week `t` lies exactly `offsets[k]` weeks
     from some occurrence's factual week (`offsets` runs from
-    `-max_lead_weeks` to `+max_lag_weeks`). Generalises `scripts.
-    wp2_named_event_response.dgp._event_design`'s validated construction
-    to an arbitrary family-specific window.
+    `-max_lead_weeks` to `+max_lag_weeks`). Generalises the event-design
+    construction validated by this module's own decision record (see
+    the module docstring's "Work Package 2" evidence citation above) to
+    an arbitrary family-specific window.
 
     `event_weeks` are the factual occurrence week INDICES - never
     shifted or mutated by this function (REQ-EVENT-001's own invariant);
@@ -236,12 +238,12 @@ def build_spline_basis(
     """The deterministic cubic B-spline basis matrix over a family's own
     `(-max_lead_weeks, +max_lag_weeks)` relative-offset grid, with
     interior knots at the window's own lead/lag midpoints (decision 2).
-    Generalises `scripts.wp2_named_event_response.candidates.
-    _spline_basis`'s validated construction (fixed +/-4-week testbed,
-    interior knots at -2/+2) to an arbitrary family-specific window,
-    preserving the same relative knot PLACEMENT (interior knots at the
-    midpoints of the lead and lag sides) rather than the same absolute
-    week numbers.
+    Generalises the spline-basis construction validated by this
+    module's own decision record's Work Package 2 evidence citation
+    (fixed +/-4-week testbed, interior knots at -2/+2) to an arbitrary
+    family-specific window, preserving the same relative knot PLACEMENT
+    (interior knots at the midpoints of the lead and lag sides) rather
+    than the same absolute week numbers.
 
     Returns an `(n_offsets, n_basis_functions)` matrix; `n_basis_
     functions = len(interior_knots) + degree + 1` (6 for the default
