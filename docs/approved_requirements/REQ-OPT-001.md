@@ -203,3 +203,41 @@ Modelling / Platform engineering
 ## Approval date
 
 2026-08-30
+
+## Addendum, 2026-08-31: objective-kind precondition gating and constraint-kind vocabulary implemented
+
+The user's 2026-08-29 "Post-UI/UX Implementation Instructions" brief,
+confirmed in-session, explicitly delegates the Phase E implementation
+questions this record's own text leaves open ("Phase E implementation
+work, not a business decision") to research-based technical resolution.
+This addendum records the resulting implementation: full decision record
+in `docs/optimizer_objective_and_constraint_vocabulary_decision_record.md`;
+implementation in the new `ancestry_mmm/core/optimization_objective_
+vocabulary.py` and `ancestry_mmm/core/optimization_constraint_
+vocabulary.py`.
+
+**Resolved:** Requirement 1's precondition gating - `maximise_outcome`/
+`maximise_revenue` validated by literally calling the real, unmodified
+`core.optimization.resolve_planning_objective` (never reimplemented, so
+the two can never silently diverge); `maximise_profit` unconditionally
+blocked (a repository-wide audit confirmed no governed profit/margin/
+COGS definition exists anywhere in this codebase); `maximise_roi`/
+`minimise_cpa` gated on every considered channel being cost-bearing
+(`core.activities.ActivityDefinition.is_cost_bearing`), never inferred
+from a channel's name, with SEO/non-paid channels excluded per Decision
+7. Requirement 2's schema question - a parallel `GovernedSpendConstraint`
+structure (not a `SpendConstraint` variant), translating the four
+kinds with a direct existing equivalent into real `SpendConstraint`
+instances resolved by the unmodified `build_bounds_and_constraints`, and
+applying the remaining kinds as a direct bounds-tightening pass on that
+function's own output shape. Requirement 5 (infeasibility reporting) -
+`resolve_governed_constraints` reports any cell where the resolved lower
+bound exceeds the upper bound, never silently clamping or dropping a
+constraint.
+
+**Still not resolved / deliberately out of scope:** actually rewiring
+`core.optimization.optimize_scenario`'s SLSQP call sites to use either
+vocabulary in a production run (both `core.optimization.py` and
+`pages/08_Scenario_Planner.py` remain completely unchanged); the
+sequential-weekly kernel integration (`REQ-SCEN-004`'s own still-open
+item); any numeric default for any constraint or objective precondition.
