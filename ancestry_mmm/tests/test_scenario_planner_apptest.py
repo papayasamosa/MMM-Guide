@@ -1471,6 +1471,118 @@ def test_sequential_weekly_manual_tab_can_save_a_scenario():
     assert any("Long-horizon incremental" in label for label in metric_labels)
 
 
+class TestPromotionPeriodIntegration:
+    """REQ-PLANACT-001 (Decision 14): a real `PromotionPeriod`, built
+    through the real Scenario Planner page's own "+ Add a promotion
+    period" widgets, must reach `materialize_promo_future` ->
+    `build_future_context`'s real `promo_future` - not sit beside the page
+    unused. Production-integration phase, 2026-08-31."""
+
+    def _select_sequential_weekly(self, at: AppTest) -> None:
+        method_radio = next(
+            r for r in at.radio if r.label == "Manual plan evaluation method"
+        )
+        method_radio.set_value("sequential_weekly").run()
+        assert not at.exception, f"selecting sequential_weekly raised: {at.exception}"
+
+    def test_no_promotion_declared_keeps_the_existing_confirmation_gate(self):
+        """Backward compatibility: with nothing declared, the page must
+        behave exactly as before - same warning, same checkbox label/key -
+        so the existing browser lifecycle test's locator keeps working."""
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_official_governance_state(at)
+        at.run()
+        self._select_sequential_weekly(at)
+
+        checkboxes = {c.label: c for c in at.checkbox if c.label}
+        assert any(
+            label.startswith("I explicitly confirm no promotion is planned")
+            for label in checkboxes
+        )
+        warnings_text = [w.value or "" for w in at.warning]
+        assert any("No promotion schedule" in w for w in warnings_text)
+
+    def test_adding_a_promotion_period_through_the_real_widgets_removes_the_gate(self):
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_official_governance_state(at)
+        at.run()
+        self._select_sequential_weekly(at)
+
+        plan_key_prefix = "_promo_outcome"
+        outcome_selectbox = next(
+            s for s in at.selectbox if s.key and s.key.endswith(plan_key_prefix)
+        )
+        assert outcome_selectbox.options == ["New"]
+        add_button = next(b for b in at.button if b.label == "Add promotion period")
+        add_button.click().run()
+        assert not at.exception, f"adding a promotion period raised: {at.exception}"
+
+        promotion_periods = at.session_state["promotion_periods"]
+        assert len(promotion_periods) == 1
+        added = promotion_periods[0]
+        assert added.outcome_id == "New"
+
+        # The unstated-default gate is gone - a declared period is itself
+        # the disclosure - but the tab must still compute and render.
+        checkboxes = {c.label: c for c in at.checkbox if c.label}
+        assert not any(
+            label.startswith("I explicitly confirm no promotion is planned")
+            for label in checkboxes
+        )
+        captions = [c.value or "" for c in at.caption]
+        assert any("1 promotion period(s) declared" in c for c in captions)
+
+        _check_sequential_acknowledgment_gates(at)
+        at.run()
+        assert not at.exception, (
+            f"recomputing after declaring a promotion raised: {at.exception}"
+        )
+        markdown_text = [m.value or "" for m in at.markdown]
+        assert any("Weekly incremental outcome" in text for text in markdown_text), (
+            "the sequential tab must still compute and render with a real "
+            "declared promotion period, not just with none declared"
+        )
+
+    def test_declared_promotion_period_reaches_the_real_future_context(
+        self, monkeypatch
+    ):
+        """Direct proof the page's declared PromotionPeriod is not merely
+        stored in session state but actually passed to the real
+        materialize_promo_future call inside _evaluate_sequential_manual_
+        plan - spies on the real function (never a stub standing in for
+        it) and asserts it was called with the exact period the UI added."""
+        import ancestry_mmm.core.planning.planned_activity as planned_activity_module
+
+        calls = []
+        real_materialize = planned_activity_module.materialize_promo_future
+
+        def _spy(promotion_periods, **kwargs):
+            calls.append(list(promotion_periods))
+            return real_materialize(promotion_periods, **kwargs)
+
+        monkeypatch.setattr(planned_activity_module, "materialize_promo_future", _spy)
+
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_official_governance_state(at)
+        at.run()
+        self._select_sequential_weekly(at)
+
+        add_button = next(b for b in at.button if b.label == "Add promotion period")
+        add_button.click().run()
+        assert not at.exception
+
+        _check_sequential_acknowledgment_gates(at)
+        at.run()
+        assert not at.exception
+
+        assert calls, (
+            "materialize_promo_future was never called - the declared "
+            "promotion period never reached the real wiring"
+        )
+        assert len(calls[-1]) == 1
+        assert calls[-1][0].outcome_id == "New"
+
+
 def test_steady_state_manual_tab_still_renders_by_default():
     """The default evaluation method stays steady-state monthly - switching
     the radio to sequential and back (or simply never touching it) must

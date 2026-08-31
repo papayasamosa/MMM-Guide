@@ -75,6 +75,10 @@ from ancestry_mmm.core.planning.value import (
     ScenarioValueAssumptions,
     build_scenario_value_assumptions,
 )
+from ancestry_mmm.core.planning.planned_activity import (
+    PromotionPeriod,
+    materialize_promo_future,
+)
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.optimization import (
     CurrencyContext,
@@ -345,6 +349,7 @@ def _evaluate_sequential_manual_plan(
     currency_context,
     trace=None,
     n_posterior_draws: int = 0,
+    promotion_periods=(),
 ):
     """Build and evaluate a sequential-weekly manual scenario from the same
     monthly spend_plan/governance inputs the steady-state tab uses (WP5,
@@ -352,6 +357,17 @@ def _evaluate_sequential_manual_plan(
     with an analyst-readable message on any failure the caller should
     render via `st.error`; never raises for an ordinary governance/
     validation rejection surfaced instead as `ScenarioServiceResult.errors`.
+
+    `promotion_periods` (`REQ-PLANACT-001`, Decision 14): structured
+    `core.planning.planned_activity.PromotionPeriod` declarations for this
+    plan window, materialised into `build_future_context`'s `promo_future`
+    via the real, unmodified `materialize_promo_future` - an empty
+    sequence (the default) yields the exact same all-zero `promo_future`
+    this function always built before. The terminal continuation window
+    deliberately keeps zero promo regardless (documented, unchanged
+    "residual carryover under continuing seasonality but zero future
+    decision media" assumption) - promotion periods are scoped to the
+    analyst's real plan window only.
     """
     plan_start_week = _sequential_plan_start_week(frame, market, spec)
     candidate_monthly_by_channel = {
@@ -494,7 +510,13 @@ def _evaluate_sequential_manual_plan(
         control_names=control_names,
         outcome_control_names=outcome_control_names,
         mode=future_mode,
-        promo_future={oid: {w: 0.0 for w in weeks} for oid in meta.outcome_ids},
+        # REQ-PLANACT-001 (Decision 14): real, structured promotion-period
+        # input for this plan window - materialize_promo_future returns
+        # the identical all-zero shape when promotion_periods is empty, so
+        # this is a strict superset of the previous unconditional zero.
+        promo_future=materialize_promo_future(
+            promotion_periods, outcome_ids=meta.outcome_ids, weeks=weeks
+        ),
         eligible_for_hold_last_observed=frozenset(last_observed_controls)
         | frozenset(last_observed_outcome_controls),
         hold_last_observed=frozenset(last_observed_controls)
@@ -2364,15 +2386,83 @@ def _render_sequential_manual_tab():
         )
         all_acknowledged = all_acknowledged and hold_last_ack
 
-    st.warning(
-        "**No promotion schedule can be entered for sequential weekly in this UI "
-        "yet.** Choose explicitly rather than relying on an unstated default:"
-    )
-    no_promotion_ack = st.checkbox(
-        "I explicitly confirm no promotion is planned for this plan window.",
-        key=f"{plan_key}_seq_no_promotion_ack",
-    )
-    all_acknowledged = all_acknowledged and no_promotion_ack
+    # REQ-PLANACT-001 (Decision 14): structured promotion-period input,
+    # materialised into build_future_context's promo_future above via the
+    # real, unmodified materialize_promo_future - the analyst declares
+    # promotions once (start/end week, intensity), not by hand-constructing
+    # a per-week value. When none are declared, the previous unconditional
+    # "confirm no promotion" gate is preserved exactly (same checkbox
+    # label/key, so no analyst-facing regression for the common case).
+    if "promotion_periods" not in st.session_state:
+        st.session_state["promotion_periods"] = []
+
+    st.markdown("#### Promotion periods (sequential weekly only)")
+    with st.expander("+ Add a promotion period"):
+        promo_outcome = st.selectbox(
+            "Outcome", meta.outcome_ids, key=f"{plan_key}_promo_outcome"
+        )
+        promo_start = st.date_input(
+            "Start week",
+            value=preview_start_week.date(),
+            key=f"{plan_key}_promo_start",
+        )
+        promo_end = st.date_input(
+            "End week",
+            value=preview_start_week.date(),
+            key=f"{plan_key}_promo_end",
+        )
+        promo_intensity = st.number_input(
+            "Intensity (same unit/scale as the historical promo column this "
+            "outcome was fit with)",
+            value=0.0,
+            key=f"{plan_key}_promo_intensity",
+        )
+        promo_label = st.text_input(
+            "Label (optional)", value="", key=f"{plan_key}_promo_label"
+        )
+        if st.button("Add promotion period", key=f"{plan_key}_add_promo"):
+            try:
+                period = PromotionPeriod(
+                    promotion_id=f"promo-{len(st.session_state['promotion_periods'])}-{promo_outcome}",
+                    outcome_id=promo_outcome,
+                    start_week=promo_start.strftime("%Y-%m-%d"),
+                    end_week=promo_end.strftime("%Y-%m-%d"),
+                    intensity=promo_intensity,
+                    label=promo_label,
+                )
+            except ValueError as exc:
+                st.error(f"Cannot add promotion period: {exc}")
+            else:
+                st.session_state["promotion_periods"].append(period)
+                st.rerun()
+
+    for i, promo in enumerate(st.session_state["promotion_periods"]):
+        p1, p2 = st.columns([5, 1])
+        p1.markdown(
+            f"**{i + 1}.** {promo.label or promo.promotion_id} - outcome="
+            f"{promo.outcome_id}, {promo.start_week} to {promo.end_week}, "
+            f"intensity={promo.intensity}"
+        )
+        if p2.button("Remove", key=f"{plan_key}_rm_promo_{i}"):
+            st.session_state["promotion_periods"].pop(i)
+            st.rerun()
+
+    if st.session_state["promotion_periods"]:
+        st.caption(
+            f"{len(st.session_state['promotion_periods'])} promotion period(s) "
+            "declared above will be used for this plan window - an explicit "
+            "input, not an unstated default."
+        )
+    else:
+        st.warning(
+            "**No promotion schedule can be entered for sequential weekly in this UI "
+            "yet.** Choose explicitly rather than relying on an unstated default:"
+        )
+        no_promotion_ack = st.checkbox(
+            "I explicitly confirm no promotion is planned for this plan window.",
+            key=f"{plan_key}_seq_no_promotion_ack",
+        )
+        all_acknowledged = all_acknowledged and no_promotion_ack
 
     if not all_acknowledged:
         st.info(
@@ -2438,6 +2528,7 @@ def _render_sequential_manual_tab():
                 currency_context=currency_context,
                 trace=trace,
                 n_posterior_draws=seq_n_posterior_draws,
+                promotion_periods=st.session_state["promotion_periods"],
             )
     except ValueError as exc:
         st.error(f"Cannot build the sequential weekly plan: {exc}")
