@@ -73,6 +73,7 @@ from ancestry_mmm.core.data_support_classification import (
 from ancestry_mmm.application.data_support_service import (
     assemble_project_data_support_overview,
 )
+from ancestry_mmm.core.baseline_diagnostics import detect_residual_level_shift
 from ancestry_mmm.application.diagnostics_service import (
     DiagnosticsService,
     DiagnosticsInput,
@@ -722,6 +723,63 @@ def _render_residual_explorer(payload: dict, meta, outcome_labels: dict) -> None
         ),
         width="stretch",
     )
+
+    # Decision 15 (REQ-BASELINE-001): a bounded, opt-in, diagnostic-only
+    # residual level-shift check (core.baseline_diagnostics.detect_
+    # residual_level_shift), read from this exact same view_df["residual"]
+    # series - never a separately recomputed residual. Deliberately NOT
+    # wired into any causal pathway, planning surface, or official-use
+    # gate (the decision record's own T3/P1 resolution: the existing
+    # trend/Fourier terms already satisfy the time-varying-baseline
+    # planning intent; no new latent process was approved) - this is
+    # display-only, a signal for a human to investigate, never an
+    # automatically-modelled effect.
+    if len(view_df) >= 2:
+        with st.expander("Residual level-shift diagnostic (Decision 15)"):
+            st.caption(
+                "Checks whether this residual series shows an unexplained "
+                "mean shift before vs. after a chosen week - e.g. a "
+                "competitor launch or market shock the model's trend/"
+                "seasonality/media terms do not already explain. A simple, "
+                "transparent two-sample check, not a formal changepoint "
+                "test or a claim of statistical significance."
+            )
+            _shift_dates = view_df["date"].tolist()
+            _breakpoint_choice = st.select_slider(
+                "Split week",
+                options=list(range(1, len(_shift_dates))),
+                value=len(_shift_dates) // 2,
+                format_func=lambda i: str(_shift_dates[i]),
+                key="residual_shift_breakpoint",
+            )
+            _threshold = st.number_input(
+                "Threshold (standard deviations)",
+                min_value=0.1,
+                value=2.0,
+                step=0.1,
+                key="residual_shift_threshold",
+            )
+            _shift_result = detect_residual_level_shift(
+                view_df["residual"].to_numpy(dtype=float),
+                breakpoint_index=int(_breakpoint_choice),
+                threshold_std_devs=float(_threshold),
+            )
+            _shift_cols = st.columns(3)
+            _shift_cols[0].metric(
+                "Mean before", format_number(_shift_result.mean_before)
+            )
+            _shift_cols[1].metric("Mean after", format_number(_shift_result.mean_after))
+            _shift_cols[2].metric(
+                "Shift detected", "Yes" if _shift_result.shift_detected else "No"
+            )
+            if _shift_result.shift_detected:
+                st.warning(
+                    f"Mean residual shifted by {_shift_result.shift_magnitude:.3g} "
+                    f"at {_shift_dates[_breakpoint_choice]} - beyond "
+                    f"{_threshold:g} pooled standard deviations. Worth human "
+                    "investigation; not itself evidence of a causal effect."
+                )
+            st.caption(_shift_result.disclaimer)
 
     if comparison_ids:
         base_label = view_label
