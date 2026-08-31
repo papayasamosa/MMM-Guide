@@ -60,6 +60,7 @@ from typing import (
 
 if TYPE_CHECKING:
     from .validation_policy import ApprovalReadiness, ThresholdPolicy
+    from .optimization_constraint_vocabulary import GovernedSpendConstraint
 
 import numpy as np
 import pandas as pd
@@ -216,6 +217,15 @@ class ObjectiveMissingError(PlanningGovernanceError):
     # Not a subclass of OutcomeApprovalBlockedError because it is raised
     # before any approval check runs — the objective is missing regardless
     # of whether approvals exist.
+
+
+class GovernedConstraintInfeasibleError(PlanningGovernanceError):
+    """`optimize_scenario(governed_constraints=...)` (`REQ-OPT-001`
+    Requirement 5, Decision 16): one or more governed constraint cells
+    resolved to a lower bound exceeding the upper bound. Raised before the
+    (potentially slow) SLSQP call runs — an infeasible cell is reported
+    explicitly, never silently clamped, dropped, or left to produce a
+    confusing/wrong optimiser result."""
 
 
 # ---------------------------------------------------------------------------
@@ -3223,6 +3233,7 @@ def optimize_scenario(
     currency_context: Optional["CurrencyContext"] = None,
     approval_readiness: Optional["ApprovalReadiness"] = None,
     current_policy: Optional["ThresholdPolicy"] = None,
+    governed_constraints: Optional[List["GovernedSpendConstraint"]] = None,
 ) -> Dict:
     """
     Optimise a spend plan. `constraints=None` (or empty) + conserve_total_budget=True
@@ -3248,6 +3259,24 @@ def optimize_scenario(
     computed via evaluate_scenario below. Raises ValueError up front too if
     `objective` (plus `target_outcome_ids`/`weights`/`ltv`) isn't resolvable -
     same "fail before the slow optimisation runs" reasoning.
+
+    `governed_constraints` (`REQ-OPT-001` Requirement 2, Decision 16): an
+    optional list of `core.optimization_constraint_vocabulary.
+    GovernedSpendConstraint` - the extended ten-kind constraint vocabulary
+    (`maximum_spend`, `spend_range`, `absolute_change_from_reference`,
+    `unavailable`, `required_minimum_activity`, plus the four kinds with a
+    direct legacy equivalent). When supplied, it *replaces* `constraints`
+    for bounds-building (never combined with `constraints` in the same
+    call - a caller picks one vocabulary per optimisation run), resolved via
+    `resolve_governed_constraints` - the real function this optimiser's
+    SLSQP call receives its bounds/linear constraints from in that case, not
+    a parallel vocabulary that sits beside the run unused. An infeasible
+    cell (resolved lower bound > upper bound) raises
+    `GovernedConstraintInfeasibleError` before SLSQP ever runs (Requirement
+    5) - never silently clamped or dropped. The returned dict's
+    `governed_constraint_disclosures` names every governed constraint's
+    disposition plus whether it was actually binding at the optimised
+    solution (Requirement 4 - binding-constraint reporting).
     """
     require_matching_approval(
         approval,
@@ -3466,13 +3495,48 @@ def optimize_scenario(
             if activity_map[channel].activity_id in resource.eligible_activity_ids
         ]
 
-    bounds, linear_constraints = build_bounds_and_constraints(
-        months,
-        channels,
-        current_spend,
-        constraints,
-        resource_channels=resource_channels,
-    )
+    _governed_constraint_resolution = None
+    if governed_constraints:
+        # REQ-OPT-001 Requirement 2/5: the extended constraint-kind
+        # vocabulary replaces (never supplements) the legacy `constraints`
+        # bounds-building for this call - resolved via the real,
+        # already-tested function this vocabulary itself delegates to
+        # (build_bounds_and_constraints), not a reimplementation.
+        from .optimization_constraint_vocabulary import resolve_governed_constraints
+
+        _governed_constraint_resolution = resolve_governed_constraints(
+            governed_constraints,
+            months=months,
+            channels=channels,
+            current_spend=[float(v) for v in current_spend],
+            resource_channels=resource_channels,
+        )
+        if not _governed_constraint_resolution.is_feasible:
+            cells_desc = "; ".join(
+                f"{month}/{channel} (lower={lo}, upper={hi})"
+                for month, channel, lo, hi in _governed_constraint_resolution.infeasible_cells
+            )
+            raise GovernedConstraintInfeasibleError(
+                "Optimisation is infeasible under the supplied governed "
+                f"constraints: {len(_governed_constraint_resolution.infeasible_cells)} "
+                f"cell(s) have a lower bound exceeding the upper bound: "
+                f"{cells_desc}. Relax or remove a conflicting constraint - "
+                "results are never silently clamped or dropped."
+            )
+        bounds: List[Tuple[float, float]] = [
+            (float(lo), float(hi)) for lo, hi in _governed_constraint_resolution.bounds
+        ]
+        linear_constraints: List[LinearConstraint] = list(
+            _governed_constraint_resolution.legacy_constraints
+        )
+    else:
+        bounds, linear_constraints = build_bounds_and_constraints(
+            months,
+            channels,
+            current_spend,
+            constraints,
+            resource_channels=resource_channels,
+        )
 
     if activity_definitions is not None:
         # Every channel outside this optimisation resource - not just the
@@ -3555,6 +3619,31 @@ def optimize_scenario(
         constraints=linear_constraints,
         options={"maxiter": max_iter, "ftol": 1e-8},
     )
+
+    # REQ-OPT-001 Requirement 4: disclose which governed constraints were
+    # actually binding at the SLSQP solution - never buried in raw bounds.
+    # A disclosure is "binding" if the optimised cell landed at the final
+    # (possibly multiply-tightened) lower or upper bound for at least one
+    # of its covered (month, channel) cells.
+    _governed_constraint_disclosures: List[dict] = []
+    if _governed_constraint_resolution is not None:
+        _clipped_x = np.clip(result.x, 0, None)
+        _bind_tol = 1e-6
+        for _d in _governed_constraint_resolution.disclosures:
+            binding = False
+            if _d.channel is not None:
+                for _month in _d.months:
+                    _idx = _cell_index(_month, _d.channel, months, channels)
+                    _lo, _hi = bounds[_idx]
+                    _x = float(_clipped_x[_idx])
+                    if abs(_x - _lo) <= max(_bind_tol, _bind_tol * abs(_lo)) or abs(
+                        _x - _hi
+                    ) <= max(_bind_tol, _bind_tol * abs(_hi)):
+                        binding = True
+                        break
+            _governed_constraint_disclosures.append(
+                {**_d.to_dict(), "binding": binding}
+            )
 
     optimized_plan = _unflatten(np.clip(result.x, 0, None), months, channels)
 
@@ -3718,6 +3807,15 @@ def optimize_scenario(
         "planning_semantics_fingerprint": (
             _planning_semantics.fingerprint()
             if _planning_semantics is not None
+            else None
+        ),
+        # REQ-OPT-001 Requirement 2/4: only populated when governed_constraints
+        # was supplied - empty (never None) otherwise, so a caller can always
+        # iterate without a None-check.
+        "governed_constraint_disclosures": _governed_constraint_disclosures,
+        "governed_constraint_vocabulary_version": (
+            _governed_constraint_resolution.vocabulary_version
+            if _governed_constraint_resolution is not None
             else None
         ),
     }

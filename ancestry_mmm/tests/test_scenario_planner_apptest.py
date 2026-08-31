@@ -32,6 +32,10 @@ from ancestry_mmm.core.fingerprint import (
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.media_costs import CostMappingRegistry, IdentitySpendMapping
 from ancestry_mmm.core.model_identity import ModelIdentity
+from ancestry_mmm.core.optimization import SpendConstraint
+from ancestry_mmm.core.optimization_constraint_vocabulary import (
+    GovernedSpendConstraint,
+)
 from ancestry_mmm.core.outcome_approval import (
     OutcomeApproval,
     fingerprint_outcome_definition,
@@ -1506,3 +1510,302 @@ def test_allocation_desk_separates_editable_proposed_and_saved_state():
         "Evaluation method",
         "Saved scenarios",
     } <= metric_labels
+
+
+class TestObjectiveVocabularyIntegration:
+    """REQ-OPT-001 (Decision 16): the closed objective-kind vocabulary
+    (`core.optimization_objective_vocabulary`) must actually gate what the
+    real Scenario Planner page offers, not sit beside it unused -
+    production-integration phase, 2026-08-31."""
+
+    def test_maximise_profit_is_selectable_but_blocked_with_reason(self):
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_consistent_session_state(at, value_currency="GBP")
+        at.run()
+        assert not at.exception, f"initial load raised: {at.exception}"
+
+        objective_radio = [r for r in at.radio if r.label == "Optimisation objective"]
+        assert objective_radio, "objective radio not found"
+        assert "Maximise profit" in objective_radio[0].options, (
+            "maximise_profit must remain visible in the selector, never "
+            "silently hidden or removed"
+        )
+        objective_radio[0].set_value("maximise_profit").run()
+        assert not at.exception, f"selecting maximise_profit raised: {at.exception}"
+
+        errors = [e.value or "" for e in at.error]
+        assert any("no governed profit/margin/COGS definition" in e for e in errors), (
+            f"expected the real PROFIT_DEFINITION_MISSING_REASON disclosed on the page, got: {errors}"
+        )
+
+    def test_minimise_cpa_blocked_without_activity_taxonomy(self):
+        """`_seed_consistent_session_state` sets `activity_definitions=[]` -
+        an empty (not None) list once decoded on the page, which must be
+        treated as "no activity taxonomy supplied" for cost-bearing
+        verification, not as "zero non-cost-bearing channels found"."""
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_consistent_session_state(at, value_currency="GBP")
+        at.run()
+        assert not at.exception, f"initial load raised: {at.exception}"
+
+        objective_radio = [r for r in at.radio if r.label == "Optimisation objective"]
+        objective_radio[0].set_value("minimise_cpa").run()
+        assert not at.exception, f"selecting minimise_cpa raised: {at.exception}"
+
+        errors = [e.value or "" for e in at.error]
+        assert any("activity taxonomy" in e for e in errors), (
+            f"expected a cost-bearing-verification block, got: {errors}"
+        )
+
+    def test_maximise_revenue_alias_still_evaluates_via_expected_value_path(self):
+        """maximise_revenue (offered today as "Maximise LTV-weighted
+        expected value") must remain fully functional - the vocabulary
+        wiring must never regress the one value-based objective that
+        already worked."""
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_consistent_session_state(at, value_currency="GBP")
+        at.run()
+        assert not at.exception
+
+        objective_radio = [r for r in at.radio if r.label == "Optimisation objective"]
+        objective_radio[0].set_value("expected_value").run()
+        assert not at.exception
+
+        errors = [e.value or "" for e in at.error]
+        assert not any("not available for this optimisation" in e for e in errors), (
+            errors
+        )
+
+
+def _seed_two_channel_session_state(at: AppTest) -> None:
+    """A minimal, self-contained two-channel variant of
+    `_seed_consistent_session_state` - needed to prove a governed spend
+    constraint on one channel actually redistributes budget to another
+    real channel through the real `optimize_scenario` SLSQP call, which a
+    single-channel fixture cannot demonstrate."""
+    outcome_def = OutcomeDefinition(
+        outcome_id="New",
+        product=FAMILY_HISTORY,
+        segment="New",
+        metric="GSA",
+        metric_key=METRIC_KEY_FH_GSA,
+        source_column="fh_new_gsa",
+        unit="GSA",
+        aggregation_type="count",
+        event_definition="A new subscriber",
+        date_basis="event_date",
+        cohort_or_attribution_basis="signup_cohort",
+        completeness_or_maturity_policy="Mature after 12 weeks",
+        exclusions="Excludes internal test accounts",
+        reconciliation_source="Finance report",
+        business_owner="Analytics",
+        definition_version="1.0",
+        include_in_value=False,
+        include_in_optimisation=True,
+    )
+    outcome_defs = [outcome_def]
+    meta = FHModelMeta(
+        markets=["UK"],
+        outcome_ids=["New"],
+        channels=["TV_Brand", "Digital"],
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0],
+        dna_outcome_id="New",
+        dna_lag_weeks=4,
+        unpooled_markets=[],
+        control_names=[],
+        outcome_catalogue_at_fit=outcome_defs,
+        outcome_id_to_eligibility={
+            o.outcome_id: outcome_eligibility(o) for o in outcome_defs
+        },
+    )
+    trace = _trace(meta)
+    transformed_data = pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01", periods=16, freq="W"),
+            "market": ["UK"] * 16,
+            "TV_Brand": np.linspace(500.0, 500.0, 16),
+            "Digital": np.linspace(500.0, 500.0, 16),
+            "fh_new_gsa": np.linspace(10.0, 16.0, 16),
+        }
+    )
+    model_spec_dict = ModelSpec(
+        date_col="date",
+        market_col="market",
+        markets=["UK"],
+        segment_outcomes={"New": "fh_new_gsa"},
+        channels=["TV_Brand", "Digital"],
+    ).to_dict()
+    prior_config = {"decay_mu": 0.5}
+    dna_lag_weeks = 4
+    spec = ModelSpec.from_dict(model_spec_dict)
+    frame = prepare_fh_modeling_frame(transformed_data, spec)
+    posterior_params = extract_posterior_params(trace, meta)
+
+    model_run_id = "run-scenario-planner-governed-constraints"
+    approval = ModelApproval(
+        approved_by="Jane Analyst",
+        model_run_id=model_run_id,
+        data_fingerprint=fingerprint_dataframe(frame["df"]),
+        model_spec_fingerprint=fingerprint_model_spec(
+            model_spec_dict,
+            prior_config,
+            dna_lag_weeks,
+            model_type="shared",
+            pipeline_steps=[],
+            market_spec_config=None,
+            direct_dna_outcome_ids=meta.direct_dna_outcome_ids,
+            outcome_catalogue=outcome_catalogue_fingerprint_payload(
+                meta.outcome_catalogue_at_fit
+            ),
+            funnel_links=None,
+            media_outcome_pathways=pathway_catalogue_fingerprint_payload(
+                meta.pathway_catalogue_at_fit
+            ),
+            activity_fit_fingerprint=None,
+        ),
+        posterior_fingerprint=fingerprint_posterior(posterior_params),
+    )
+
+    at.session_state["frame"] = frame
+    at.session_state["model_meta"] = meta
+    at.session_state["posterior_params"] = posterior_params
+    at.session_state["model_spec"] = model_spec_dict
+    at.session_state["trace"] = trace
+    at.session_state["model_type"] = "shared"
+    at.session_state["model_run_id"] = model_run_id
+    at.session_state["prior_config"] = prior_config
+    at.session_state["dna_lag_weeks"] = dna_lag_weeks
+    at.session_state["model_approval"] = approval.to_dict()
+    at.session_state["outcome_definitions"] = [o.to_dict() for o in outcome_defs]
+    outcome_approvals = [
+        OutcomeApproval(
+            approval_id=f"apr-{o.outcome_id}",
+            outcome_id=o.outcome_id,
+            definition_fingerprint=fingerprint_outcome_definition(o),
+            status="approved",
+            allowed_uses=("planning", "optimisation"),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
+        )
+        for o in outcome_defs
+    ]
+    at.session_state["outcome_approvals"] = [a.to_dict() for a in outcome_approvals]
+    at.session_state["activity_definitions"] = []
+    at.session_state["media_cost_mappings"] = None
+
+
+class TestGovernedConstraintVocabularyReachableFromTheRealPage:
+    """REQ-OPT-001 (Decision 16): a governed constraint added through the
+    real Scenario Planner page's session state must actually reach
+    `optimize_scenario`'s real SLSQP call and change the displayed
+    optimised spend plan - not sit beside the page unused. Production-
+    integration phase, 2026-08-31."""
+
+    def _run_constrained(self, at: AppTest):
+        run_buttons = [
+            b for b in at.button if b.label == "Run constrained optimisation"
+        ]
+        assert run_buttons, "Run constrained optimisation button not found"
+        run_buttons[0].click().run()
+        assert not at.exception, f"running the optimiser raised: {at.exception}"
+
+    def test_governed_maximum_spend_constraint_changes_displayed_allocation(self):
+        # Random (seeded) posterior beta per channel (`_trace`) means the
+        # two channels are not perfectly symmetric - the unconstrained
+        # optimum concentrates budget onto whichever channel the fit
+        # happens to favour, not necessarily "TV_Brand". This test caps
+        # whichever (month, channel) cell the baseline actually favours,
+        # rather than assuming which one that is.
+        baseline_at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_two_channel_session_state(baseline_at)
+        baseline_at.run()
+        objective_radio = [
+            r for r in baseline_at.radio if r.label == "Optimisation objective"
+        ]
+        objective_radio[0].set_value("fh_gsa").run()
+        baseline_at.session_state["scenario_constraints"] = []
+        baseline_at.session_state["governed_scenario_constraints"] = []
+        self._run_constrained(baseline_at)
+        baseline_plan = baseline_at.session_state["constrained_result"]["spend_plan"]
+        first_month = next(iter(baseline_plan))
+        dominant_channel = max(
+            ("TV_Brand", "Digital"), key=lambda c: baseline_plan[first_month][c]
+        )
+        baseline_dominant_value = baseline_plan[first_month][dominant_channel]
+        baseline_total = sum(
+            v for month in baseline_plan.values() for v in month.values()
+        )
+        assert baseline_dominant_value > 200.0, (
+            f"fixture needs a clearly dominant channel to cap meaningfully, got: {baseline_plan}"
+        )
+
+        capped_at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_two_channel_session_state(capped_at)
+        capped_at.run()
+        objective_radio = [
+            r for r in capped_at.radio if r.label == "Optimisation objective"
+        ]
+        objective_radio[0].set_value("fh_gsa").run()
+        # A deep cut (not just "a bit below baseline") - with 24 free cells
+        # and one whole-plan budget-conservation constraint, a shallow cap
+        # is not guaranteed to actually bind at the true SLSQP optimum (the
+        # freed budget can be absorbed elsewhere without needing to reach
+        # the cap) - verified empirically before choosing this factor.
+        cap_value = baseline_dominant_value * 0.1
+        capped_at.session_state["scenario_constraints"] = []
+        capped_at.session_state["governed_scenario_constraints"] = [
+            GovernedSpendConstraint(
+                kind="maximum_spend",
+                channel=dominant_channel,
+                month=first_month,
+                value=cap_value,
+                label="apptest cap",
+            )
+        ]
+        self._run_constrained(capped_at)
+        capped_result = capped_at.session_state["constrained_result"]
+        capped_plan = capped_result["spend_plan"]
+        capped_dominant_value = capped_plan[first_month][dominant_channel]
+        capped_total = sum(v for month in capped_plan.values() for v in month.values())
+
+        assert capped_dominant_value <= cap_value + 1e-6
+        assert capped_dominant_value < baseline_dominant_value, (
+            "a governed constraint added to the real page's session state "
+            "must actually reach optimize_scenario's real SLSQP call and "
+            "change the displayed allocation"
+        )
+        # Total budget conserved (conserve_total_budget=True) - the capped
+        # spend reappeared elsewhere in the plan, not vanished.
+        assert capped_total == pytest.approx(baseline_total, rel=1e-6)
+
+        disclosures = capped_result["governed_constraint_disclosures"]
+        assert disclosures, (
+            "binding-constraint disclosure must be populated on the real page's result"
+        )
+        cap_disclosure = [d for d in disclosures if d["kind"] == "maximum_spend"]
+        assert cap_disclosure and cap_disclosure[0]["binding"] is True
+
+    def test_combining_both_constraint_vocabularies_is_blocked_not_silently_dropped(
+        self,
+    ):
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_two_channel_session_state(at)
+        at.run()
+        objective_radio = [r for r in at.radio if r.label == "Optimisation objective"]
+        objective_radio[0].set_value("fh_gsa").run()
+
+        at.session_state["scenario_constraints"] = [
+            SpendConstraint(kind="min_spend_floor", channel="TV_Brand", value=100.0)
+        ]
+        at.session_state["governed_scenario_constraints"] = [
+            GovernedSpendConstraint(
+                kind="maximum_spend", channel="TV_Brand", month="2024-01", value=100.0
+            )
+        ]
+        self._run_constrained(at)
+        errors = [e.value or "" for e in at.error]
+        assert any(
+            "never combined in a single optimisation run" in e for e in errors
+        ), errors

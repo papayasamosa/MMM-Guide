@@ -188,6 +188,13 @@ class OptimisationInput:
     currency_context: Optional[CurrencyContext] = None
     approval_readiness: Optional[ApprovalReadiness] = None
     current_policy: Optional[ThresholdPolicy] = None
+    # REQ-OPT-001 Requirement 2 (Decision 16): the extended governed
+    # constraint-kind vocabulary (`core.optimization_constraint_vocabulary.
+    # GovernedSpendConstraint`) - replaces `constraints` for bounds-building
+    # when supplied. Typed `Any` here (not `GovernedSpendConstraint`) to
+    # avoid a hard import-time dependency on that module from every caller
+    # of this service, matching `constraints: Optional[List[Any]]` above.
+    governed_constraints: Optional[List[Any]] = None
 
 
 @dataclass
@@ -439,6 +446,7 @@ class ScenarioService:
                 currency_context=opt_input.currency_context,
                 approval_readiness=opt_input.approval_readiness,
                 current_policy=opt_input.current_policy,
+                governed_constraints=opt_input.governed_constraints,
             )
         except Exception as exc:
             errors.append(f"Optimisation failed: {exc}")

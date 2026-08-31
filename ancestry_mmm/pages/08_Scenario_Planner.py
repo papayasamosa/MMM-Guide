@@ -91,6 +91,10 @@ from ancestry_mmm.core.optimization import (
     seed_monetary_and_quantity_defaults,
     whole_plan_scope_compatible,
 )
+from ancestry_mmm.core.optimization_objective_vocabulary import resolve_objective_kind
+from ancestry_mmm.core.optimization_constraint_vocabulary import (
+    GovernedSpendConstraint,
+)
 from ancestry_mmm.core.uncertainty import evaluate_scenario_with_uncertainty
 from ancestry_mmm.core.outcome_group_totals import aggregate_outcome_groups
 from ancestry_mmm.core.evidence_tiers import classify_market_evidence
@@ -1525,19 +1529,52 @@ if _has_fh_signups:
 if _has_fh_nbt:
     _objective_options.append("fh_net_billthrough")
 _objective_options.append("expected_value")  # Always available if value config exists
+# REQ-OPT-001 (Decision 16): the closed objective-kind vocabulary's three
+# value-based kinds beyond "maximise revenue" (which is already the
+# existing "expected_value" objective, per core.optimization_objective_
+# vocabulary's own resolution - not a new, separately-invented value
+# definition). Always offered - never silently hidden - even though
+# maximise_profit is always blocked and maximise_roi/minimise_cpa are
+# gated on every considered channel being cost-bearing; see
+# `_objective_vocab_resolution` below for the disclosed reason in each
+# case.
+_objective_options.extend(["maximise_profit", "maximise_roi", "minimise_cpa"])
 _objective_labels = {
     "fh_net_billthrough": "Maximise incremental Family History net bill-through",
     "fh_gsa": "Maximise Family History GSAs",
     "fh_signups": "Maximise Family History sign-ups",
     "dna_kits": "Maximise DNA kit sales",
     "expected_value": "Maximise LTV-weighted expected value",
+    "maximise_profit": "Maximise profit",
+    "maximise_roi": "Maximise ROI",
+    "minimise_cpa": "Minimise CPA",
 }
-objective = st.radio(
+objective_display_kind = st.radio(
     "Optimisation objective",
     _objective_options,
     horizontal=True,
     format_func=lambda x: _objective_labels[x],
     help=FIELD_HELP["ltv"],
+)
+# REQ-OPT-001 Requirement 1 (Decision 16): maximise_revenue/maximise_profit/
+# maximise_roi/minimise_cpa all resolve to the same governed value/return
+# definition as the existing "expected_value" objective (core.
+# optimization_objective_vocabulary.resolve_objective_kind resolves every
+# one of them via the real resolve_planning_objective(objective_kind=
+# "expected_value", ...)) - so every downstream expected_value computation
+# in this page (value mapping derivation, currency derivation, the value-
+# assumptions editor) already correctly drives all four once aliased here.
+# `objective_display_kind` (what the analyst actually asked for) is kept
+# separately for labelling and for the vocabulary's own gating check below -
+# never overwritten, so a blocked/gated choice is never silently relabelled
+# as something else.
+_OBJECTIVE_VOCAB_LEGACY_ALIAS = {
+    "maximise_profit": "expected_value",
+    "maximise_roi": "expected_value",
+    "minimise_cpa": "expected_value",
+}
+objective = _OBJECTIVE_VOCAB_LEGACY_ALIAS.get(
+    objective_display_kind, objective_display_kind
 )
 # G2A.7a.5: build value weights from outcome catalogue
 value_weights_by_outcome_id: dict[str, float] = {}
@@ -1918,6 +1955,30 @@ try:
 except (ValueError, PlanningGovernanceError) as e:
     _objective_error = (_objective_error or "") + f" Optimisation objective: {e}"
 
+# REQ-OPT-001 Requirement 1 (Decision 16): validate the actual vocabulary
+# kind the analyst selected - this is the real gate, not a display sitting
+# beside the optimiser unused. maximise_profit is unconditionally blocked
+# (a repository-wide audit found no governed profit/margin/COGS definition
+# anywhere); maximise_roi/minimise_cpa require every channel this
+# optimisation considers to be cost-bearing (Decision 7 - SEO exclusion).
+# Blocked/gated kinds are never silently hidden from the selector above -
+# they stay selectable, and the reason is disclosed here and used below to
+# block the Run buttons.
+_objective_vocab_error: str | None = None
+if objective_display_kind in ("maximise_profit", "maximise_roi", "minimise_cpa"):
+    _vocab_resolution = resolve_objective_kind(
+        objective_display_kind,
+        meta=meta,
+        operation="optimisation",
+        ltv=ltv,
+        value_currency=value_currency,
+        value_weights_by_outcome_id=value_weights_by_outcome_id or None,
+        considered_channels=meta.channels,
+        activities=activity_definitions or None,
+    )
+    if not _vocab_resolution.ready:
+        _objective_vocab_error = "; ".join(_vocab_resolution.reasons)
+
 st.caption(
     "Each objective states exactly what it maximises - Family History GSAs, Family History sign-ups "
     "and DNA kit sales are never silently combined into one generic 'volume' number. "
@@ -1926,7 +1987,13 @@ st.caption(
 )
 if _objective_error:
     st.error(f"Objective configuration: {_objective_error}")
-elif objective == "expected_value":
+if _objective_vocab_error:
+    render_status_badge("unavailable", label=_objective_labels[objective_display_kind])
+    st.error(
+        f"'{_objective_labels[objective_display_kind]}' is not available for this "
+        f"optimisation: {_objective_vocab_error}"
+    )
+if not _objective_error and objective == "expected_value":
     # Display actual currency when available
     if value_currency:
         st.caption(f"Value currency: **{value_currency}**")
@@ -2119,6 +2186,13 @@ def _render_steady_state_manual_tab():
             governance_dependencies=gov_deps,
         )
         manual_scenario["predicted"] = predicted
+        # REQ-OPT-001 (Decision 16): disclose exactly which closed
+        # objective-kind vocabulary entry the analyst selected - never
+        # buried behind the aliased legacy `objective` string alone (e.g.
+        # "minimise_cpa" and "maximise_revenue" both alias to the legacy
+        # "expected_value" objective, but are materially different analyst
+        # intents worth persisting distinctly).
+        manual_scenario["objective_kind_vocabulary_selection"] = objective_display_kind
         scenarios.append(manual_scenario)
         set_state("scenarios", scenarios)
         st.success(f"Saved scenario '{scenario_name}'.")
@@ -2603,10 +2677,150 @@ with tab_constrained:
             st.session_state["scenario_constraints"].pop(i)
             st.rerun()
 
+    st.markdown("#### Extended constraints (Decision 16 governed vocabulary)")
+    st.caption(
+        "The extended kinds Decision 16 adds beyond the constraints above - maximum spend, "
+        "a spend range, an absolute change from the reference plan, zero spend/no available "
+        "demand, and a non-monetary required-minimum-activity floor. These reach the same "
+        "optimiser bounds the constraints above do (`core.optimization_constraint_vocabulary`), "
+        "never a separate/duplicate rule set."
+    )
+    if "governed_scenario_constraints" not in st.session_state:
+        st.session_state["governed_scenario_constraints"] = []
+
+    with st.expander("+ Add an extended constraint"):
+        g_kind = st.selectbox(
+            "Constraint type",
+            [
+                "maximum_spend",
+                "spend_range",
+                "absolute_change_from_reference",
+                "zero_spend",
+                "unavailable",
+                "required_minimum_activity",
+            ],
+            format_func=lambda k: CONSTRAINT_KIND_LABELS.get(k, k),
+            key="gc_kind",
+        )
+        st.caption(
+            {
+                "maximum_spend": "An upper bound on spend, distinct from a locked/fixed value.",
+                "spend_range": "Both a minimum and a maximum bound in one constraint.",
+                "absolute_change_from_reference": "A +/- absolute-currency band around the reference plan's spend, distinct from a percentage band.",
+                "zero_spend": "An analyst's explicit choice to spend nothing - distinct from 'unavailable'.",
+                "unavailable": "No available demand/activity this period - a fact, distinct from an analyst's zero-spend choice.",
+                "required_minimum_activity": "A non-monetary activity floor (e.g. units, impressions) - never treated as a spend bound unless a governed unit-to-spend rate is supplied below.",
+            }.get(g_kind, "")
+        )
+        g_ch = st.selectbox(
+            "Channel",
+            meta.channels,
+            key="gc_channel",
+            format_func=lambda c: model_input_display_label(
+                c, activity_definitions=activity_definitions, market=market
+            ),
+        )
+        g_mo = st.selectbox("Month", months, key="gc_month")
+        g_value = None
+        g_min_value = None
+        g_max_value = None
+        g_absolute_delta = None
+        g_unit_to_spend_rate = None
+        if g_kind == "maximum_spend":
+            g_value = st.number_input(
+                "Maximum spend", min_value=0.0, value=0.0, key="gc_value"
+            )
+        elif g_kind == "spend_range":
+            g_min_value = st.number_input(
+                "Minimum spend", min_value=0.0, value=0.0, key="gc_min_value"
+            )
+            g_max_value = st.number_input(
+                "Maximum spend", min_value=0.0, value=0.0, key="gc_max_value"
+            )
+        elif g_kind == "absolute_change_from_reference":
+            g_absolute_delta = st.number_input(
+                "Absolute allowed change (+/-)",
+                min_value=0.0,
+                value=0.0,
+                key="gc_abs_delta",
+            )
+        elif g_kind == "required_minimum_activity":
+            g_value = st.number_input(
+                "Required minimum activity (units)",
+                min_value=0.0,
+                value=0.0,
+                key="gc_activity_value",
+            )
+            g_unit_to_spend_rate = st.number_input(
+                "Unit-to-spend rate (0 = advisory-only, never invented)",
+                min_value=0.0,
+                value=0.0,
+                key="gc_unit_rate",
+                help="A governed currency-per-unit rate, if one exists - left at 0, this "
+                "floor is disclosed but never silently applied as a spend bound.",
+            )
+        if st.button("Add extended constraint"):
+            try:
+                governed_constraint = GovernedSpendConstraint(
+                    kind=g_kind,
+                    channel=g_ch,
+                    month=g_mo,
+                    value=g_value if g_value else None,
+                    min_value=g_min_value if g_kind == "spend_range" else None,
+                    max_value=g_max_value if g_kind == "spend_range" else None,
+                    absolute_delta=g_absolute_delta if g_absolute_delta else None,
+                    unit_to_spend_rate=(
+                        g_unit_to_spend_rate if g_unit_to_spend_rate else None
+                    ),
+                    label=f"{g_kind} {g_ch} {g_mo}",
+                )
+            except ValueError as exc:
+                st.error(f"Cannot add constraint: {exc}")
+            else:
+                st.session_state["governed_scenario_constraints"].append(
+                    governed_constraint
+                )
+                st.rerun()
+
+    for i, gc in enumerate(st.session_state["governed_scenario_constraints"]):
+        gc1, gc2 = st.columns([5, 1])
+        gc1.markdown(
+            f"**{i + 1}.** {CONSTRAINT_KIND_LABELS.get(gc.kind, gc.kind)} - "
+            f"channel={model_input_display_label(gc.channel, activity_definitions=activity_definitions, market=market) if gc.channel else 'any'}"
+            f", month={gc.month or 'any'}, value={gc.value}, "
+            f"range=[{gc.min_value}, {gc.max_value}], absolute delta={gc.absolute_delta}"
+        )
+        if gc2.button("Remove", key=f"rm_governed_constraint_{i}"):
+            st.session_state["governed_scenario_constraints"].pop(i)
+            st.rerun()
+
     if st.button("Run constrained optimisation", type="primary"):
-        if objective == "expected_value" and value_mapping is None:
+        if _objective_vocab_error:
+            st.error(
+                f"Cannot run optimisation: '{_objective_labels[objective_display_kind]}' "
+                f"is not available: {_objective_vocab_error}"
+            )
+            result = None
+        elif objective == "expected_value" and value_mapping is None:
             st.error(
                 "Cannot run optimisation: 'Maximise expected value' needs an outcome value mapping - a value weight for every target outcome and a single governed currency across them (set on the Structure page)."
+            )
+            result = None
+        elif (
+            st.session_state["scenario_constraints"]
+            and st.session_state["governed_scenario_constraints"]
+        ):
+            # REQ-OPT-001 Requirement 2 (Decision 16): the two constraint
+            # vocabularies are never combined in one optimisation run
+            # (core.optimization_constraint_vocabulary's own approved
+            # design - governed_constraints replaces, never supplements,
+            # the legacy constraints for bounds-building). Block with a
+            # clear reason rather than silently dropping one list.
+            st.error(
+                "Cannot run optimisation: both the constraints above and the extended "
+                "(Decision 16) constraints below are populated. Remove all constraints from "
+                "one list before running - the two vocabularies are never combined in a "
+                "single optimisation run."
             )
             result = None
         else:
@@ -2627,6 +2841,9 @@ with tab_constrained:
                         objective=objective if planning_objective is None else None,
                         planning_objective=optimisation_objective,
                         constraints=st.session_state["scenario_constraints"],
+                        governed_constraints=(
+                            st.session_state["governed_scenario_constraints"] or None
+                        ),
                         artefact_kind="constrained_optimisation",
                         conserve_total_budget=True,
                         activity_definitions=activity_definitions or None,
@@ -2680,7 +2897,7 @@ with tab_constrained:
             )
         c1, c2 = st.columns(2)
         c1.metric(
-            f"Current total ({_objective_labels[objective]})",
+            f"Current total ({_objective_labels[objective_display_kind]})",
             f"{result['current_objective_value']:,.0f}",
         )
         c2.metric(
@@ -2725,6 +2942,24 @@ with tab_constrained:
             technical_title="Technical details · optimised evaluator output",
         )
 
+        # REQ-OPT-001 Requirement 4 (Decision 16): disclose which extended
+        # governed constraints actually bound at this solution - never
+        # buried in raw session state.
+        _gc_disclosures = result.get("governed_constraint_disclosures") or []
+        if _gc_disclosures:
+            st.markdown("**Extended constraints: disposition and binding status**")
+            for _d in _gc_disclosures:
+                _bound_note = (
+                    "**binding at this solution**"
+                    if _d.get("binding")
+                    else "not binding at this solution"
+                )
+                st.caption(
+                    f"{CONSTRAINT_KIND_LABELS.get(_d['kind'], _d['kind'])} "
+                    f"({_d.get('channel') or 'any'}, {', '.join(_d.get('months') or []) or 'any'}) - "
+                    f"{_d['disposition']}, {_bound_note}. {_d['detail']}"
+                )
+
         name = st.text_input(
             "Scenario name *",
             value=f"constrained-{market}-{months[0]}",
@@ -2754,6 +2989,15 @@ with tab_constrained:
                 governance_dependencies=gov_deps,
             )
             s["predicted"] = result["predicted"]
+            # REQ-OPT-001 (Decision 16): disclose exactly which closed
+            # objective-kind vocabulary entry the analyst selected, plus
+            # every governed constraint's disposition/binding status at the
+            # solution actually returned - never buried in raw session
+            # state.
+            s["objective_kind_vocabulary_selection"] = objective_display_kind
+            s["governed_constraint_disclosures"] = result[
+                "governed_constraint_disclosures"
+            ]
             scenarios.append(s)
             set_state("scenarios", scenarios)
             st.success(f"Saved scenario '{name}'.")
@@ -2769,7 +3013,13 @@ with tab_unconstrained:
         "comparison only."
     )
     if st.button("Run unconstrained benchmark", type="primary"):
-        if objective == "expected_value" and value_mapping is None:
+        if _objective_vocab_error:
+            st.error(
+                f"Cannot run optimisation: '{_objective_labels[objective_display_kind]}' "
+                f"is not available: {_objective_vocab_error}"
+            )
+            result = None
+        elif objective == "expected_value" and value_mapping is None:
             st.error(
                 "Cannot run optimisation: 'Maximise expected value' needs an outcome value mapping - a value weight for every target outcome and a single governed currency across them (set on the Structure page)."
             )
@@ -2832,7 +3082,7 @@ with tab_unconstrained:
             st.caption("**Planning use: Official planning**")
         c1, c2 = st.columns(2)
         c1.metric(
-            f"Current total ({_objective_labels[objective]})",
+            f"Current total ({_objective_labels[objective_display_kind]})",
             f"{result['current_objective_value']:,.0f}",
         )
         c2.metric(
