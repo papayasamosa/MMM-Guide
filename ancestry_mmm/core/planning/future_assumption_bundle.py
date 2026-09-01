@@ -19,14 +19,18 @@ Summary (see the decision record for full reasoning):
    this module, matching `core.calibration_comparison`'s own
    already-established precedent exactly.
 3. External-forecaster integration policy: F1, no production
-   integration now - a bundle's future path for any control remains
-   either an explicit analyst-supplied series or an exploratory
-   `hold_last_observed` assumption, exactly as `core.planning.
-   future_context` already supports.
+   Chronos-2 integration now - a bundle's future path for any suitable
+   exogenous control remains either an explicit governed series or an
+   exploratory `hold_last_observed` assumption, exactly as
+   `core.planning.future_context` supports. Trend, Fourier seasonality,
+   latent baseline handling, promotions, and planned media are composed by
+   the application planning path; they are not manual demand/seasonality/
+   baseline fields in this bundle.
 
-This module does not modify `core.planning.future_context`,
-`core.persistence`, or any `pages/*.py` UI - it is additive, standalone,
-and read-only with respect to `FutureContextResult`.
+The bundle is persisted by `core.persistence` and populated by Scenario
+Planner for manual sequential evaluation and sequential optimisation. This
+module remains framework-independent and read-only with respect to
+`FutureContextResult`.
 """
 
 from __future__ import annotations
@@ -116,12 +120,32 @@ class FutureAssumptionBundle:
             "bundle_id": self.bundle_id,
             "bundle_version": self.bundle_version,
             "context_keys": sorted(self.context_by_key.keys()),
+            "contexts": {
+                key: context.to_dict()
+                for key, context in sorted(self.context_by_key.items())
+            },
             "owner": self.owner,
             "notes": self.notes,
             "schema_version": self.schema_version,
             "is_decision_ready": self.is_decision_ready,
             "fingerprint": self.fingerprint(),
         }
+
+    @classmethod
+    def from_dict(cls, values: Mapping[str, Any]) -> "FutureAssumptionBundle":
+        payload = dict(values)
+        context_payload = payload.get("contexts") or {}
+        context_by_key = {
+            str(key): FutureContextResult.from_dict(context)
+            for key, context in context_payload.items()
+        }
+        if not context_by_key:
+            raise ValueError(
+                "FutureAssumptionBundle payload does not contain serialized contexts."
+            )
+        known = set(cls.__dataclass_fields__)
+        payload["context_by_key"] = context_by_key
+        return cls(**{key: value for key, value in payload.items() if key in known})
 
 
 def new_bundle_version(

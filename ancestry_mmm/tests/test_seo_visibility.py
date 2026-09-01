@@ -12,6 +12,7 @@ from ancestry_mmm.core.seo_visibility import (
     DIRECTIONALITY_HIGHER_IS_BETTER,
     SEO_POSITIONAL_VISIBILITY_METRIC,
     GscPositionRow,
+    SeoModelFitInputs,
     SeoPositionalVisibilityObservation,
     SeoVisibilityMetricDefinition,
     compute_weekly_positional_visibility,
@@ -296,3 +297,49 @@ class TestGovernedMetricDefinition:
             SEO_POSITIONAL_VISIBILITY_METRIC.to_dict()
         )
         assert restored == SEO_POSITIONAL_VISIBILITY_METRIC
+
+
+class TestSeoModelFitInputs:
+    def test_row_aligned_inputs_gate_missing_and_observed_zero_cells(self):
+        observations = [
+            compute_weekly_positional_visibility(
+                [GscPositionRow("q", position=2.0, impressions=100.0)],
+                market="UK",
+                week="2025-01-06",
+            ),
+            compute_weekly_positional_visibility(
+                [], market="UK", week="2025-01-13"
+            ),
+            compute_weekly_positional_visibility(
+                [GscPositionRow("q", position=4.0, impressions=100.0)],
+                market="UK",
+                week="2025-01-20",
+            ),
+        ]
+        fit_inputs = SeoModelFitInputs.from_observations(
+            observations,
+            model_markets=("UK", "UK", "UK", "UK"),
+            model_weeks=(
+                "2025-01-06",
+                "2025-01-13",
+                "2025-01-20",
+                "2025-01-27",
+            ),
+        )
+
+        assert fit_inputs.raw_visibility == (0.5, None, 0.25, None)
+        assert fit_inputs.active_mask == (1.0, 0.0, 1.0, 0.0)
+        assert fit_inputs.standardized_visibility[1] == 0.0
+        assert fit_inputs.standardized_visibility[3] == 0.0
+        assert fit_inputs.window_by_market["UK"].start_week == "2025-01-06"
+        assert fit_inputs.window_by_market["UK"].end_week == "2025-01-20"
+        assert SeoModelFitInputs.from_dict(fit_inputs.to_dict()) == fit_inputs
+
+    def test_requires_at_least_one_observed_visibility_value(self):
+        zero = compute_weekly_positional_visibility(
+            [], market="UK", week="2025-01-06"
+        )
+        with pytest.raises(ValueError, match="at least one observed"):
+            SeoModelFitInputs.from_observations(
+                [zero], model_markets=("UK",), model_weeks=("2025-01-06",)
+            )

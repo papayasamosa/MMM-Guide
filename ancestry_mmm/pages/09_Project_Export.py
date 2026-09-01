@@ -872,6 +872,8 @@ if st.button("Build export bundle", type="primary"):
                 version_history=get_state("search_object_versions"),
             ),
             google_trends_anchor=get_state("google_trends_anchor"),
+            seo_fit_inputs=get_state("seo_fit_inputs"),
+            future_assumption_bundles=get_state("future_assumption_bundles"),
             candidate_a_fit_inputs=(
                 get_state("candidate_a_fit_inputs").to_dict()
                 if hasattr(get_state("candidate_a_fit_inputs"), "to_dict")
@@ -1228,6 +1230,10 @@ if uploaded_zip is not None and st.button("Import bundle"):
             ],
         )
         set_state("google_trends_anchor", imported.get("google_trends_anchor"))
+        set_state("seo_fit_inputs", imported.get("seo_fit_inputs"))
+        set_state(
+            "future_assumption_bundles", imported.get("future_assumption_bundles")
+        )
         set_state("candidate_a_fit_inputs", imported.get("candidate_a_fit_inputs"))
         for _search_object_warning in _search_object_warnings:
             st.warning(_search_object_warning)

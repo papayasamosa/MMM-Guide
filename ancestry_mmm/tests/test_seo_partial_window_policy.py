@@ -246,9 +246,9 @@ class TestAssessSeoContributionWindowEligibility:
 
 
 class TestGatedRegressorArchitectureMetadata:
-    def test_architecture_is_documented_not_executable(self):
+    def test_architecture_metadata_matches_executable_w2b_integration(self):
         assert SEO_GATED_REGRESSOR_ARCHITECTURE["candidate"] == "W2-B"
-        assert SEO_GATED_REGRESSOR_ARCHITECTURE["not_yet_implemented"] is True
+        assert SEO_GATED_REGRESSOR_ARCHITECTURE["not_yet_implemented"] is False
         assert "rejected_alternative" in SEO_GATED_REGRESSOR_ARCHITECTURE
         assert (
             SEO_GATED_REGRESSOR_ARCHITECTURE["rejected_alternative"]["candidate"]

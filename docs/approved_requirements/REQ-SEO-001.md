@@ -138,7 +138,7 @@ this record does not approve:
 - `ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable`
 - `ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_seo_001_indexed_and_classified_incomplete`
 - `ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_all_records_reference_the_decision_package`
-- `ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_seo_001_defers_causal_role`
+- `ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_seo_001_records_approved_fit_role_and_open_estimand_direction`
 
 ## Migration impact
 
@@ -380,15 +380,38 @@ decision record in
 
 **Still not resolved by this addendum:**
 
-- the actual PyMC/PyTensor code implementing the windowed-gate
-  mechanism inside a real SEO causal pathway - a separate, materially
-  statistical fit-time integration requiring its own prior-predictive
-  and synthetic-recovery validation, not a configuration change;
 - the approved minimum-window-length threshold itself
   (`REQ-DATASUPPORT-001`'s scope, not invented here);
 - the functional form/transformation question this addendum's own
   "Out of scope" text already deferred to Decision 6/Phase C.
 
-No `application`/`pages` code changes accompany this addendum; only the
-new standalone `core.seo_partial_window_policy` module (which does not
-modify `core.seo_visibility` or `core.coverage`).
+## Addendum, 2026-09-01 (Phase C): fit-time SEO pathway wired
+
+The approved W2-B direction is now consumed by the shared and
+market-specific PyMC model builders through
+`core.seo_visibility.SeoModelFitInputs`. Model Training accepts a governed
+Google Search Console positional-visibility upload, computes the existing
+impression-weighted `1 / position` metric, preserves missing weeks as an
+inactive mask, standardizes only observed positive-impression values, and
+passes the row-aligned feature into a fitted `seo_visibility_beta` outcome
+term. The full MMM history remains in the likelihood.
+
+The fitted payload, exact row identity, window records, standardization
+metadata, and posterior coefficient are persisted and restored for
+Diagnostics, Results, curve generation, and replay. Sequential
+planning/optimisation uses the governed active-window reference state
+(zero-centred standardized visibility) as a system-generated baseline;
+analysts do not enter future SEO ranking values. SEO does not acquire
+spend-based CPA/ROI without an approved cost basis.
+
+This is a reduced-form final-outcome contribution for the approved
+visibility/capture-efficiency state. A separately identified decomposition
+of `ranking/visibility -> organic traffic -> final outcome` would require a
+governed market-week organic-traffic/click series and an approved joint
+mediator specification. The current GSC `clicks` field remains diagnostic
+only and is not silently used as a flat control.
+
+The implementation is covered by fit-input, persistence, replay, and
+fail-closed tests. The minimum-window eligibility threshold remains
+external to this requirement and must still be supplied before an SEO
+contribution can be labelled planning- or optimisation-eligible.

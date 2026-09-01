@@ -209,9 +209,11 @@ from .optimization import SpendConstraint
 # official conversion evidence. 18 -> 19 for the optional Candidate A Search
 # formulation and identification evidence. 19 -> 20 for the optional,
 # Finance-supplied FX rate set and immutable records. 20 -> 21 for the
-# complete optional Candidate A fit-input boundary. Older bundles remain importable
+# complete optional Candidate A fit-input boundary. 21 -> 22 for the
+# row-aligned, window-gated SEO visibility fit-input boundary. 22 -> 23 for
+# durable governed future-assumption bundles. Older bundles remain importable
 # because these fields restore as None until explicitly reviewed.
-PROJECT_BUNDLE_SCHEMA_VERSION = 21
+PROJECT_BUNDLE_SCHEMA_VERSION = 23
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -311,6 +313,8 @@ def export_project(
     candidate_a_fit_inputs: Optional[dict] = None,
     search_identification_report: Optional[dict] = None,
     google_trends_anchor: Optional[dict] = None,
+    seo_fit_inputs: Optional[dict] = None,
+    future_assumption_bundles: Optional[List[dict]] = None,
     source_versions: Optional[List[dict]] = None,
     source_definitions: Optional[List[dict]] = None,
     variable_coverage_matrices: Optional[List[dict]] = None,
@@ -563,6 +567,14 @@ def export_project(
             (tmp / "config" / "google_trends_anchor.json").write_text(
                 json.dumps(google_trends_anchor, indent=2, default=str)
             )
+        if seo_fit_inputs is not None:
+            (tmp / "config" / "seo_fit_inputs.json").write_text(
+                json.dumps(seo_fit_inputs, indent=2, default=str)
+            )
+        if future_assumption_bundles is not None:
+            (tmp / "config" / "future_assumption_bundles.json").write_text(
+                json.dumps(future_assumption_bundles, indent=2, default=str)
+            )
         # REQ-COVERAGE-001 S3: append-only immutable SourceVersion history
         # (core.coverage.SourceVersion.to_dict() dicts) - never pruned on
         # export; a bundle preserves every recorded upload's provenance so
@@ -739,6 +751,9 @@ def export_project(
                 "search_identification_report": search_identification_report
                 is not None,
                 "google_trends_anchor": google_trends_anchor is not None,
+                "seo_fit_inputs": seo_fit_inputs is not None,
+                "future_assumption_bundles": future_assumption_bundles is not None
+                and bool(future_assumption_bundles),
                 "source_versions": source_versions is not None
                 and bool(source_versions),
                 "source_definitions": source_definitions is not None
@@ -874,6 +889,8 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         "candidate_a_fit_inputs": None,
         "search_identification_report": None,
         "google_trends_anchor": None,
+        "seo_fit_inputs": None,
+        "future_assumption_bundles": None,
         # REQ-COVERAGE-001 S3: None for bundles exported before this
         # capability existed - "no source-version history recorded yet" is
         # a valid, not-an-error reading, same convention as causal_graphs/
@@ -1109,6 +1126,14 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "google_trends_anchor.json").exists():
             result["google_trends_anchor"] = json.loads(
                 (config_dir / "google_trends_anchor.json").read_text()
+            )
+        if (config_dir / "seo_fit_inputs.json").exists():
+            result["seo_fit_inputs"] = json.loads(
+                (config_dir / "seo_fit_inputs.json").read_text()
+            )
+        if (config_dir / "future_assumption_bundles.json").exists():
+            result["future_assumption_bundles"] = json.loads(
+                (config_dir / "future_assumption_bundles.json").read_text()
             )
         if (config_dir / "source_versions.json").exists():
             result["source_versions"] = json.loads(

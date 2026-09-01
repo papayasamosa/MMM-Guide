@@ -51,7 +51,13 @@ import math
 from dataclasses import asdict, dataclass
 from typing import Any, List, Mapping, Optional, Sequence, Tuple, cast
 
+import numpy as np
+
 from .coverage import COVERAGE_STATES, STATE_OBSERVED_ZERO
+from .seo_partial_window_policy import (
+    SeoValidEstimationWindow,
+    determine_valid_estimation_window,
+)
 
 SEO_VISIBILITY_SCHEMA_VERSION = 1
 
@@ -370,3 +376,180 @@ def compute_weekly_positional_visibility_series(
         for (market, week) in sorted(rows_by_market_week)
         for rows in [rows_by_market_week[(market, week)]]
     ]
+
+
+@dataclass(frozen=True)
+class SeoModelFitInputs:
+    """Row-aligned SEO visibility treatment for a fitted MMM.
+
+    The full MMM history remains present in ``model_weeks``.  ``active_mask``
+    identifies the observed SEO window, while inactive rows contain only a
+    computational zero in ``standardized_visibility`` and are never treated
+    as an observed zero.  This is the W2-B gated-regressor implementation of
+    Decision 3: the outcome likelihood still uses every model week, but SEO's
+    contribution is structurally inactive outside its valid source window.
+    """
+
+    metric_definition: SeoVisibilityMetricDefinition
+    model_markets: Tuple[str, ...]
+    model_weeks: Tuple[str, ...]
+    standardized_visibility: Tuple[float, ...]
+    active_mask: Tuple[float, ...]
+    raw_visibility: Tuple[Optional[float], ...]
+    window_by_market: Mapping[str, SeoValidEstimationWindow]
+    standardization_center: float
+    standardization_scale: float
+    pathway_id: str = "seo_visibility_to_organic_outcome_v1"
+    schema_version: int = SEO_VISIBILITY_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        n = len(self.model_weeks)
+        if len(self.standardized_visibility) != n or len(self.active_mask) != n:
+            raise ValueError(
+                "SeoModelFitInputs arrays must have one value per model week."
+            )
+        if len(self.raw_visibility) != n:
+            raise ValueError(
+                "SeoModelFitInputs.raw_visibility must be row-aligned to model weeks."
+            )
+        if not np.isfinite(self.standardization_center) or not np.isfinite(
+            self.standardization_scale
+        ) or self.standardization_scale <= 0:
+            raise ValueError("SEO standardization metadata must be finite and positive.")
+        if self.metric_definition.approval_status != "approved":
+            raise ValueError("SEO model inputs require an approved metric definition.")
+        if self.metric_definition.causal_role != CAUSAL_ROLE_MEDIATOR_OR_CAPTURE_EFFICIENCY_STATE:
+            raise ValueError(
+                "SEO model inputs require the approved mediator/capture-efficiency role."
+            )
+        if any(value not in (0.0, 1.0) for value in self.active_mask):
+            raise ValueError("SEO active_mask must contain only 0.0 or 1.0 values.")
+
+    @classmethod
+    def from_observations(
+        cls,
+        observations: Sequence[SeoPositionalVisibilityObservation],
+        *,
+        model_markets: Sequence[str],
+        model_weeks: Sequence[str],
+        metric_definition: SeoVisibilityMetricDefinition = SEO_POSITIONAL_VISIBILITY_METRIC,
+    ) -> "SeoModelFitInputs":
+        if not model_markets or not model_weeks:
+            raise ValueError("SEO model inputs require non-empty markets and weeks.")
+        if len(model_markets) != len(model_weeks):
+            raise ValueError("SEO model markets and weeks must be row-aligned.")
+        keys = list(zip((str(market) for market in model_markets), (str(week) for week in model_weeks)))
+        by_key: dict[tuple[str, str], SeoPositionalVisibilityObservation] = {}
+        for observation in observations:
+            key = (observation.market, observation.week)
+            if key in by_key:
+                raise ValueError(f"Duplicate SEO observation for {key}.")
+            by_key[key] = observation
+
+        values: list[Optional[float]] = []
+        active: list[float] = []
+        for key in keys:
+            observation = by_key.get(key)
+            value = (
+                float(observation.visibility_index)
+                if observation is not None and observation.visibility_index is not None
+                and observation.coverage_state != STATE_OBSERVED_ZERO
+                else None
+            )
+            values.append(value)
+            active.append(1.0 if value is not None else 0.0)
+        observed_values = np.asarray(
+            [value for value in values if value is not None], dtype=float
+        )
+        if observed_values.size == 0:
+            raise ValueError(
+                "SEO fitting requires at least one observed positive-impression "
+                "visibility value; missing weeks cannot be imputed."
+            )
+        center = float(np.mean(observed_values))
+        scale = float(np.std(observed_values))
+        if not np.isfinite(scale) or scale <= 0:
+            scale = 1.0
+        standardized = tuple(
+            float((value - center) / scale) if value is not None else 0.0
+            for value in values
+        )
+        windows = {}
+        for market in sorted(set(str(value) for value in model_markets)):
+            coverage = [
+                (week, by_key[(str(market), str(week))].coverage_state)
+                for week in model_weeks
+                if (str(market), str(week)) in by_key
+            ]
+            windows[str(market)] = determine_valid_estimation_window(
+                str(market), coverage
+            )
+        return cls(
+            metric_definition=metric_definition,
+            model_markets=tuple(str(market) for market in model_markets),
+            model_weeks=tuple(str(week) for week in model_weeks),
+            standardized_visibility=standardized,
+            active_mask=tuple(active),
+            raw_visibility=tuple(values),
+            window_by_market=windows,
+            standardization_center=center,
+            standardization_scale=scale,
+        )
+
+    def validate_frame(self, *, markets: Sequence[str], weeks: Sequence[str]) -> None:
+        if tuple(str(market) for market in markets) != self.model_markets:
+            raise ValueError("SEO inputs do not match the fitted model markets.")
+        if tuple(str(week) for week in weeks) != self.model_weeks:
+            raise ValueError(
+                "SEO inputs do not cover the fitted model weeks in exact row order."
+            )
+
+    def to_dict(self) -> dict:
+        return {
+            "metric_definition": self.metric_definition.to_dict(),
+            "model_markets": list(self.model_markets),
+            "model_weeks": list(self.model_weeks),
+            "standardized_visibility": list(self.standardized_visibility),
+            "active_mask": list(self.active_mask),
+            "raw_visibility": list(self.raw_visibility),
+            "window_by_market": {
+                market: window.to_dict()
+                for market, window in sorted(self.window_by_market.items())
+            },
+            "standardization_center": self.standardization_center,
+            "standardization_scale": self.standardization_scale,
+            "pathway_id": self.pathway_id,
+            "schema_version": self.schema_version,
+        }
+
+    @classmethod
+    def from_dict(cls, values: Mapping[str, Any]) -> "SeoModelFitInputs":
+        payload = dict(values)
+        payload["metric_definition"] = SeoVisibilityMetricDefinition.from_dict(
+            payload["metric_definition"]
+        )
+        payload["model_markets"] = tuple(payload.get("model_markets") or ())
+        payload["model_weeks"] = tuple(payload.get("model_weeks") or ())
+        payload["standardized_visibility"] = tuple(
+            float(value) for value in payload.get("standardized_visibility") or ()
+        )
+        payload["active_mask"] = tuple(float(value) for value in payload.get("active_mask") or ())
+        payload["raw_visibility"] = tuple(payload.get("raw_visibility") or ())
+        payload["window_by_market"] = {
+            market: SeoValidEstimationWindow.from_dict(window)
+            for market, window in (payload.get("window_by_market") or {}).items()
+        }
+        known = set(cls.__dataclass_fields__)
+        return cls(**cast(Any, {key: value for key, value in payload.items() if key in known}))
+
+
+__all__ = [
+    "CAUSAL_ROLE_MEDIATOR_OR_CAPTURE_EFFICIENCY_STATE",
+    "GscPositionRow",
+    "SEO_POSITIONAL_VISIBILITY_METRIC",
+    "SeoModelFitInputs",
+    "SeoPositionalVisibilityObservation",
+    "SeoVisibilityMetricDefinition",
+    "compute_weekly_positional_visibility",
+    "compute_weekly_positional_visibility_series",
+]

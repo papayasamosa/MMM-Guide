@@ -33,6 +33,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
+import pandas as pd
 import pymc as pm
 import pytensor.tensor as pt
 
@@ -62,6 +63,7 @@ from .named_event_response import (
     EVENT_RESPONSE_SHRINKAGE_PRIOR_DEFAULT_SCALE,
     NAMED_EVENT_RESPONSE_STRUCTURE,
 )
+from .seo_visibility import SeoModelFitInputs
 
 
 def _market_specific_adstock_and_saturation(
@@ -97,6 +99,7 @@ def build_fh_market_specific_model(
     causal_graph: Optional[CausalGraph] = None,
     named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
     calibration_inputs: Optional[Sequence[ModelLiftTestCalibrationInput]] = None,
+    seo_fit_inputs: Optional[SeoModelFitInputs] = None,
 ) -> "tuple[pm.Model, FHModelMeta]":
     """
     Build the market-specific, partially-pooled joint hierarchical FH model
@@ -485,6 +488,30 @@ def build_fh_market_specific_model(
             + eta_promo
         )
 
+        if seo_fit_inputs is not None:
+            seo_fit_inputs.validate_frame(
+                markets=[markets[int(index)] for index in market_idx],
+                weeks=[str(pd.Timestamp(value).date()) for value in frame["dates"]],
+            )
+            seo_feature = pt.constant(
+                np.asarray(seo_fit_inputs.standardized_visibility, dtype=float)
+            )
+            seo_active = pt.constant(np.asarray(seo_fit_inputs.active_mask, dtype=float))
+            seo_visibility_beta = pm.Normal(
+                "seo_visibility_beta",
+                mu=0,
+                sigma=prior_config.get("seo_visibility_sigma", 0.5),
+                dims="outcome",
+            )
+            eta_seo = pm.Deterministic(
+                "eta_seo_visibility",
+                seo_feature[:, None]
+                * seo_active[:, None]
+                * seo_visibility_beta[None, :],
+                dims=("obs", "outcome"),
+            )
+            eta = eta + eta_seo
+
         outcome_controls = frame.get("outcome_controls") or {}
         outcome_control_names = frame.get("outcome_control_names") or {}
         for oid, arr in outcome_controls.items():
@@ -656,5 +683,6 @@ def build_fh_market_specific_model(
         ],
         calibration_fit_fingerprint=calibration_inputs_fingerprint(calibration_inputs)
         or "",
+        seo_fit_inputs_at_fit=(seo_fit_inputs.to_dict() if seo_fit_inputs else {}),
     )
     return model, meta

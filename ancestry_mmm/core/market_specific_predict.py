@@ -31,6 +31,8 @@ from .predict import (
     NamedEventReplayNotSupportedError,
     _cross_product_strength_matrix,
     _named_event_eta_contribution,
+    _seo_eta_contribution,
+    _seo_reference_eta_contribution,
     _pathway_weight,
     extract_event_coefs,
     extract_pathway_strength,
@@ -72,6 +74,7 @@ class FHMarketSpecificPosteriorParams:
     # not market-specific in structure (the market key already lives inside
     # this dict, same as core.predict's).
     event_coefs: Dict[str, Dict[str, np.ndarray]] = field(default_factory=dict)
+    seo_visibility_beta: Optional[np.ndarray] = None
 
 
 def extract_market_specific_posterior_params(
@@ -163,6 +166,14 @@ def extract_market_specific_posterior_params(
             }
 
     event_coefs = extract_event_coefs(trace, meta, at=at)
+    seo_visibility_beta = None
+    if getattr(meta, "seo_fit_inputs_at_fit", None):
+        if "seo_visibility_beta" not in post:
+            raise ValueError(
+                "This fit records SEO visibility inputs but its trace is missing "
+                "seo_visibility_beta."
+            )
+        seo_visibility_beta = np.asarray(_reduce(post["seo_visibility_beta"]).values)
 
     return FHMarketSpecificPosteriorParams(
         decay_rate=decay_rate,
@@ -179,6 +190,7 @@ def extract_market_specific_posterior_params(
         control_coef=control_coef,
         outcome_control_coef=outcome_control_coef,
         event_coefs=event_coefs,
+        seo_visibility_beta=seo_visibility_beta,
     )
 
 
@@ -209,6 +221,7 @@ def predict_mu_market_specific(
     *,
     precomputed_sat_media: Optional[np.ndarray] = None,
     named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
+    seo_use_reference_for_future: bool = False,
 ) -> np.ndarray:
     """Replay Model C's full linear predictor in NumPy. Returns mu, shape
     (n_obs, n_outcomes), matching frame["outcome_ids"] order - same contract
@@ -344,6 +357,16 @@ def predict_mu_market_specific(
             meta, params, named_event_fit_inputs, n_obs, outcome_ids
         )
 
+    eta = eta + _seo_eta_contribution(
+        frame=frame,
+        meta=meta,
+        params=params,
+        n_obs=n_obs,
+        explicit_values=None,
+        explicit_active_mask=None,
+        allow_reference_for_future=seo_use_reference_for_future,
+    )
+
     mu = np.clip(np.exp(eta), 1e-6, 1e9)
     return mu
 
@@ -389,6 +412,10 @@ def steady_state_outcome_response_market_specific(
                 * sat[c]
                 * _pathway_weight(meta, params, s, c, planning_only=planning_only)
             )
+
+        val += float(
+            _seo_reference_eta_contribution(meta, params)[outcome_ids.index(s)]
+        )
 
         for name, coef in params.control_coef.items():
             val += coef * reference_context.get("controls", {}).get(name, 0.0)

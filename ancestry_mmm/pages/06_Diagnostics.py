@@ -7,8 +7,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-import streamlit as st
 import pandas as pd
+import numpy as np
+import streamlit as st
 
 from ancestry_mmm.utils import (
     init_session_state,
@@ -132,6 +133,7 @@ from ancestry_mmm.core.search_capacity import (
     CandidateASearchFitInputs,
 )
 from ancestry_mmm.core.google_trends_anchor import GoogleTrendsAnchorFitInputs
+from ancestry_mmm.core.seo_visibility import SeoModelFitInputs
 from ancestry_mmm.core.predict import extract_posterior_params, predict_mu
 from ancestry_mmm.core.market_specific_predict import (
     extract_market_specific_posterior_params,
@@ -270,6 +272,24 @@ def _candidate_a_fit_inputs_for_rebuild():
         from dataclasses import replace
 
         fit_inputs = replace(fit_inputs, google_trends_anchor=anchor)
+    return fit_inputs
+
+
+def _seo_fit_inputs_for_rebuild():
+    payload = get_state("seo_fit_inputs")
+    if payload is None:
+        if getattr(meta, "seo_fit_inputs_at_fit", None):
+            return SeoModelFitInputs.from_dict(meta.seo_fit_inputs_at_fit)
+        return None
+    fit_inputs = (
+        payload
+        if isinstance(payload, SeoModelFitInputs)
+        else SeoModelFitInputs.from_dict(payload)
+    )
+    fit_inputs.validate_frame(
+        markets=[frame["markets"][int(index)] for index in frame["market_idx"]],
+        weeks=[str(pd.Timestamp(value).date()) for value in frame["dates"]],
+    )
     return fit_inputs
 
 
@@ -1061,6 +1081,7 @@ if scorecard:
         tab_ident,
         tab_support,
         tab_candidate_a,
+        tab_seo,
     ) = st.tabs(
         [
             "Convergence",
@@ -1070,6 +1091,7 @@ if scorecard:
             "Identification & collinearity",
             "Data support classification",
             "Candidate A Search",
+            "SEO visibility",
         ]
     )
     with tab_conv:
@@ -1523,6 +1545,65 @@ if scorecard:
                 st.markdown("#### Official-use gate")
                 st.write(
                     f"Official use eligible: **{use_gate['official_use_eligible']}**"
+                )
+
+    with tab_seo:
+        st.caption(
+            "SEO visibility is fitted as a window-gated mediator/capture-efficiency "
+            "state. The full outcome history remains in the likelihood; weeks outside "
+            "the valid GSC window are inactive, never zero-filled."
+        )
+        seo_payload = getattr(meta, "seo_fit_inputs_at_fit", None) if meta else None
+        if not seo_payload:
+            st.info(
+                "No SEO visibility observations were supplied to this fitted model. "
+                "The SEO pathway is unavailable until a governed GSC positional-visibility "
+                "upload is attached during model fitting."
+            )
+        else:
+            try:
+                seo_fit_inputs = SeoModelFitInputs.from_dict(seo_payload)
+            except (TypeError, ValueError, KeyError) as exc:
+                st.error(f"Persisted SEO fit metadata is invalid: {exc}")
+            else:
+                seo_rows = []
+                for market, window in sorted(seo_fit_inputs.window_by_market.items()):
+                    market_mask = np.asarray(
+                        [value == market for value in seo_fit_inputs.model_markets],
+                        dtype=bool,
+                    )
+                    active_mask = np.asarray(seo_fit_inputs.active_mask, dtype=float)
+                    seo_rows.append(
+                        {
+                            "market": market,
+                            "valid_start": window.start_week,
+                            "valid_end": window.end_week,
+                            "weeks_observed": window.weeks_observed,
+                            "model_weeks": int(market_mask.sum()),
+                            "active_weeks": int(
+                                np.sum(active_mask[market_mask] > 0)
+                            ),
+                        }
+                    )
+                if seo_rows:
+                    st.dataframe(
+                        pd.DataFrame(seo_rows),
+                        width="stretch",
+                        column_config=dataframe_column_config(pd.DataFrame(seo_rows)),
+                    )
+                st.write(
+                    {
+                        "metric": seo_fit_inputs.metric_definition.metric_name,
+                        "pathway": seo_fit_inputs.pathway_id,
+                        "standardization_center": seo_fit_inputs.standardization_center,
+                        "standardization_scale": seo_fit_inputs.standardization_scale,
+                        "active_rows": int(
+                            np.sum(np.asarray(seo_fit_inputs.active_mask) > 0)
+                        ),
+                        "inactive_rows": int(
+                            np.sum(np.asarray(seo_fit_inputs.active_mask) == 0)
+                        ),
+                    }
                 )
                 if use_gate["blocking_reasons"]:
                     for reason in use_gate["blocking_reasons"]:
@@ -1982,6 +2063,7 @@ def _rebuild_fit_time_model():
         search_objects=get_state("search_objects") or [],
         candidate_a_fit_inputs=_candidate_a_fit_inputs_for_rebuild(),
         calibration_inputs=_calibration_inputs_for_rebuild(),
+        seo_fit_inputs=_seo_fit_inputs_for_rebuild(),
     )
     return result.model
 

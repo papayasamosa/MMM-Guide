@@ -240,9 +240,38 @@ threshold.
 ## Owner and status
 
 Owner: Modelling / Platform engineering (window-determination policy
-and contract); the actual fit-time gating mechanism (W2-B) requires
-Modelling sign-off on its own prior-predictive validation before use,
-not yet sought.
+and contract).
 
-Status: implemented and tested, 2026-08-30. `REQ-SEO-001` addendum
-(below) records this resolution at the requirement level.
+Status: implemented and tested, 2026-08-30. The 2026-09-01 Phase C
+integration addendum below records the fit-time implementation boundary.
+
+## Phase C integration addendum, 2026-09-01
+
+The approved W2-B direction is now consumed by the real shared and
+market-specific PyMC model builders through
+`core.seo_visibility.SeoModelFitInputs`. Model Training accepts a governed
+Google Search Console positional-visibility upload, computes the existing
+impression-weighted `1 / position` metric, preserves missing weeks as an
+inactive mask, standardizes only observed positive-impression values, and
+passes the row-aligned feature into a fitted `seo_visibility_beta` outcome
+term. The full MMM history remains in the likelihood.
+
+The fitted payload, exact row identity, window records, standardization
+metadata, and posterior coefficient are persisted and restored for
+Diagnostics, Results, curve generation, and replay. Sequential
+planning/optimisation uses the governed active-window reference state
+(zero-centred standardized visibility) as a system-generated baseline;
+analysts do not enter future SEO ranking values. SEO does not acquire
+spend-based CPA/ROI without an approved cost basis.
+
+This is a reduced-form final-outcome contribution for the approved
+visibility/capture-efficiency state. A separately identified decomposition
+of `ranking/visibility -> organic traffic -> final outcome` would require a
+governed market-week organic-traffic/click series and an approved joint
+mediator specification. The current GSC `clicks` field remains diagnostic
+only and is not silently used as a flat control.
+
+The implementation is covered by fit-input, persistence, replay, and
+fail-closed tests. The minimum-window eligibility threshold remains
+external to this record and must still be supplied before an SEO
+contribution can be labelled planning- or optimisation-eligible.

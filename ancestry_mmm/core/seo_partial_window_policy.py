@@ -101,12 +101,11 @@ SEO_PARTIAL_WINDOW_DISCLAIMER = (
     "design."
 )
 
-# W2-B: the approved architecture direction for a future fit-time
-# integration. Structured, documented metadata only - never executable
-# PyTensor/PyMC code. A future session implementing this must still run
-# its own prior-predictive and synthetic-recovery validation
-# (REQ-LATENT-001 Requirement 4's equivalent standard) before this
-# architecture is eligible for official use.
+# W2-B: the approved architecture direction and fit-time contract. The
+# executable model integration lives in the model builders and consumes the
+# row-aligned ``SeoModelFitInputs`` contract from ``core.seo_visibility``.
+# This metadata remains useful to diagnostics and governance; it is not a
+# second executable PyTensor implementation.
 SEO_GATED_REGRESSOR_ARCHITECTURE: Mapping[str, Any] = {
     "architecture_id": "seo_windowed_gated_regressor_v1",
     "candidate": "W2-B",
@@ -134,7 +133,7 @@ SEO_GATED_REGRESSOR_ARCHITECTURE: Mapping[str, Any] = {
         "never be stored, reported, or interpreted as the observed SEO "
         "visibility value for that week."
     ),
-    "not_yet_implemented": True,
+    "not_yet_implemented": False,
 }
 
 

@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, cast
 
 import numpy as np
+import pandas as pd
 import pymc as pm
 import pytensor.tensor as pt
 
@@ -67,6 +68,7 @@ from .named_event_response import (
     EVENT_RESPONSE_SHRINKAGE_PRIOR_DEFAULT_SCALE,
     NAMED_EVENT_RESPONSE_STRUCTURE,
 )
+from .seo_visibility import SeoModelFitInputs
 
 
 @dataclass
@@ -235,6 +237,14 @@ class FHModelMeta:
     # component. Empty/"" preserves old bundles and means no calibration term.
     calibration_inputs_at_fit: List[Any] = field(default_factory=list)
     calibration_fit_fingerprint: str = ""
+    # Candidate A replay provenance.  The capture scale is a fixed fit-time
+    # unit translation, not a posterior parameter; the historical cap and
+    # period labels let diagnostics replay the fitted frame without making
+    # those values the default for a future plan.
+    candidate_a_capture_scale: float = 1.0
+    candidate_a_historical_paid_search_cap: List[float] = field(default_factory=list)
+    candidate_a_fit_period_labels: List[str] = field(default_factory=list)
+    seo_fit_inputs_at_fit: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.direct_dna_outcome_ids:
@@ -616,6 +626,7 @@ def build_fh_hierarchical_model(
     search_candidate_a: Optional[CandidateASearchFitInputs] = None,
     named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
     calibration_inputs: Optional[Sequence[ModelLiftTestCalibrationInput]] = None,
+    seo_fit_inputs: Optional[SeoModelFitInputs] = None,
 ) -> "tuple[pm.Model, FHModelMeta]":
     """
     Build the joint hierarchical FH model.
@@ -1297,6 +1308,30 @@ def build_fh_hierarchical_model(
                 prior_config=prior_config,
             )
 
+        if seo_fit_inputs is not None:
+            seo_fit_inputs.validate_frame(
+                markets=[markets[int(index)] for index in market_idx],
+                weeks=[str(pd.Timestamp(value).date()) for value in frame["dates"]],
+            )
+            seo_feature = pt.constant(
+                np.asarray(seo_fit_inputs.standardized_visibility, dtype=float)
+            )
+            seo_active = pt.constant(np.asarray(seo_fit_inputs.active_mask, dtype=float))
+            seo_visibility_beta = pm.Normal(
+                "seo_visibility_beta",
+                mu=0,
+                sigma=prior_config.get("seo_visibility_sigma", 0.5),
+                dims="outcome",
+            )
+            eta_seo = pm.Deterministic(
+                "eta_seo_visibility",
+                seo_feature[:, None]
+                * seo_active[:, None]
+                * seo_visibility_beta[None, :],
+                dims=("obs", "outcome"),
+            )
+            eta = eta + eta_seo
+
         # -----------------------------------------------------------------
         # Outcome-level controls, e.g. DNA kit price acting only on the DNA
         # cross-sell outcome's equation. Keyed by outcome_id (frame["outcome_controls"] -
@@ -1515,5 +1550,30 @@ def build_fh_hierarchical_model(
         ],
         calibration_fit_fingerprint=calibration_inputs_fingerprint(calibration_inputs)
         or "",
+        candidate_a_capture_scale=(
+            max(
+                float(
+                    np.mean(
+                        search_candidate_a.paid_search_delivery
+                        + search_candidate_a.organic_search_capture
+                        + search_candidate_a.direct_navigation_capture
+                    )
+                ),
+                1.0,
+            )
+            if search_candidate_a is not None
+            else 1.0
+        ),
+        candidate_a_historical_paid_search_cap=(
+            search_candidate_a.paid_search_cap.tolist()
+            if search_candidate_a is not None
+            else []
+        ),
+        candidate_a_fit_period_labels=[
+            str(pd.Timestamp(value).date()) for value in frame.get("dates", [])
+        ]
+        if search_candidate_a is not None
+        else [],
+        seo_fit_inputs_at_fit=(seo_fit_inputs.to_dict() if seo_fit_inputs else {}),
     )
     return model, meta
