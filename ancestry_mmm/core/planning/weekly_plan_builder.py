@@ -29,9 +29,17 @@ from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, Protocol, Tuple
 
 import numpy as np
+import pandas as pd
 
+from ..activities import ActivityDefinition, activity_by_model_input
 from ..hierarchical_model import FHModelMeta
 from ..sequential_simulation import WeeklyPlan
+from ..media_costs import CostMappingRegistry
+from .phasing import (
+    phase_monetary_plan_from_partial_start_calendar_day_overlap_v1,
+    phase_monthly_series_from_partial_start_calendar_day_overlap_v1,
+    reseat_ordinal_monthly_plan_to_start_week,
+)
 from .future_context import FutureContextResult
 
 WEEKLY_PLAN_CONSTRUCTION_SCHEMA_VERSION = 1
@@ -49,8 +57,11 @@ class _WeeklyAllocationLike(Protocol):
     (monetary path's cost-mapping-derived quantity) satisfy - this module
     accepts either without caring which phasing path produced it."""
 
-    market: str
-    period_labels: Tuple[str, ...]
+    @property
+    def market(self) -> str: ...
+
+    @property
+    def period_labels(self) -> Tuple[str, ...]: ...
 
     def as_array(self) -> np.ndarray: ...
 
@@ -234,8 +245,103 @@ def build_governed_weekly_plan(
     return plan, provenance
 
 
+def build_governed_weekly_plan_from_monthly_plan(
+    *,
+    market: str,
+    meta: FHModelMeta,
+    monthly_plan: Mapping[str, Mapping[str, float]],
+    plan_start_week: pd.Timestamp,
+    calendar: Any,
+    future_context: FutureContextResult,
+    expected_n_fourier_columns: int,
+    activity_definitions: Optional[list[ActivityDefinition]] = None,
+    cost_registry: Optional[CostMappingRegistry] = None,
+    cost_context_id: str = "default",
+) -> Tuple[WeeklyPlan, WeeklyPlanConstructionProvenance]:
+    """Build one governed weekly plan from ordered monthly plan values.
+
+    This is the reusable phasing boundary for both manual and optimisation
+    callers. It retains the existing partial-first-month and week-specific
+    monetary cost-mapping behaviour; no page or optimiser reimplements that
+    arithmetic.
+    """
+    if not monthly_plan:
+        raise WeeklyPlanConstructionError("monthly_plan must not be empty.")
+    periods = tuple(monthly_plan)
+    activity_map = (
+        activity_by_model_input(activity_definitions, market)
+        if activity_definitions is not None
+        else {}
+    )
+    missing_period_channels = [
+        f"{period}/{channel}"
+        for period, values in monthly_plan.items()
+        for channel in meta.channels
+        if channel not in values
+    ]
+    if missing_period_channels:
+        raise WeeklyPlanConstructionError(
+            "monthly_plan is missing required channel value(s): "
+            f"{missing_period_channels}."
+        )
+
+    allocations: Dict[str, _WeeklyAllocationLike] = {}
+    expected_months: Optional[Tuple[str, ...]] = None
+    for channel in meta.channels:
+        values = [float(monthly_plan[period][channel]) for period in periods]
+        if not np.all(np.isfinite(values)) or np.any(np.asarray(values) < 0):
+            raise WeeklyPlanConstructionError(
+                f"monthly_plan[{channel!r}] contains non-finite or negative values."
+            )
+        reseated, sequential_months = reseat_ordinal_monthly_plan_to_start_week(
+            ordinal_monthly_values=values,
+            plan_start_week=plan_start_week,
+        )
+        if expected_months is None:
+            expected_months = sequential_months
+        elif expected_months != sequential_months:
+            raise WeeklyPlanConstructionError(
+                "Monthly plan re-seating produced inconsistent calendar months."
+            )
+        definition = activity_map.get(channel)
+        if (
+            definition is not None
+            and definition.is_cost_bearing
+            and cost_registry is not None
+        ):
+            allocations[channel] = (
+                phase_monetary_plan_from_partial_start_calendar_day_overlap_v1(
+                    market=market,
+                    channel=channel,
+                    reseated_monthly_spend=reseated,
+                    plan_start_week=plan_start_week,
+                    calendar=calendar,
+                    cost_registry=cost_registry,
+                    cost_context_id=cost_context_id,
+                ).weekly_model_input
+            )
+        else:
+            allocations[channel] = (
+                phase_monthly_series_from_partial_start_calendar_day_overlap_v1(
+                    market=market,
+                    series_id=channel,
+                    reseated_monthly_values=reseated,
+                    plan_start_week=plan_start_week,
+                    calendar=calendar,
+                )
+            )
+    return build_governed_weekly_plan(
+        market=market,
+        meta=meta,
+        channel_allocations=allocations,
+        future_context=future_context,
+        expected_n_fourier_columns=expected_n_fourier_columns,
+    )
+
+
 __all__ = [
     "WeeklyPlanConstructionError",
     "WeeklyPlanConstructionProvenance",
     "build_governed_weekly_plan",
+    "build_governed_weekly_plan_from_monthly_plan",
 ]

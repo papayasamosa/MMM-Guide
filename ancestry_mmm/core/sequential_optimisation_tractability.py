@@ -30,20 +30,19 @@ Summary (see the decision record for full reasoning):
    mirroring the manual Scenario Planner tab's own already-established
    pattern.
 
-This module does NOT modify `core.optimization.py`, `core.sequential_
-simulation.py`, or `core.sequential_scenario_evaluation.py` - it
-implements the governed decision constants, the preserved benchmark
-evidence, and a reusable O1 objective-value helper function only. Wiring
-this into `core.optimization`'s actual SLSQP call sites (bounds/
-constraints translation, `REQ-OPT-001`'s objective-kind vocabulary) is a
-separate, substantial engineering integration requiring its own
-end-to-end validation, not attempted here.
+The reusable objective/pair helpers are the numerical boundary consumed by
+`core.optimization`'s sequential SLSQP path. Bounds, constraints, phasing,
+future assumptions, and governance remain owned by their existing callers;
+this module does not duplicate those concerns or replace the steady-state
+path.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, Any, Mapping, Tuple, cast
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional, Tuple, cast
+
+import numpy as np
 
 from .predict import FHPosteriorParams
 from .sequential_simulation import (
@@ -51,16 +50,39 @@ from .sequential_simulation import (
     WeeklyPlan,
     compute_incremental_outcome,
     simulate_sequential_outcomes,
+    simulate_sequential_outcomes_market_specific,
 )
 
 if TYPE_CHECKING:
     from .hierarchical_model import FHModelMeta
+    from .market_specific_predict import FHMarketSpecificPosteriorParams
+    from .named_event_fit_inputs import NamedEventFitInputs
 
 SEQUENTIAL_OPTIMISATION_SCHEMA_VERSION = 1
 
 SEQUENTIAL_OPTIMISATION_TRACTABILITY_STRATEGY = "T1_direct_replay_point_estimate"
 SEQUENTIAL_OPTIMISATION_OBJECTIVE_HORIZON = "O1_plan_window_total"
 SEQUENTIAL_OPTIMISATION_SEARCH_IS_POSTERIOR_AWARE = False
+
+
+@dataclass(frozen=True)
+class SequentialOptimisationContext:
+    """Fixed context shared by every candidate in a sequential search.
+
+    The optimiser owns the numerical search, while the caller owns the
+    already-governed monthly-to-weekly plan construction.  ``candidate_plan``
+    therefore receives the candidate in the caller's plan units (normally
+    monetary decisions plus response-only quantities) and must return a
+    ``WeeklyPlan`` using the same canonical weeks as ``reference_plan``.
+    Keeping this boundary explicit prevents the optimiser from creating a
+    second phasing, cost-mapping, or future-assumption implementation.
+    """
+
+    reference_plan: WeeklyPlan
+    candidate_plan: Callable[[Mapping[str, Mapping[str, float]]], WeeklyPlan]
+    carry_in: SequentialCarryInState
+    model_type: str = "shared"
+    named_event_fit_inputs: Optional["NamedEventFitInputs"] = None
 
 
 @dataclass(frozen=True)
@@ -156,25 +178,135 @@ def compute_sequential_plan_objective_value(
     carry_in: SequentialCarryInState,
     meta: "FHModelMeta",
     params: FHPosteriorParams,
+    *,
+    model_type: str = "shared",
+    outcome_weights: Optional[Mapping[str, float]] = None,
+    named_event_fit_inputs: Optional["NamedEventFitInputs"] = None,
+    incremental: bool = True,
 ) -> float:
     """The O1 (`plan_window_total`) objective value for one candidate
     plan: the sum, across every week and outcome in the plan window, of
     `candidate - reference` incremental outcome, computed via the exact
-    sequential kernel at point-estimate parameters (decision T1/O1).
+    sequential kernel at point-estimate parameters (decision T1/O1). Set
+    ``incremental=False`` for the legacy total-outcome objective semantics,
+    where the candidate response is summed directly.
 
     This is the function a future `core.optimization` integration would
     call as its SLSQP objective (after negating for maximisation, as
     `core.optimization`'s existing steady-state objective already does)
-    - it is not itself wired into `core.optimization` by this module.
+    - `core.optimization` calls it after the caller has supplied a governed
+      weekly candidate/reference context.
     `candidate_plan` and `reference_plan` must share the same `carry_in`
     (the same starting state) - this is the caller's responsibility,
     mirroring `compute_incremental_outcome`'s own existing contract.
     """
-    candidate_result = simulate_sequential_outcomes(
-        candidate_plan, carry_in, meta, params
+    if model_type == "market_specific":
+        candidate_result = simulate_sequential_outcomes_market_specific(
+            candidate_plan,
+            carry_in,
+            meta,
+            cast("FHMarketSpecificPosteriorParams", params),
+            named_event_fit_inputs=named_event_fit_inputs,
+        )
+        reference_result = simulate_sequential_outcomes_market_specific(
+            reference_plan,
+            carry_in,
+            meta,
+            cast("FHMarketSpecificPosteriorParams", params),
+            named_event_fit_inputs=named_event_fit_inputs,
+        )
+    else:
+        candidate_result = simulate_sequential_outcomes(
+            candidate_plan,
+            carry_in,
+            meta,
+            params,
+            named_event_fit_inputs=named_event_fit_inputs,
+        )
+        reference_result = simulate_sequential_outcomes(
+            reference_plan,
+            carry_in,
+            meta,
+            params,
+            named_event_fit_inputs=named_event_fit_inputs,
+        )
+    incremental_result = compute_incremental_outcome(candidate_result, reference_result)
+    values = incremental_result if incremental else candidate_result.mu
+    if outcome_weights is None:
+        return float(values.sum())
+    missing = set(candidate_result.outcome_ids) - set(outcome_weights)
+    if missing:
+        raise ValueError(
+            "Sequential outcome weights must include every fitted outcome; "
+            f"missing {sorted(missing)}."
+        )
+    return float(
+        (
+            np.asarray(values, dtype=float)
+            @ np.asarray(
+                [float(outcome_weights[oid]) for oid in candidate_result.outcome_ids]
+            )
+        ).sum()
     )
-    reference_result = simulate_sequential_outcomes(
-        reference_plan, carry_in, meta, params
-    )
-    incremental = compute_incremental_outcome(candidate_result, reference_result)
-    return float(incremental.sum())
+
+
+def compute_sequential_plan_pair(
+    candidate_plan: WeeklyPlan,
+    reference_plan: WeeklyPlan,
+    carry_in: SequentialCarryInState,
+    meta: "FHModelMeta",
+    params: FHPosteriorParams,
+    *,
+    model_type: str = "shared",
+    named_event_fit_inputs: Optional["NamedEventFitInputs"] = None,
+):
+    """Evaluate a candidate/reference pair through the exact weekly kernel.
+
+    This small shared helper lets optimisation and final governed evaluation
+    use identical replay inputs without introducing a planning-only shortcut.
+    """
+    if model_type == "market_specific":
+        typed_params = cast("FHMarketSpecificPosteriorParams", params)
+        candidate = simulate_sequential_outcomes_market_specific(
+            candidate_plan,
+            carry_in,
+            meta,
+            typed_params,
+            named_event_fit_inputs=named_event_fit_inputs,
+        )
+        reference = simulate_sequential_outcomes_market_specific(
+            reference_plan,
+            carry_in,
+            meta,
+            typed_params,
+            named_event_fit_inputs=named_event_fit_inputs,
+        )
+    else:
+        candidate = simulate_sequential_outcomes(
+            candidate_plan,
+            carry_in,
+            meta,
+            params,
+            named_event_fit_inputs=named_event_fit_inputs,
+        )
+        reference = simulate_sequential_outcomes(
+            reference_plan,
+            carry_in,
+            meta,
+            params,
+            named_event_fit_inputs=named_event_fit_inputs,
+        )
+    return candidate, reference, compute_incremental_outcome(candidate, reference)
+
+
+__all__ = [
+    "BENCHMARK_EVIDENCE",
+    "SEQUENTIAL_OPTIMISATION_OBJECTIVE_HORIZON",
+    "SEQUENTIAL_OPTIMISATION_SCHEMA_VERSION",
+    "SEQUENTIAL_OPTIMISATION_SEARCH_IS_POSTERIOR_AWARE",
+    "SEQUENTIAL_OPTIMISATION_TRACTABILITY_STRATEGY",
+    "SequentialKernelBenchmarkEvidence",
+    "SequentialOptimisationContext",
+    "compute_sequential_plan_objective_value",
+    "compute_sequential_plan_pair",
+]

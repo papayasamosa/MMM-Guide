@@ -50,6 +50,7 @@ from ancestry_mmm.core.sequential_scenario_evaluation import (
     SequentialScenarioEvaluationResult,
 )
 from ancestry_mmm.core.sequential_simulation import WeeklyPlan
+from ancestry_mmm.core.named_event_fit_inputs import NamedEventFitInputs
 from ancestry_mmm.core.validation_policy import ApprovalReadiness, ThresholdPolicy
 from ancestry_mmm.core.outcome_approval import OutcomeApproval
 
@@ -142,6 +143,8 @@ class SequentialManualScenarioInput:
     trace: Optional[Any] = None
     n_posterior_draws: int = 0
     posterior_seed: int = 42
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None
+    terminal_named_event_fit_inputs: Optional[NamedEventFitInputs] = None
 
 
 @dataclass
@@ -204,6 +207,8 @@ class OptimisationInput:
     capacity_limits: Optional[List[Any]] = None
     capacity_realised_by_limit_and_period: Optional[Dict[str, Dict[str, float]]] = None
     capacity_unit_to_spend_rate_by_limit_id: Optional[Dict[str, float]] = None
+    evaluation_method: str = "steady_state_monthly"
+    sequential_context: Optional[Any] = None
 
 
 @dataclass
@@ -377,6 +382,8 @@ class ScenarioService:
                 trace=sc_input.trace,
                 n_posterior_draws=sc_input.n_posterior_draws,
                 posterior_seed=sc_input.posterior_seed,
+                named_event_fit_inputs=sc_input.named_event_fit_inputs,
+                terminal_named_event_fit_inputs=sc_input.terminal_named_event_fit_inputs,
             )
         except Exception as exc:
             errors.append(f"Sequential manual scenario evaluation failed: {exc}")
@@ -459,6 +466,8 @@ class ScenarioService:
                 capacity_limits=opt_input.capacity_limits,
                 capacity_realised_by_limit_and_period=opt_input.capacity_realised_by_limit_and_period,
                 capacity_unit_to_spend_rate_by_limit_id=opt_input.capacity_unit_to_spend_rate_by_limit_id,
+                evaluation_method=opt_input.evaluation_method,
+                sequential_context=opt_input.sequential_context,
             )
         except Exception as exc:
             errors.append(f"Optimisation failed: {exc}")

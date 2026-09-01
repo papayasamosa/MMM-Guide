@@ -56,12 +56,14 @@ from typing import (
     Optional,
     Tuple,
     Union,
+    cast,
 )
 
 if TYPE_CHECKING:
     from .validation_policy import ApprovalReadiness, ThresholdPolicy
     from .optimization_constraint_vocabulary import GovernedSpendConstraint
     from .capacity import CapacityLimitDefinition
+    from .sequential_optimisation_tractability import SequentialOptimisationContext
 
 import numpy as np
 import pandas as pd
@@ -3092,6 +3094,7 @@ def _objective_factory(
     counterfactual_media_input_by_month: Optional[Dict[str, Dict[str, float]]] = None,
     activity_definitions: Optional[List[ActivityDefinition]] = None,
     counterfactual_policy: Optional[CounterfactualPolicy] = None,
+    sequential_context: Optional[SequentialOptimisationContext] = None,
 ):
     if planning_objective is not None:
         metric_objectives = {
@@ -3117,6 +3120,21 @@ def _objective_factory(
         weights,
         assume_value_scaled_weights=assume_value_scaled_weights,
     )
+    if sequential_context is not None:
+        from .sequential_optimisation_tractability import (
+            compute_sequential_plan_objective_value,
+        )
+
+        if sequential_context.model_type != model_type:
+            raise ValueError(
+                "SequentialOptimisationContext.model_type must match "
+                f"optimize_scenario model_type ({model_type!r})."
+            )
+        if sequential_context.reference_plan.market != market:
+            raise ValueError(
+                "SequentialOptimisationContext.reference_plan.market must "
+                f"match the optimisation market ({market!r})."
+            )
     response_fn = _steady_state_response_fn(model_type)
     policy = counterfactual_policy or CounterfactualPolicy()
     activity_map = (
@@ -3127,6 +3145,35 @@ def _objective_factory(
 
     def neg_total(x: np.ndarray) -> float:
         spend_plan = _unflatten(x, months, channels)
+        if sequential_context is not None:
+            candidate_plan = sequential_context.candidate_plan(spend_plan)
+            if candidate_plan.market != market:
+                raise ValueError(
+                    "Sequential candidate plan market does not match the "
+                    f"optimisation market ({market!r})."
+                )
+            if (
+                candidate_plan.period_labels
+                != sequential_context.reference_plan.period_labels
+            ):
+                raise ValueError(
+                    "Sequential candidate and reference plans must cover "
+                    "exactly the same canonical weeks."
+                )
+            return -compute_sequential_plan_objective_value(
+                candidate_plan,
+                sequential_context.reference_plan,
+                sequential_context.carry_in,
+                meta,
+                cast(FHPosteriorParams, params),
+                model_type=model_type,
+                outcome_weights=weight,
+                incremental=(
+                    planning_objective is not None
+                    and planning_objective.estimand != "total_outcome"
+                ),
+                named_event_fit_inputs=sequential_context.named_event_fit_inputs,
+            )
         if cost_mapping_registry is not None and activity_definitions is not None:
             monetary: dict[str, dict[str, float]] = {}
             quantities: dict[str, dict[str, float]] = {}
@@ -3203,6 +3250,271 @@ def _objective_factory(
     return neg_total
 
 
+def _sequential_pair_to_prediction_frame(
+    *,
+    candidate,
+    reference,
+    spend_plan: Mapping[str, Mapping[str, float]],
+    meta: FHModelMeta,
+    ltv: Optional[Mapping[str, float]],
+    activity_definitions: Optional[List[ActivityDefinition]],
+    market: str,
+    planning_objective: Optional[PlanningObjective],
+    scenario_plan: Optional[ScenarioPlan],
+    counterfactual_policy: CounterfactualPolicy,
+) -> pd.DataFrame:
+    """Convert one exact sequential candidate/reference replay to the
+    monthly-shaped table consumed by the existing scenario UI/export code.
+
+    The weekly kernel remains authoritative: monthly values are aggregated
+    from weekly outcome-scale ``mu`` only after both replays complete.  This
+    adapter deliberately does not call ``_calculate_scenario`` because that
+    would replace sequential carryover with the steady-state approximation.
+    """
+    if candidate.market != market or reference.market != market:
+        raise ValueError("Sequential prediction markets do not match the request.")
+    if candidate.period_labels != reference.period_labels:
+        raise ValueError("Sequential prediction periods do not match.")
+
+    ltv_values = dict(ltv or {})
+    outcome_ids = tuple(candidate.outcome_ids)
+    by_input = (
+        activity_by_model_input(activity_definitions, market)
+        if activity_definitions is not None
+        else {}
+    )
+    cost_bearing = {
+        channel
+        for channel, definition in by_input.items()
+        if definition.is_cost_bearing
+    }
+    response_only_active = bool(
+        activity_definitions
+        and any(
+            float(value) != 0.0
+            and channel in by_input
+            and not by_input[channel].is_cost_bearing
+            for values in spend_plan.values()
+            for channel, value in values.items()
+        )
+    )
+    whole_plan_compatible = not response_only_active
+    if activity_definitions is None:
+        cost_bearing = set(spend_plan[next(iter(spend_plan))]) if spend_plan else set()
+
+    month_indices: Dict[str, List[int]] = {}
+    for index, label in enumerate(candidate.period_labels):
+        month_indices.setdefault(str(label)[:7], []).append(index)
+
+    gsa_ids = set(fh_gsa_outcome_ids(meta))
+    signup_ids = set(fh_signup_outcome_ids(meta))
+    nbt_ids = set(fh_net_billthrough_outcome_ids(meta))
+    dna_ids = set(dna_kit_sale_outcome_ids(meta))
+    rows: List[dict] = []
+    for month, indices in month_indices.items():
+        candidate_month = np.asarray(candidate.mu[indices], dtype=float).sum(axis=0)
+        reference_month = np.asarray(reference.mu[indices], dtype=float).sum(axis=0)
+        incremental_month = candidate_month - reference_month
+        month_values = spend_plan.get(month, {})
+        total_spend = float(
+            sum(
+                float(value)
+                for channel, value in month_values.items()
+                if channel in cost_bearing
+            )
+        )
+        if activity_definitions is None:
+            total_spend = float(sum(float(value) for value in month_values.values()))
+        priced_ids = [oid for oid in outcome_ids if oid in ltv_values]
+        total_value_is_complete = len(priced_ids) == len(outcome_ids)
+        total_value = (
+            float(
+                sum(
+                    candidate_month[i] * ltv_values[oid]
+                    for i, oid in enumerate(outcome_ids)
+                    if oid in ltv_values
+                )
+            )
+            if priced_ids
+            else None
+        )
+        incremental_total_value = (
+            float(
+                sum(
+                    incremental_month[i] * ltv_values[oid]
+                    for i, oid in enumerate(outcome_ids)
+                )
+            )
+            if total_value_is_complete
+            else None
+        )
+        incremental_gsa = float(
+            sum(
+                incremental_month[i]
+                for i, oid in enumerate(outcome_ids)
+                if oid in gsa_ids
+            )
+        )
+        incremental_signup = float(
+            sum(
+                incremental_month[i]
+                for i, oid in enumerate(outcome_ids)
+                if oid in signup_ids
+            )
+        )
+        incremental_nbt = float(
+            sum(
+                incremental_month[i]
+                for i, oid in enumerate(outcome_ids)
+                if oid in nbt_ids
+            )
+        )
+        incremental_dna = float(
+            sum(
+                incremental_month[i]
+                for i, oid in enumerate(outcome_ids)
+                if oid in dna_ids
+            )
+        )
+        whole_plan_cpa = (
+            total_spend / incremental_gsa
+            if whole_plan_compatible and total_spend > 0 and incremental_gsa > 0
+            else None
+        )
+        whole_plan_nbt_cpa = (
+            total_spend / incremental_nbt
+            if whole_plan_compatible and total_spend > 0 and incremental_nbt > 0
+            else None
+        )
+        whole_plan_signup_cpa = (
+            total_spend / incremental_signup
+            if whole_plan_compatible and total_spend > 0 and incremental_signup > 0
+            else None
+        )
+        whole_plan_dna_cpa = (
+            total_spend / incremental_dna
+            if whole_plan_compatible and total_spend > 0 and incremental_dna > 0
+            else None
+        )
+        whole_plan_roi = (
+            incremental_total_value / total_spend
+            if whole_plan_compatible
+            and incremental_total_value is not None
+            and total_spend > 0
+            else None
+        )
+        coverage = {
+            "economics_status": (
+                "sequential_weekly_kernel"
+                if activity_definitions is None or cost_bearing
+                else "economics_not_applicable"
+            ),
+            "whole_plan_scope_compatible": whole_plan_compatible,
+            "counterfactual_scope": counterfactual_policy.policy_id,
+            "calculation_method": "sequential_weekly",
+        }
+        common = {
+            "month": month,
+            "calculation_method": "sequential_weekly",
+            "predicted_total_outcome": float(candidate_month.sum()),
+            "predicted_counterfactual_outcome_total": float(reference_month.sum()),
+            "total_spend": total_spend,
+            "paid_spend": total_spend,
+            "fully_loaded_owned_spend": 0.0,
+            "campaign_cost_spend": 0.0,
+            "value_status": "complete"
+            if total_value_is_complete
+            else "partial"
+            if priced_ids
+            else "not configured",
+            "total_value": total_value,
+            "incremental_total_value": incremental_total_value,
+            "whole_plan_incremental_roi": whole_plan_roi,
+            "paid_media_incremental_roi": None,
+            "whole_plan_scope_compatible": whole_plan_compatible,
+            "economics_coverage": coverage,
+            "scenario_plan_fingerprint": scenario_plan.fingerprint()
+            if scenario_plan
+            else None,
+            "planning_objective": planning_objective.to_dict()
+            if planning_objective
+            else None,
+        }
+        for i, oid in enumerate(outcome_ids):
+            rows.append(
+                {
+                    **common,
+                    "outcome_id": oid,
+                    "predicted_outcome": float(candidate_month[i]),
+                    "predicted_counterfactual_outcome": float(reference_month[i]),
+                    "incremental_outcome": float(incremental_month[i]),
+                    "incremental_outcome_all_activities": float(incremental_month[i]),
+                    "incremental_outcome_paid_decisions": float(incremental_month[i])
+                    if whole_plan_compatible
+                    else None,
+                    "incremental_outcome_response_only_activities": 0.0,
+                    "counterfactual_media_input": {},
+                    "resolved_counterfactual_vector": {},
+                    "counterfactual_policy": counterfactual_policy.to_dict(),
+                    "counterfactual_policy_fingerprint": counterfactual_policy.fingerprint(),
+                    "value": float(candidate_month[i] * ltv_values[oid])
+                    if oid in ltv_values
+                    else None,
+                    "unpriced_outcome_ids": [
+                        item for item in outcome_ids if item not in ltv_values
+                    ],
+                    "non_costed_activity_present": response_only_active,
+                    "fh_gsa": float(
+                        sum(
+                            candidate_month[j]
+                            for j, item in enumerate(outcome_ids)
+                            if item in gsa_ids
+                        )
+                    ),
+                    "fh_signups": float(
+                        sum(
+                            candidate_month[j]
+                            for j, item in enumerate(outcome_ids)
+                            if item in signup_ids
+                        )
+                    ),
+                    "fh_net_billthrough": float(
+                        sum(
+                            candidate_month[j]
+                            for j, item in enumerate(outcome_ids)
+                            if item in nbt_ids
+                        )
+                    ),
+                    "incremental_fh_gsa": incremental_gsa,
+                    "incremental_fh_signups": incremental_signup,
+                    "incremental_fh_net_billthrough": incremental_nbt,
+                    "incremental_dna_kits": incremental_dna,
+                    "dna_kits": float(
+                        sum(
+                            candidate_month[j]
+                            for j, item in enumerate(outcome_ids)
+                            if item in dna_ids
+                        )
+                    ),
+                    "avg_cpa": whole_plan_cpa,
+                    "cost_per_fh_gsa": whole_plan_cpa,
+                    "whole_plan_cost_per_fh_gsa": whole_plan_cpa,
+                    "fh_signup_avg_cpa": whole_plan_signup_cpa,
+                    "cost_per_fh_signup": whole_plan_signup_cpa,
+                    "whole_plan_cost_per_fh_signup": whole_plan_signup_cpa,
+                    "whole_plan_cost_per_fh_net_billthrough": whole_plan_nbt_cpa,
+                    "whole_plan_incremental_nbt_cpa": whole_plan_nbt_cpa,
+                    "paid_media_incremental_cpa": None,
+                    "paid_media_incremental_nbt_cpa": None,
+                    "dna_avg_cpa": whole_plan_dna_cpa,
+                    "cost_per_dna_kit": whole_plan_dna_cpa,
+                    "whole_plan_cost_per_dna_kit": whole_plan_dna_cpa,
+                    "total_value_is_complete": total_value_is_complete,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def optimize_scenario(
     current_spend_plan: Dict[str, Dict[str, float]],
     months: List[str],
@@ -3249,6 +3561,8 @@ def optimize_scenario(
     capacity_limits: Optional[List["CapacityLimitDefinition"]] = None,
     capacity_realised_by_limit_and_period: Optional[Dict[str, Dict[str, float]]] = None,
     capacity_unit_to_spend_rate_by_limit_id: Optional[Dict[str, float]] = None,
+    evaluation_method: str = "steady_state_monthly",
+    sequential_context: Optional[SequentialOptimisationContext] = None,
 ) -> Dict:
     """
     Optimise a spend plan. `constraints=None` (or empty) + conserve_total_budget=True
@@ -3264,9 +3578,12 @@ def optimize_scenario(
     replaces): every objective states exactly what it sums, and an
     outcome_id outside its scope contributes 0, never an implicit 1.
 
-    `model_type` selects which model's steady-state response function drives
-    optimisation and evaluation - `"shared"` (Model A, default) or
-    `"market_specific"` (Model C) - see module docstring.
+    `model_type` selects which model's response function drives optimisation
+    and evaluation - `"shared"` (Model A, default) or `"market_specific"`
+    (Model C). ``evaluation_method="sequential_weekly"`` requires a
+    ``SequentialOptimisationContext`` built by the caller and runs both the
+    SLSQP objective and final predictions through the exact weekly replay
+    kernel. The default remains the existing steady-state monthly path.
 
     Raises ApprovalMismatchError unless `approval` matches the current model
     run identity - checked up front, before running the (potentially slow)
@@ -3318,6 +3635,27 @@ def optimize_scenario(
         approval_readiness=approval_readiness,
         current_policy=current_policy,
     )
+    if evaluation_method not in {"steady_state_monthly", "sequential_weekly"}:
+        raise ValueError(
+            "evaluation_method must be 'steady_state_monthly' or "
+            f"'sequential_weekly', got {evaluation_method!r}."
+        )
+    if evaluation_method == "sequential_weekly" and sequential_context is None:
+        raise ValueError(
+            "Sequential optimisation requires a SequentialOptimisationContext "
+            "with governed weekly plans and carry-in state."
+        )
+    if evaluation_method == "steady_state_monthly" and sequential_context is not None:
+        raise ValueError(
+            "sequential_context cannot be supplied for steady-state optimisation."
+        )
+    if evaluation_method == "sequential_weekly" and posterior_trace is not None:
+        raise ValueError(
+            "Sequential optimisation search is point-estimate by decision. "
+            "Posterior uncertainty must be evaluated separately through the "
+            "sequential scenario-evaluation path; it is not silently replaced "
+            "with steady-state uncertainty."
+        )
     # G2A.7a.10: when value_mapping is given, it is the single authoritative
     # value source - used for objective resolution, the SLSQP objective
     # function, the current/optimised predicted-value calculations, and
@@ -3472,7 +3810,11 @@ def optimize_scenario(
     # and evaluate_manual_scenario's identical block above).
     _planning_semantics: Optional[PlanningEvaluationSemantics] = None
     if governance_mode == "official":
-        _planning_semantics = CURRENT_PLANNING_EVALUATION_SEMANTICS
+        _planning_semantics = (
+            SEQUENTIAL_WEEKLY_PLANNING_EVALUATION_SEMANTICS
+            if evaluation_method == "sequential_weekly"
+            else CURRENT_PLANNING_EVALUATION_SEMANTICS
+        )
 
     current_spend = _flatten(current_spend_plan, months, channels)
 
@@ -3678,6 +4020,7 @@ def optimize_scenario(
         counterfactual_media_input_by_month=counterfactual_media_input_by_month,
         activity_definitions=activity_definitions,
         counterfactual_policy=policy,
+        sequential_context=sequential_context,
     )
 
     result = minimize(
@@ -3746,26 +4089,74 @@ def optimize_scenario(
         activity_definitions=activity_definitions,
         counterfactual_policy=policy,
     )
-    predicted = _calculate_scenario(
-        optimized_plan,
-        market,
-        meta,
-        params,
-        reference_context_by_month,
-        effective_ltv,
-        scenario_plan=optimized_scenario_plan,
-        **_calculate_kwargs,
-    )
-    current_predicted = _calculate_scenario(
-        current_spend_plan,
-        market,
-        meta,
-        params,
-        reference_context_by_month,
-        effective_ltv,
-        scenario_plan=current_scenario_plan,
-        **_calculate_kwargs,
-    )
+    if sequential_context is not None:
+        from .sequential_optimisation_tractability import compute_sequential_plan_pair
+
+        optimized_weekly_plan = sequential_context.candidate_plan(optimized_plan)
+        current_weekly_plan = sequential_context.candidate_plan(current_spend_plan)
+        optimized_weekly, optimized_reference, _ = compute_sequential_plan_pair(
+            optimized_weekly_plan,
+            sequential_context.reference_plan,
+            sequential_context.carry_in,
+            meta,
+            cast(FHPosteriorParams, params),
+            model_type=model_type,
+            named_event_fit_inputs=sequential_context.named_event_fit_inputs,
+        )
+        current_weekly, current_reference, _ = compute_sequential_plan_pair(
+            current_weekly_plan,
+            sequential_context.reference_plan,
+            sequential_context.carry_in,
+            meta,
+            cast(FHPosteriorParams, params),
+            model_type=model_type,
+            named_event_fit_inputs=sequential_context.named_event_fit_inputs,
+        )
+        predicted = _sequential_pair_to_prediction_frame(
+            candidate=optimized_weekly,
+            reference=optimized_reference,
+            spend_plan=optimized_plan,
+            meta=meta,
+            ltv=effective_ltv,
+            activity_definitions=activity_definitions,
+            market=market,
+            planning_objective=planning_objective,
+            scenario_plan=optimized_scenario_plan,
+            counterfactual_policy=policy,
+        )
+        current_predicted = _sequential_pair_to_prediction_frame(
+            candidate=current_weekly,
+            reference=current_reference,
+            spend_plan=current_spend_plan,
+            meta=meta,
+            ltv=effective_ltv,
+            activity_definitions=activity_definitions,
+            market=market,
+            planning_objective=planning_objective,
+            scenario_plan=current_scenario_plan,
+            counterfactual_policy=policy,
+        )
+    else:
+        predicted = _calculate_scenario(
+            optimized_plan,
+            market,
+            meta,
+            params,
+            reference_context_by_month,
+            effective_ltv,
+            scenario_plan=optimized_scenario_plan,
+            **_calculate_kwargs,
+        )
+        current_predicted = _calculate_scenario(
+            current_spend_plan,
+            market,
+            meta,
+            params,
+            reference_context_by_month,
+            effective_ltv,
+            scenario_plan=current_scenario_plan,
+            **_calculate_kwargs,
+        )
 
     # Evaluated via the same objective_fn used for optimisation (not
     # re-derived from the predicted DataFrames) so "current" and "optimised"
@@ -3773,7 +4164,7 @@ def optimize_scenario(
     # two diverging from a second, hand-written copy of the eligibility logic.
     current_objective_value = -float(objective_fn(current_spend))
     posterior_evaluation = None
-    if posterior_trace is not None:
+    if posterior_trace is not None and sequential_context is None:
         from .uncertainty import evaluate_scenario_with_uncertainty
 
         # G2A.7a.10: posterior evaluation uses the same approval/objective/
@@ -3877,6 +4268,15 @@ def optimize_scenario(
             _planning_semantics.fingerprint()
             if _planning_semantics is not None
             else None
+        ),
+        "evaluation_method": evaluation_method,
+        "sequential_optimisation_strategy": (
+            "T1_direct_replay_point_estimate"
+            if evaluation_method == "sequential_weekly"
+            else None
+        ),
+        "sequential_optimisation_objective_horizon": (
+            "O1_plan_window_total" if evaluation_method == "sequential_weekly" else None
         ),
         # REQ-OPT-001 Requirement 2/4: only populated when governed_constraints
         # was supplied - empty (never None) otherwise, so a caller can always

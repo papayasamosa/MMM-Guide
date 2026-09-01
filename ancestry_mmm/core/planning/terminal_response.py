@@ -40,6 +40,7 @@ from ..sequential_simulation import (
     simulate_terminal_carryover,
     simulate_terminal_carryover_market_specific,
 )
+from ..named_event_fit_inputs import NamedEventFitInputs
 from .future_context import FutureContextResult
 
 
@@ -129,16 +130,25 @@ def evaluate_terminal_incremental_response(
     future_context: FutureContextResult,
     meta: FHModelMeta,
     params: FHPosteriorParams,
+    named_event_fit_inputs: NamedEventFitInputs | None = None,
 ) -> TerminalIncrementalResult:
     """Model A (shared) terminal candidate/reference evaluation."""
     extension_plan = build_zero_decision_terminal_extension_plan(
         market, channels, future_context
     )
     candidate = simulate_terminal_carryover(
-        extension_plan, candidate_ending_state, meta, params
+        extension_plan,
+        candidate_ending_state,
+        meta,
+        params,
+        named_event_fit_inputs=named_event_fit_inputs,
     )
     reference = simulate_terminal_carryover(
-        extension_plan, reference_ending_state, meta, params
+        extension_plan,
+        reference_ending_state,
+        meta,
+        params,
+        named_event_fit_inputs=named_event_fit_inputs,
     )
     incremental = compute_incremental_outcome(candidate, reference)
     return TerminalIncrementalResult(
@@ -160,6 +170,7 @@ def evaluate_terminal_incremental_response_market_specific(
     future_context: FutureContextResult,
     meta: FHModelMeta,
     params: FHMarketSpecificPosteriorParams,
+    named_event_fit_inputs: NamedEventFitInputs | None = None,
 ) -> TerminalIncrementalResult:
     """Model C (market-specific) mirror of
     `evaluate_terminal_incremental_response`."""
@@ -167,10 +178,18 @@ def evaluate_terminal_incremental_response_market_specific(
         market, channels, future_context
     )
     candidate = simulate_terminal_carryover_market_specific(
-        extension_plan, candidate_ending_state, meta, params
+        extension_plan,
+        candidate_ending_state,
+        meta,
+        params,
+        named_event_fit_inputs=named_event_fit_inputs,
     )
     reference = simulate_terminal_carryover_market_specific(
-        extension_plan, reference_ending_state, meta, params
+        extension_plan,
+        reference_ending_state,
+        meta,
+        params,
+        named_event_fit_inputs=named_event_fit_inputs,
     )
     incremental = compute_incremental_outcome(candidate, reference)
     return TerminalIncrementalResult(

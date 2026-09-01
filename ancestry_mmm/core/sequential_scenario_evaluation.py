@@ -44,6 +44,7 @@ import numpy as np
 from .activities import ActivityDefinition, activity_definitions_fingerprint
 from .approval import ModelApproval
 from .hierarchical_model import FHModelMeta
+from .named_event_fit_inputs import NamedEventFitInputs
 from .market_specific_predict import (
     FHMarketSpecificPosteriorParams,
 )
@@ -306,6 +307,8 @@ def evaluate_manual_scenario_sequential(
     trace: Optional[Any] = None,
     n_posterior_draws: int = 0,
     posterior_seed: int = 42,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
+    terminal_named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> SequentialScenarioEvaluationResult:
     """Evaluate a sequential weekly manual scenario. See module docstring
     for the full flow. `candidate_plan`/`reference_plan` must already be
@@ -447,16 +450,36 @@ def evaluate_manual_scenario_sequential(
             historical_frame, meta, params, market
         )
         candidate = simulate_sequential_outcomes_market_specific(
-            candidate_plan, carry_in, meta, params
+            candidate_plan,
+            carry_in,
+            meta,
+            params,
+            named_event_fit_inputs=named_event_fit_inputs,
         )
         reference = simulate_sequential_outcomes_market_specific(
-            reference_plan, carry_in, meta, params
+            reference_plan,
+            carry_in,
+            meta,
+            params,
+            named_event_fit_inputs=named_event_fit_inputs,
         )
     else:
         assert isinstance(params, FHPosteriorParams)
         carry_in = reconstruct_starting_state(historical_frame, meta, params, market)
-        candidate = simulate_sequential_outcomes(candidate_plan, carry_in, meta, params)
-        reference = simulate_sequential_outcomes(reference_plan, carry_in, meta, params)
+        candidate = simulate_sequential_outcomes(
+            candidate_plan,
+            carry_in,
+            meta,
+            params,
+            named_event_fit_inputs=named_event_fit_inputs,
+        )
+        reference = simulate_sequential_outcomes(
+            reference_plan,
+            carry_in,
+            meta,
+            params,
+            named_event_fit_inputs=named_event_fit_inputs,
+        )
 
     weekly_incremental = compute_incremental_outcome_with_context(
         candidate, evaluation_context, reference, evaluation_context
@@ -491,6 +514,7 @@ def evaluate_manual_scenario_sequential(
                 future_context=terminal_future_context,
                 meta=meta,
                 params=params,
+                named_event_fit_inputs=terminal_named_event_fit_inputs,
             )
         else:
             assert isinstance(params, FHPosteriorParams)
@@ -502,6 +526,7 @@ def evaluate_manual_scenario_sequential(
                 future_context=terminal_future_context,
                 meta=meta,
                 params=params,
+                named_event_fit_inputs=terminal_named_event_fit_inputs,
             )
 
     posterior_weekly_incremental: Optional[np.ndarray] = None
@@ -516,6 +541,7 @@ def evaluate_manual_scenario_sequential(
                     market,
                     n_draws=n_posterior_draws,
                     seed=posterior_seed,
+                    named_event_fit_inputs=named_event_fit_inputs,
                 )
             )
             reference_draws = (
@@ -527,6 +553,7 @@ def evaluate_manual_scenario_sequential(
                     market,
                     n_draws=n_posterior_draws,
                     seed=posterior_seed,
+                    named_event_fit_inputs=named_event_fit_inputs,
                 )
             )
         else:
@@ -538,6 +565,7 @@ def evaluate_manual_scenario_sequential(
                 market,
                 n_draws=n_posterior_draws,
                 seed=posterior_seed,
+                named_event_fit_inputs=named_event_fit_inputs,
             )
             reference_draws = simulate_sequential_outcomes_posterior_draw_consistent(
                 reference_plan,
@@ -547,6 +575,7 @@ def evaluate_manual_scenario_sequential(
                 market,
                 n_draws=n_posterior_draws,
                 seed=posterior_seed,
+                named_event_fit_inputs=named_event_fit_inputs,
             )
         posterior_weekly_incremental = candidate_draws - reference_draws
 
