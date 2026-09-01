@@ -189,3 +189,13 @@ attempted here. `core.optimization.py` remains completely unchanged;
 sequential-weekly optimisation stays out of the production contract
 exactly as this record's own text already states, pending that
 integration.
+
+## Addendum, 2026-09-01: production route wired
+
+The delegated integration is now wired through the Scenario Planner and
+`ScenarioService`: `sequential_weekly` is the application default, and the
+manual evaluation and optimiser use the same governed weekly carry-in replay.
+The steady-state monthly calculation remains available only when explicitly
+selected as a diagnostic/legacy comparison. It is not the default production
+recommendation path. Candidate A Search is blocked in steady-state mode so an
+incomplete final-outcome replay cannot be presented as an optimisation result.

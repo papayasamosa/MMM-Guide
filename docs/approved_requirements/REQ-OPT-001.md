@@ -241,3 +241,20 @@ vocabulary in a production run (both `core.optimization.py` and
 `pages/08_Scenario_Planner.py` remain completely unchanged); the
 sequential-weekly kernel integration (`REQ-SCEN-004`'s own still-open
 item); any numeric default for any constraint or objective precondition.
+
+## Addendum, 2026-09-01: sequential weekly is the application production default
+
+The delegated production-integration work has now connected the selected
+`sequential_weekly` method to the analyst-facing Scenario Planner and
+`application.scenario_service.ScenarioService.optimise()` route. The same
+carry-in-aware weekly replay is used for the SLSQP objective and the returned
+current/optimised predictions. The UI presents `steady_state_monthly` only as
+an explicit diagnostic/legacy choice; Candidate A Search is fail-closed in
+that route because the legacy path cannot include its final-outcome replay.
+
+The lower-level `core.optimization.optimize_scenario()` function retains its
+steady-state default for direct backwards-compatible callers. A caller that
+uses it for production optimisation must pass `evaluation_method=`
+`"sequential_weekly"` and a `SequentialOptimisationContext`; the application
+boundary does this by default. `maximise_profit` remains unavailable because
+no approved COGS, margin, or profit definition is present.

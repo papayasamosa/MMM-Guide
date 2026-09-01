@@ -8829,3 +8829,27 @@ and non-paid SEO contribution reporting (Decisions 6/7/8's reporting
 surface). See the handoff section appended to
 `D:\Ancestry-MMM\logs\post_ux_business_decisions_2026-08-30.md` for exact
 next steps.
+
+## 2026-09-01 production-integration continuation
+
+The post-UI/UX handoff continuation was verified against the existing branch
+work rather than recreated. Candidate A final-outcome replay now evaluates
+the full demand/capture/cap chain per posterior draw and is connected to
+historical attribution, contribution waterfalls, official curve generation,
+sequential Scenario Planner evaluation, and sequential optimisation. Missing
+fit-time replay evidence or future caps remains a hard failure.
+
+SEO's governed positional-visibility observations now have a row-aligned,
+window-gated fit-input boundary consumed by both raw-PyMC model builders,
+persisted with the project, restored by Diagnostics, and replayed into
+analyst-facing outputs. This is a reduced-form visibility-to-final-outcome
+treatment; an explicit organic-traffic/click mediator remains a separate
+future specification if required.
+
+The future-assumption bundle is persisted from the system-generated trend,
+Fourier, promotion, and control context used by sequential planning. Future
+realised values are not silently copied; expected-value planning still needs
+an explicit governed forward value mapping. The application optimiser now
+defaults to sequential weekly T1/O1 evaluation; steady-state is labelled
+diagnostic/legacy, while profit optimisation remains unavailable without an
+approved COGS/margin definition. PathMC remains deferred.
