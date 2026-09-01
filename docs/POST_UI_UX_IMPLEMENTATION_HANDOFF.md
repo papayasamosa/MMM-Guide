@@ -13,9 +13,9 @@ it does not replace the approved implementation brief, decision records, or
 - **Branch:** `agent/post-ux-business-decisions`
 - **Final implementation HEAD SHA:** `958e639d` (the last code-integration
   commit before this documentation-only handoff commit).
-- **Pushed:** pending final handoff push; the branch was pushed through
-  `5e54cb2a` before this final integration pass, and the two integration commits
-  below are now committed locally with this handoff.
+- **Last verified pushed branch HEAD:** `6cb13e90529b35013ff4601cd6b9e9a5f88d7e55`.
+- **Pushed:** yes; local and `origin/agent/post-ux-business-decisions` matched
+  at the SHA above before this final metadata-only correction.
 - **Working tree policy:** `.mcp.json`, `.playwright-mcp/`, `designs/`, and
   `tools/` are local development artefacts and are deliberately excluded from
   commits. No logs, caches, secrets, or machine-specific files are in scope.
@@ -29,9 +29,9 @@ Commits created in this durability pass:
 
 - `16b53076` — Wire Candidate A and governed FX boundaries
 - `958e639d` — Wire calibration and governed value assumptions
-- Final handoff commit — this document; the exact resulting branch SHA is
-  reported with the push verification and is the only documentation-only
-  commit after `958e639d`.
+- `6cb13e90` — Record final production integration handoff
+- This final metadata-only correction records the pushed SHA above; its new
+  resulting SHA is reported in the final delivery summary.
 
 ## 2. Decision 1–19 status
 
