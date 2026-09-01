@@ -412,13 +412,20 @@ class SeoModelFitInputs:
             raise ValueError(
                 "SeoModelFitInputs.raw_visibility must be row-aligned to model weeks."
             )
-        if not np.isfinite(self.standardization_center) or not np.isfinite(
-            self.standardization_scale
-        ) or self.standardization_scale <= 0:
-            raise ValueError("SEO standardization metadata must be finite and positive.")
+        if (
+            not np.isfinite(self.standardization_center)
+            or not np.isfinite(self.standardization_scale)
+            or self.standardization_scale <= 0
+        ):
+            raise ValueError(
+                "SEO standardization metadata must be finite and positive."
+            )
         if self.metric_definition.approval_status != "approved":
             raise ValueError("SEO model inputs require an approved metric definition.")
-        if self.metric_definition.causal_role != CAUSAL_ROLE_MEDIATOR_OR_CAPTURE_EFFICIENCY_STATE:
+        if (
+            self.metric_definition.causal_role
+            != CAUSAL_ROLE_MEDIATOR_OR_CAPTURE_EFFICIENCY_STATE
+        ):
             raise ValueError(
                 "SEO model inputs require the approved mediator/capture-efficiency role."
             )
@@ -438,7 +445,12 @@ class SeoModelFitInputs:
             raise ValueError("SEO model inputs require non-empty markets and weeks.")
         if len(model_markets) != len(model_weeks):
             raise ValueError("SEO model markets and weeks must be row-aligned.")
-        keys = list(zip((str(market) for market in model_markets), (str(week) for week in model_weeks)))
+        keys = list(
+            zip(
+                (str(market) for market in model_markets),
+                (str(week) for week in model_weeks),
+            )
+        )
         by_key: dict[tuple[str, str], SeoPositionalVisibilityObservation] = {}
         for observation in observations:
             key = (observation.market, observation.week)
@@ -452,7 +464,8 @@ class SeoModelFitInputs:
             observation = by_key.get(key)
             value = (
                 float(observation.visibility_index)
-                if observation is not None and observation.visibility_index is not None
+                if observation is not None
+                and observation.visibility_index is not None
                 and observation.coverage_state != STATE_OBSERVED_ZERO
                 else None
             )
@@ -533,14 +546,18 @@ class SeoModelFitInputs:
         payload["standardized_visibility"] = tuple(
             float(value) for value in payload.get("standardized_visibility") or ()
         )
-        payload["active_mask"] = tuple(float(value) for value in payload.get("active_mask") or ())
+        payload["active_mask"] = tuple(
+            float(value) for value in payload.get("active_mask") or ()
+        )
         payload["raw_visibility"] = tuple(payload.get("raw_visibility") or ())
         payload["window_by_market"] = {
             market: SeoValidEstimationWindow.from_dict(window)
             for market, window in (payload.get("window_by_market") or {}).items()
         }
         known = set(cls.__dataclass_fields__)
-        return cls(**cast(Any, {key: value for key, value in payload.items() if key in known}))
+        return cls(
+            **cast(Any, {key: value for key, value in payload.items() if key in known})
+        )
 
 
 __all__ = [

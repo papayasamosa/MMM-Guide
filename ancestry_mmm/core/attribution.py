@@ -254,9 +254,7 @@ def compute_shapley_contributions(
             explicit_values=None,
             explicit_active_mask=None,
         )
-        mu_with_seo = np.clip(
-            mu_total * np.exp(np.clip(seo_eta, -50, 50)), 1e-6, 1e9
-        )
+        mu_with_seo = np.clip(mu_total * np.exp(np.clip(seo_eta, -50, 50)), 1e-6, 1e9)
         result["seo_visibility_contribution"] = mu_with_seo - mu_total
         mu_total = mu_with_seo
     if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
@@ -333,9 +331,7 @@ def outcome_channel_summary(
             )
     if "search_mediated_contribution" in contributions:
         for si, oid in enumerate(meta.outcome_ids):
-            volume = float(
-                contributions["search_mediated_contribution"][:, si].sum()
-            )
+            volume = float(contributions["search_mediated_contribution"][:, si].sum())
             weight = ltv[oid] if oid in ltv else np.nan
             rows.append(
                 {

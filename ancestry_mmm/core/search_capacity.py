@@ -1248,9 +1248,7 @@ def extract_candidate_a_replay_params(
             return da.isel(chain=at[0], draw=at[1])
         return da.mean(dim=[d for d in da.dims if d in ("chain", "draw")])
 
-    demand_channel_names = [
-        str(v) for v in post.coords["search_demand_channel"].values
-    ]
+    demand_channel_names = [str(v) for v in post.coords["search_demand_channel"].values]
     outcome_ids = list(getattr(meta, "outcome_ids", ()))
     if not outcome_ids:
         outcome_ids = [str(v) for v in post.coords["outcome"].values]
@@ -1258,9 +1256,7 @@ def extract_candidate_a_replay_params(
 
     demand_media_beta_reduced = _reduce(post["search_demand_media_beta"])
     demand_media_beta = {
-        name: float(
-            demand_media_beta_reduced.sel(search_demand_channel=name).values
-        )
+        name: float(demand_media_beta_reduced.sel(search_demand_channel=name).values)
         for name in demand_channel_names
     }
     demand_market_offset_reduced = _reduce(post["search_demand_market_offset"])
@@ -1271,9 +1267,7 @@ def extract_candidate_a_replay_params(
     capture_shares_reduced = _reduce(post["search_capture_shares"])
     capture_share = {
         component: float(
-            capture_shares_reduced.sel(
-                search_capture_share_component=component
-            ).values
+            capture_shares_reduced.sel(search_capture_share_component=component).values
         )
         for component in CANDIDATE_A_CAPTURE_SHARE_COMPONENTS
     }
@@ -1308,9 +1302,7 @@ def extract_candidate_a_replay_params(
         demand_to_capture_scale=demand_to_capture_scale,
         capture_scale=capture_scale,
         capture_share=capture_share,
-        paid_capture_outcome_beta=_outcome_values(
-            "search_paid_capture_outcome_beta"
-        ),
+        paid_capture_outcome_beta=_outcome_values("search_paid_capture_outcome_beta"),
         organic_capture_outcome_beta=_outcome_values(
             "search_organic_capture_outcome_beta"
         ),

@@ -307,9 +307,7 @@ class TestSeoModelFitInputs:
                 market="UK",
                 week="2025-01-06",
             ),
-            compute_weekly_positional_visibility(
-                [], market="UK", week="2025-01-13"
-            ),
+            compute_weekly_positional_visibility([], market="UK", week="2025-01-13"),
             compute_weekly_positional_visibility(
                 [GscPositionRow("q", position=4.0, impressions=100.0)],
                 market="UK",
@@ -336,9 +334,7 @@ class TestSeoModelFitInputs:
         assert SeoModelFitInputs.from_dict(fit_inputs.to_dict()) == fit_inputs
 
     def test_requires_at_least_one_observed_visibility_value(self):
-        zero = compute_weekly_positional_visibility(
-            [], market="UK", week="2025-01-06"
-        )
+        zero = compute_weekly_positional_visibility([], market="UK", week="2025-01-06")
         with pytest.raises(ValueError, match="at least one observed"):
             SeoModelFitInputs.from_observations(
                 [zero], model_markets=("UK",), model_weeks=("2025-01-06",)

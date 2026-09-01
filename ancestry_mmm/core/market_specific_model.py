@@ -496,7 +496,9 @@ def build_fh_market_specific_model(
             seo_feature = pt.constant(
                 np.asarray(seo_fit_inputs.standardized_visibility, dtype=float)
             )
-            seo_active = pt.constant(np.asarray(seo_fit_inputs.active_mask, dtype=float))
+            seo_active = pt.constant(
+                np.asarray(seo_fit_inputs.active_mask, dtype=float)
+            )
             seo_visibility_beta = pm.Normal(
                 "seo_visibility_beta",
                 mu=0,

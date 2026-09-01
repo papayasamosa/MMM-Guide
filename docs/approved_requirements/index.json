@@ -1485,7 +1485,7 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
         "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_seo_001_indexed_and_classified_incomplete",
         "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_all_three_records_reference_the_decision_package",
-        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_seo_001_defers_causal_role",
+        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_seo_001_records_approved_fit_role_and_open_estimand_direction",
         "ancestry_mmm/tests/test_req_seo_001_decisions_5_6_7_8.py::test_no_seo_5k_month_cost_assumption_in_active_code_or_docs",
         "ancestry_mmm/tests/test_req_seo_001_decisions_5_6_7_8.py::test_no_28_august_2023_seo_modelling_meaning_in_active_code_or_docs",
         "ancestry_mmm/tests/test_req_seo_001_decisions_5_6_7_8.py::test_req_seo_001_addendum_resolves_causal_role_and_metric_type",
@@ -1504,7 +1504,7 @@
         "ancestry_mmm/tests/test_seo_partial_window_policy.py::TestClassifyWeekRelativeToWindow::test_before_within_after",
         "ancestry_mmm/tests/test_seo_partial_window_policy.py::TestAssessSeoContributionWindowEligibility::test_no_approved_threshold_can_never_be_eligible",
         "ancestry_mmm/tests/test_seo_partial_window_policy.py::TestAssessSeoContributionWindowEligibility::test_meeting_threshold_is_eligible",
-        "ancestry_mmm/tests/test_seo_partial_window_policy.py::TestGatedRegressorArchitectureMetadata::test_architecture_is_documented_not_executable"
+        "ancestry_mmm/tests/test_seo_partial_window_policy.py::TestGatedRegressorArchitectureMetadata::test_architecture_metadata_matches_executable_w2b_integration"
       ]
     },
     {

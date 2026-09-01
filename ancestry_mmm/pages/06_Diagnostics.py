@@ -1580,9 +1580,7 @@ if scorecard:
                             "valid_end": window.end_week,
                             "weeks_observed": window.weeks_observed,
                             "model_weeks": int(market_mask.sum()),
-                            "active_weeks": int(
-                                np.sum(active_mask[market_mask] > 0)
-                            ),
+                            "active_weeks": int(np.sum(active_mask[market_mask] > 0)),
                         }
                     )
                 if seo_rows:

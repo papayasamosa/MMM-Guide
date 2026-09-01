@@ -645,6 +645,14 @@ with SectionCard(
         )
 
 st.markdown("---")
+st.markdown("### Restore from a project bundle")
+st.caption(
+    "Restore a bundle from another analyst, session, or date. Restored project "
+    "evidence is re-verified before official use."
+)
+uploaded_zip = st.file_uploader("Upload a previously exported .zip", type=["zip"])
+
+st.markdown("---")
 with SectionCard(
     "Finance FX rate set",
     description=(
@@ -1017,13 +1025,6 @@ if _last_bundle_build:
             "to restore the checklist and download link."
         )
 
-st.markdown("---")
-st.markdown("### Restore from a project bundle")
-st.caption(
-    "Restore a bundle from another analyst, session, or date. Restored project "
-    "evidence is re-verified before official use."
-)
-uploaded_zip = st.file_uploader("Upload a previously exported .zip", type=["zip"])
 if uploaded_zip is not None and st.button("Import bundle"):
     tmp_path = PROJECT_EXPORT_ROOT / f"_import_{uploaded_zip.name}"
     PROJECT_EXPORT_ROOT.mkdir(parents=True, exist_ok=True)

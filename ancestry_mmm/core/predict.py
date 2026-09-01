@@ -513,7 +513,9 @@ def _candidate_a_eta_contribution(
             "Candidate A replay demand channel(s) are not in the fitted "
             f"channel set: {unknown}."
         )
-    demand_idx = [meta.channels.index(channel) for channel in replay.demand_channel_names]
+    demand_idx = [
+        meta.channels.index(channel) for channel in replay.demand_channel_names
+    ]
     demand_beta = np.asarray(
         [replay.demand_media_beta[channel] for channel in replay.demand_channel_names],
         dtype=float,
@@ -523,8 +525,10 @@ def _candidate_a_eta_contribution(
         dtype=float,
     )
     market_idx = np.asarray(frame["market_idx"], dtype=int)
-    if market_idx.shape != (n_obs,) or np.any(market_idx < 0) or np.any(
-        market_idx >= len(meta.markets)
+    if (
+        market_idx.shape != (n_obs,)
+        or np.any(market_idx < 0)
+        or np.any(market_idx >= len(meta.markets))
     ):
         raise CandidateAReplayNotSupportedError(
             "Candidate A replay frame has an invalid market index vector."
@@ -537,9 +541,7 @@ def _candidate_a_eta_contribution(
     latent_demand = np.exp(np.clip(demand_eta, -50.0, 50.0)) * float(
         replay.demand_to_capture_scale
     )
-    cap = _candidate_a_paid_search_cap_for_frame(
-        frame, meta, n_obs, explicit_cap
-    )
+    cap = _candidate_a_paid_search_cap_for_frame(frame, meta, n_obs, explicit_cap)
     forward = candidate_a_forward(
         latent_demand,
         replay.capture_share["paid"],
@@ -1023,7 +1025,9 @@ def steady_state_outcome_response(
             )
             val += float(candidate_eta[0, outcome_ids.index(s)])
 
-        val += float(_seo_reference_eta_contribution(meta, params)[outcome_ids.index(s)])
+        val += float(
+            _seo_reference_eta_contribution(meta, params)[outcome_ids.index(s)]
+        )
 
         scaled_controls = apply_control_mapping_scaling(
             reference_context.get("controls", {}),

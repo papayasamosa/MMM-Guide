@@ -716,7 +716,10 @@ def simulate_sequential_outcomes(
         if plan.candidate_a_paid_search_cap is not None
         else candidate_a_paid_search_cap
     )
-    if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE and candidate_a_cap is None:
+    if (
+        meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE
+        and candidate_a_cap is None
+    ):
         raise CandidateAReplayNotSupportedError(
             "Candidate A sequential replay requires an explicit "
             "plan.candidate_a_paid_search_cap for every future week."
@@ -762,13 +765,18 @@ def simulate_sequential_outcomes(
             getattr(meta, "candidate_a_historical_paid_search_cap", ()),
             dtype=float,
         )
-        if historical_cap.shape != (len(getattr(meta, "candidate_a_fit_period_labels", ())),):
+        if historical_cap.shape != (
+            len(getattr(meta, "candidate_a_fit_period_labels", ())),
+        ):
             raise CandidateAReplayNotSupportedError(
                 "Candidate A sequential replay needs the historical paid-search "
                 "cap tail recorded with the fitted model."
             )
         candidate_a_cap_replay = np.concatenate(
-            [historical_cap[-tail_len:], np.asarray(candidate_a_cap_replay, dtype=float)]
+            [
+                historical_cap[-tail_len:],
+                np.asarray(candidate_a_cap_replay, dtype=float),
+            ]
         )
     mu_replay = predict_mu(
         replay_frame,

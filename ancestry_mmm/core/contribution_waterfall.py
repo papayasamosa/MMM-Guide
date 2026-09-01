@@ -254,9 +254,7 @@ def compute_generalised_shapley_contributions(
             explicit_values=None,
             explicit_active_mask=None,
         )
-        mu_with_seo = np.clip(
-            mu_total * np.exp(np.clip(seo_eta, -50, 50)), 1e-6, 1e9
-        )
+        mu_with_seo = np.clip(mu_total * np.exp(np.clip(seo_eta, -50, 50)), 1e-6, 1e9)
         contributions["SEO visibility (windowed)"] = mu_with_seo - mu_total
         players.append("SEO visibility (windowed)")
         mu_total = mu_with_seo
@@ -283,9 +281,7 @@ def compute_generalised_shapley_contributions(
             params,
             candidate_a_paid_search_cap=historical_cap,
         )
-        contributions["Search-mediated Candidate A"] = (
-            mu_with_candidate_a - mu_total
-        )
+        contributions["Search-mediated Candidate A"] = mu_with_candidate_a - mu_total
         players.append("Search-mediated Candidate A")
         mu_total = mu_with_candidate_a
 
