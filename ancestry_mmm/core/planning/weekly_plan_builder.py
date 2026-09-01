@@ -257,6 +257,7 @@ def build_governed_weekly_plan_from_monthly_plan(
     activity_definitions: Optional[list[ActivityDefinition]] = None,
     cost_registry: Optional[CostMappingRegistry] = None,
     cost_context_id: str = "default",
+    candidate_a_paid_search_cap: Optional[np.ndarray] = None,
 ) -> Tuple[WeeklyPlan, WeeklyPlanConstructionProvenance]:
     """Build one governed weekly plan from ordered monthly plan values.
 
@@ -336,6 +337,7 @@ def build_governed_weekly_plan_from_monthly_plan(
         channel_allocations=allocations,
         future_context=future_context,
         expected_n_fourier_columns=expected_n_fourier_columns,
+        candidate_a_paid_search_cap=candidate_a_paid_search_cap,
     )
 
 

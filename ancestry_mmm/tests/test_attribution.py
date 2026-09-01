@@ -360,13 +360,11 @@ class TestShapleyDirectHaloSeparation:
 
 
 class TestComputeShapleyContributionsFailsClosedForCandidateA:
-    """WP3 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`):
-    `compute_shapley_contributions` has no term for Candidate A's
-    `search_eta_contribution` - silently running it on a Candidate A fit
-    would produce a `mu_total` missing that whole pathway's contribution.
-    Must raise instead."""
+    """Candidate A attribution must still fail closed when replay evidence
+    is absent; a Candidate A engine label alone must never produce an
+    incomplete decomposition."""
 
-    def test_raises_for_a_candidate_a_engine_meta(self, meta, params):
+    def test_raises_without_fit_time_cap_or_replay_evidence(self, meta, params, frame):
         import dataclasses
 
         from ancestry_mmm.core.attribution import (
@@ -377,6 +375,5 @@ class TestComputeShapleyContributionsFailsClosedForCandidateA:
         candidate_a_meta = dataclasses.replace(
             meta, causal_graph_engine=SEARCH_CANDIDATE_A_ENGINE
         )
-        frame = {"X_media": np.zeros((3, len(CHANNELS))), "market_bounds": [(0, 3)]}
         with pytest.raises(CandidateAAttributionNotSupportedError):
             compute_shapley_contributions(frame, candidate_a_meta, params)

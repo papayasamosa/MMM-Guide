@@ -43,25 +43,24 @@ from .outcomes import (
     fh_net_billthrough_outcome_ids,
     fh_signup_outcome_ids,
 )
-from .search_capacity import SEARCH_CANDIDATE_A_ENGINE
+from .search_capacity import (
+    SEARCH_CANDIDATE_A_ENGINE,
+    CandidateAReplayParams,
+    candidate_a_forward,
+    extract_candidate_a_replay_params,
+)
 
 
 class CandidateAReplayNotSupportedError(ValueError):
-    """Raised by `predict_mu` (and therefore every caller: curves,
-    scenario planning, backtest, optimisation) for a Candidate A fit.
+    """Raised when Candidate A replay lacks required fit or plan evidence.
 
-    WP3 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`): this NumPy
-    replay reconstructs `eta` from intercept/market/trend/season/channels/
-    promo/controls only - it has no term for Candidate A's
-    `search_eta_contribution` (the demand/capture/cap chain's outcome
-    contribution). Before this guard existed, every one of those downstream
-    features would silently evaluate a `mu` missing that entire pathway's
-    contribution - never raising, never warning. This is also exactly the
-    mechanism REQ-SEARCH-002 requires: Search planning/cap optimisation
-    remain disabled until evidence and explicit approval gates pass: a hard
-    failure here rather than a plausible-but-wrong scenario/curve number
-    is the correct way to keep it disabled. Full replay integration
-    (extending this function with the Search chain) is future work.
+    Candidate A's demand/capture/cap chain is now replayed on the outcome
+    scale for historical attribution, official curves, sequential scenarios,
+    and sequential optimisation. This exception remains the fail-closed
+    boundary for an incomplete posterior, a missing fit-time cap, or a
+    future/scenario replay without an explicit cap; it prevents downstream
+    callers from producing a plausible result that omits the mediated Search
+    contribution or silently turns a historical cap into a future assumption.
     """
 
 
@@ -132,6 +131,14 @@ class FHPosteriorParams:
     # never consumed a named-event response term - see `predict_mu`'s own
     # handling of `meta.named_event_fit_blocks`.
     event_coefs: Dict[str, Dict[str, np.ndarray]] = field(default_factory=dict)
+    # Present only for a Candidate A fit.  Keeping this on the extracted
+    # posterior object makes every downstream consumer (curves, scenarios,
+    # attribution and optimisation) use the same draw-level replay math.
+    candidate_a_replay_params: Optional[CandidateAReplayParams] = None
+    # Present only for a fit that consumed the governed SEO visibility
+    # predictor.  It is kept draw-aligned with the rest of this object so the
+    # gated treatment contributes uncertainty to every fitted-frame replay.
+    seo_visibility_beta: Optional[np.ndarray] = None
 
 
 def extract_event_coefs(
@@ -301,6 +308,19 @@ def extract_posterior_params(
             }
 
     event_coefs = extract_event_coefs(trace, meta, at=at)
+    candidate_a_replay_params = None
+    if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
+        candidate_a_replay_params = extract_candidate_a_replay_params(
+            trace, meta, at=at
+        )
+    seo_visibility_beta = None
+    if getattr(meta, "seo_fit_inputs_at_fit", None):
+        if "seo_visibility_beta" not in post:
+            raise CandidateAReplayNotSupportedError(
+                "This fit records SEO visibility inputs but its trace is missing "
+                "seo_visibility_beta; SEO replay is unavailable."
+            )
+        seo_visibility_beta = np.asarray(_reduce(post["seo_visibility_beta"]).values)
 
     return FHPosteriorParams(
         decay_rate=decay_rate,
@@ -317,6 +337,8 @@ def extract_posterior_params(
         control_coef=control_coef,
         outcome_control_coef=outcome_control_coef,
         event_coefs=event_coefs,
+        candidate_a_replay_params=candidate_a_replay_params,
+        seo_visibility_beta=seo_visibility_beta,
     )
 
 
@@ -408,6 +430,239 @@ def _named_event_eta_contribution(
     return eta_events
 
 
+def _candidate_a_paid_search_cap_for_frame(
+    frame: Dict,
+    meta: FHModelMeta,
+    n_obs: int,
+    explicit_cap: Optional[float | np.ndarray | List[float]],
+) -> np.ndarray:
+    """Resolve the Candidate A cap for one replay frame.
+
+    A fitted frame may use its durable historical cap from ``FHModelMeta``.
+    Any other frame must provide an explicit future/scenario cap.  In
+    particular, a historical last value is never silently carried into a
+    future plan.
+    """
+
+    if explicit_cap is not None:
+        cap = np.asarray(explicit_cap, dtype=float)
+        if cap.ndim == 0:
+            cap = np.full(n_obs, float(cap))
+        elif cap.shape != (n_obs,):
+            raise CandidateAReplayNotSupportedError(
+                "Candidate A replay cap must be one value per replay period."
+            )
+    else:
+        historical_cap = np.asarray(
+            getattr(meta, "candidate_a_historical_paid_search_cap", ()),
+            dtype=float,
+        )
+        fit_periods = tuple(getattr(meta, "candidate_a_fit_period_labels", ()))
+        frame_periods = tuple(
+            str(pd.Timestamp(value).date()) for value in frame.get("dates", ())
+        )
+        if (
+            historical_cap.shape != (n_obs,)
+            or not fit_periods
+            or frame_periods != fit_periods
+        ):
+            raise CandidateAReplayNotSupportedError(
+                "Candidate A replay requires an explicit paid-search cap for "
+                "scenario/future periods; historical caps are only valid for "
+                "the exact fitted frame."
+            )
+        cap = historical_cap
+    if not np.all(np.isfinite(cap)) or np.any(cap < 0):
+        raise CandidateAReplayNotSupportedError(
+            "Candidate A replay cap must contain finite, non-negative values."
+        )
+    return cap
+
+
+def _candidate_a_eta_contribution(
+    *,
+    frame: Dict,
+    meta: FHModelMeta,
+    params: FHPosteriorParams,
+    sat_media: np.ndarray,
+    n_obs: int,
+    explicit_cap: Optional[float | np.ndarray | List[float]],
+) -> np.ndarray:
+    """Replay Candidate A's full demand/capture/cap chain on outcome scale.
+
+    The chain is evaluated once per extracted posterior draw.  The paid cap
+    is applied before the captured-demand term is converted to an additive
+    log-link contribution, preserving the fitted model's non-linearity and
+    posterior uncertainty semantics.
+    """
+
+    replay = params.candidate_a_replay_params
+    if replay is None:
+        raise CandidateAReplayNotSupportedError(
+            "Candidate A posterior replay parameters are unavailable; the "
+            "fit must be rebuilt from a trace containing the complete Search "
+            "demand/capture/outcome-link variables."
+        )
+    unknown = [
+        channel
+        for channel in replay.demand_channel_names
+        if channel not in meta.channels
+    ]
+    if unknown:
+        raise CandidateAReplayNotSupportedError(
+            "Candidate A replay demand channel(s) are not in the fitted "
+            f"channel set: {unknown}."
+        )
+    demand_idx = [meta.channels.index(channel) for channel in replay.demand_channel_names]
+    demand_beta = np.asarray(
+        [replay.demand_media_beta[channel] for channel in replay.demand_channel_names],
+        dtype=float,
+    )
+    market_offsets = np.asarray(
+        [replay.demand_market_offset.get(market, 0.0) for market in meta.markets],
+        dtype=float,
+    )
+    market_idx = np.asarray(frame["market_idx"], dtype=int)
+    if market_idx.shape != (n_obs,) or np.any(market_idx < 0) or np.any(
+        market_idx >= len(meta.markets)
+    ):
+        raise CandidateAReplayNotSupportedError(
+            "Candidate A replay frame has an invalid market index vector."
+        )
+    demand_eta = (
+        float(replay.demand_intercept)
+        + market_offsets[market_idx]
+        + sat_media[:, demand_idx] @ demand_beta
+    )
+    latent_demand = np.exp(np.clip(demand_eta, -50.0, 50.0)) * float(
+        replay.demand_to_capture_scale
+    )
+    cap = _candidate_a_paid_search_cap_for_frame(
+        frame, meta, n_obs, explicit_cap
+    )
+    forward = candidate_a_forward(
+        latent_demand,
+        replay.capture_share["paid"],
+        replay.capture_share["organic"],
+        replay.capture_share["direct"],
+        cap,
+    )
+    eta = np.zeros((n_obs, len(meta.outcome_ids)), dtype=float)
+    for outcome_index, outcome_id in enumerate(meta.outcome_ids):
+        paid_beta = replay.paid_capture_outcome_beta.get(outcome_id)
+        organic_beta = replay.organic_capture_outcome_beta.get(outcome_id)
+        direct_beta = replay.direct_navigation_capture_outcome_beta.get(outcome_id)
+        if paid_beta is None or organic_beta is None or direct_beta is None:
+            raise CandidateAReplayNotSupportedError(
+                f"Candidate A replay is missing an outcome-link coefficient "
+                f"for '{outcome_id}'."
+            )
+        eta[:, outcome_index] = (
+            float(paid_beta) * forward.realised_paid_search_delivery
+            + float(organic_beta) * forward.organic_capture
+            + float(direct_beta) * forward.direct_navigation_capture
+        ) / float(replay.capture_scale)
+    return eta
+
+
+def _seo_eta_contribution(
+    *,
+    frame: Dict,
+    meta: FHModelMeta,
+    params: FHPosteriorParams,
+    n_obs: int,
+    explicit_values: Optional[np.ndarray],
+    explicit_active_mask: Optional[np.ndarray],
+    allow_reference_for_future: bool = False,
+) -> np.ndarray:
+    """Replay the row-aligned, window-gated SEO visibility treatment.
+
+    Without explicit future SEO values, the exact fitted row grid is used for
+    historical replay. Planning/optimisation callers may explicitly opt into
+    the governed fitted-window reference state; they never extrapolate SEO
+    visibility or treat missing history as zero.
+    """
+
+    payload = getattr(meta, "seo_fit_inputs_at_fit", None) or {}
+    if not payload:
+        return np.zeros((n_obs, len(meta.outcome_ids)), dtype=float)
+    if params.seo_visibility_beta is None:
+        raise CandidateAReplayNotSupportedError(
+            "SEO visibility was consumed by this fit but no posterior SEO "
+            "coefficient is available for replay."
+        )
+    if (explicit_values is None) != (explicit_active_mask is None):
+        raise CandidateAReplayNotSupportedError(
+            "SEO replay requires both visibility values and their active mask."
+        )
+    if explicit_values is None:
+        row_markets = tuple(
+            meta.markets[int(index)] for index in np.asarray(frame["market_idx"])
+        )
+        row_weeks = tuple(
+            str(pd.Timestamp(value).date()) for value in frame.get("dates", ())
+        )
+        if (
+            tuple(payload.get("model_markets") or ()) != row_markets
+            or tuple(payload.get("model_weeks") or ()) != row_weeks
+        ):
+            if allow_reference_for_future:
+                return np.broadcast_to(
+                    _seo_reference_eta_contribution(meta, params),
+                    (n_obs, len(meta.outcome_ids)),
+                ).copy()
+            raise CandidateAReplayNotSupportedError(
+                "SEO replay requires the exact fitted SEO window or an explicit "
+                "row-aligned SEO predictor; future SEO intervention values are "
+                "not approved for planning."
+            )
+        values = np.asarray(payload.get("standardized_visibility") or (), dtype=float)
+        active = np.asarray(payload.get("active_mask") or (), dtype=float)
+    else:
+        values = np.asarray(explicit_values, dtype=float)
+        active = np.asarray(explicit_active_mask, dtype=float)
+    if values.shape != (n_obs,) or active.shape != (n_obs,):
+        raise CandidateAReplayNotSupportedError(
+            "SEO replay values and active mask must have one value per row."
+        )
+    if not np.all(np.isfinite(values)) or not np.all(np.isfinite(active)):
+        raise CandidateAReplayNotSupportedError(
+            "SEO replay values and active mask must be finite."
+        )
+    if np.any((active != 0) & (active != 1)):
+        raise CandidateAReplayNotSupportedError(
+            "SEO replay active mask must contain only zero or one."
+        )
+    beta = np.asarray(params.seo_visibility_beta, dtype=float)
+    if beta.shape != (len(meta.outcome_ids),):
+        raise CandidateAReplayNotSupportedError(
+            "SEO replay posterior coefficient shape does not match outcomes."
+        )
+    return values[:, None] * active[:, None] * beta[None, :]
+
+
+def _seo_reference_eta_contribution(meta: FHModelMeta, params) -> np.ndarray:
+    """Return the governed model-reference SEO state for steady-state paths.
+
+    SEO has no approved controllable intervention.  Steady-state curves and
+    planning therefore hold it at the fitted active-window reference, rather
+    than asking the analyst to invent a future ranking assumption.
+    """
+
+    payload = getattr(meta, "seo_fit_inputs_at_fit", None) or {}
+    beta = getattr(params, "seo_visibility_beta", None)
+    if not payload or beta is None:
+        return np.zeros(len(meta.outcome_ids), dtype=float)
+    values = np.asarray(payload.get("standardized_visibility") or (), dtype=float)
+    active = np.asarray(payload.get("active_mask") or (), dtype=float)
+    if values.shape != active.shape or not values.size or not np.any(active > 0):
+        raise CandidateAReplayNotSupportedError(
+            "SEO steady-state replay has no valid observed reference state."
+        )
+    reference = float(np.mean(values[active > 0]))
+    return reference * np.asarray(beta, dtype=float)
+
+
 class _HasPathwayStrength(Protocol):
     """Structural type both `FHPosteriorParams` (Model A) and
     `core.market_specific_predict.FHMarketSpecificPosteriorParams` (Model C)
@@ -496,6 +751,10 @@ def predict_mu(
     *,
     precomputed_sat_media: Optional[np.ndarray] = None,
     named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
+    candidate_a_paid_search_cap: Optional[float | np.ndarray | List[float]] = None,
+    seo_visibility_values: Optional[np.ndarray] = None,
+    seo_visibility_active_mask: Optional[np.ndarray] = None,
+    seo_use_reference_for_future: bool = False,
 ) -> np.ndarray:
     """
     Replay the model's full linear predictor in NumPy for an arbitrary frame
@@ -504,8 +763,10 @@ def predict_mu(
 
     Returns mu, shape (n_obs, n_outcomes), matching frame["outcome_ids"] order.
 
-    Raises `CandidateAReplayNotSupportedError` for a Candidate A fit - see
-    that exception's docstring.
+    Candidate A fits require an explicit cap for scenario/future frames. The
+    exact fitted frame may use its durable historical cap from ``meta``;
+    this distinction prevents historical cap values from becoming silent
+    future assumptions.
 
     Raises `NamedEventReplayNotSupportedError` for a fit that consumed a
     named-event response term UNLESS `named_event_fit_inputs` is supplied
@@ -528,12 +789,13 @@ def predict_mu(
     this case (it still may be needed by the caller to build
     `precomputed_sat_media` itself).
     """
-    if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
+    if (
+        meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE
+        and params.candidate_a_replay_params is None
+    ):
         raise CandidateAReplayNotSupportedError(
-            "predict_mu does not yet represent Candidate A's search-mediated "
-            "pathway (search_eta_contribution) - curves, scenario planning, "
-            "backtest, and optimisation are not yet available for a "
-            "Candidate A fit. See REPO_REVIEW_AND_NEXT_STEPS.md."
+            "Candidate A posterior replay parameters are unavailable; the "
+            "fit must be rebuilt from a complete Candidate A trace."
         )
     if meta.named_event_response_definitions_at_fit and named_event_fit_inputs is None:
         raise NamedEventReplayNotSupportedError(
@@ -628,6 +890,26 @@ def predict_mu(
         + eta_promo
     )
 
+    if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
+        eta = eta + _candidate_a_eta_contribution(
+            frame=frame,
+            meta=meta,
+            params=params,
+            sat_media=sat_media,
+            n_obs=n_obs,
+            explicit_cap=candidate_a_paid_search_cap,
+        )
+
+    eta = eta + _seo_eta_contribution(
+        frame=frame,
+        meta=meta,
+        params=params,
+        n_obs=n_obs,
+        explicit_values=seo_visibility_values,
+        explicit_active_mask=seo_visibility_active_mask,
+        allow_reference_for_future=seo_use_reference_for_future,
+    )
+
     outcome_controls = frame.get("outcome_controls") or {}
     outcome_control_names = frame.get("outcome_control_names") or {}
     for oid, arr in outcome_controls.items():
@@ -670,6 +952,7 @@ def steady_state_outcome_response(
     reference_context: Optional[Dict] = None,
     *,
     planning_only: bool = False,
+    candidate_a_paid_search_cap: Optional[float] = None,
 ) -> Dict[str, float]:
     """
     Expected weekly outcome per outcome_id for spend held constant at
@@ -717,6 +1000,30 @@ def steady_state_outcome_response(
                 * sat[c]
                 * _pathway_weight(meta, params, s, c, planning_only=planning_only)
             )
+
+        if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
+            if candidate_a_paid_search_cap is None:
+                raise CandidateAReplayNotSupportedError(
+                    "Candidate A steady-state replay requires an explicit "
+                    "paid-search cap; no future cap assumption is inferred."
+                )
+            candidate_eta = _candidate_a_eta_contribution(
+                frame={
+                    "market_idx": np.array([meta.markets.index(market)]),
+                    "dates": [],
+                },
+                meta=meta,
+                params=params,
+                sat_media=np.asarray(
+                    [[sat.get(channel, 0.0) for channel in meta.channels]],
+                    dtype=float,
+                ),
+                n_obs=1,
+                explicit_cap=float(candidate_a_paid_search_cap),
+            )
+            val += float(candidate_eta[0, outcome_ids.index(s)])
+
+        val += float(_seo_reference_eta_contribution(meta, params)[outcome_ids.index(s)])
 
         scaled_controls = apply_control_mapping_scaling(
             reference_context.get("controls", {}),

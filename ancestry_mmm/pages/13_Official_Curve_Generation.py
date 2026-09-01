@@ -40,6 +40,7 @@ from ancestry_mmm.components import (
     BlockingPanel,
 )
 from ancestry_mmm.application.official_curve_readiness import (
+    GenerationBlocker,
     resolve_generation_blockers,
 )
 from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
@@ -84,6 +85,7 @@ from ancestry_mmm.core.outcomes import (
 )
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
 from ancestry_mmm.core.schema import ModelSpec
+from ancestry_mmm.core.search_capacity import SEARCH_CANDIDATE_A_ENGINE
 from ancestry_mmm.core.validation_policy import (
     load_approval_readiness,
     load_threshold_policy,
@@ -726,6 +728,42 @@ if not selected_markets:
 # deselected market's inputs too or silently generate for markets nobody
 # asked for.
 meta_selected = replace(meta, markets=selected_markets)
+
+# Candidate A's final-outcome replay is now available to official curves, but
+# its capacity input remains an explicit planning constraint.  Never reuse a
+# historical cap or default a missing cap to zero: an omitted cap must block
+# generation and explain the exact missing input.
+candidate_a_curve_caps: dict[str, float] = {}
+candidate_a_missing_curve_caps: list[str] = []
+if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
+    with st.expander("Candidate A Search capacity for this curve", expanded=True):
+        st.caption(
+            "Enter one explicit future Paid Search delivery cap per selected "
+            "market. This is a capacity constraint in capture units, never "
+            "realised spend, demand, or an inferred historical value."
+        )
+        stored_curve_caps = dict(get_state("candidate_a_curve_cap_by_market") or {})
+        for curve_market in selected_markets:
+            supplied = st.checkbox(
+                f"Supply a future Paid Search cap for {curve_market}",
+                value=curve_market in stored_curve_caps,
+                key=f"ocg_candidate_a_cap_supplied_{curve_market}",
+            )
+            if supplied:
+                cap_value = st.number_input(
+                    f"Future Paid Search delivery cap - {curve_market} "
+                    "(capture units per week)",
+                    min_value=0.0,
+                    value=float(stored_curve_caps.get(curve_market, 0.0)),
+                    step=1.0,
+                    key=f"ocg_candidate_a_curve_cap_{curve_market}",
+                )
+                candidate_a_curve_caps[curve_market] = float(cap_value)
+                stored_curve_caps[curve_market] = float(cap_value)
+            else:
+                stored_curve_caps.pop(curve_market, None)
+                candidate_a_missing_curve_caps.append(curve_market)
+        set_state("candidate_a_curve_cap_by_market", stored_curve_caps)
 
 fourier_length = len(next(iter(params.gamma_fourier.values())))
 
@@ -1476,6 +1514,15 @@ _generation_blockers = resolve_generation_blockers(
     missing_fx_pairs=missing_fx_pairs,
     artifact_id=artifact_id,
 )
+if candidate_a_missing_curve_caps:
+    _generation_blockers.append(
+        GenerationBlocker(
+            "candidate_a_missing_paid_search_cap",
+            "Candidate A official curves require an explicit future Paid "
+            "Search delivery cap for: "
+            f"{', '.join(sorted(candidate_a_missing_curve_caps))}.",
+        )
+    )
 if _generation_blockers:
     with BlockingPanel(
         "Not ready to generate",
@@ -1552,6 +1599,11 @@ if st.button(
             support_by_market_channel=support_by_market_channel or None,
             spend_points=spend_points,
             n_draws=n_draws,
+            candidate_a_paid_search_cap_by_market=(
+                candidate_a_curve_caps
+                if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE
+                else None
+            ),
             **monetary_kwargs,
         )
     except (CurveGovernanceError, CurveArtifactError, ValueError, TypeError) as exc:

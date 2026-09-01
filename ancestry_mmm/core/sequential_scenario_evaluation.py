@@ -504,6 +504,13 @@ def evaluate_manual_scenario_sequential(
     terminal: Optional[TerminalIncrementalResult] = None
     if terminal_future_context is not None:
         channels = list(candidate_plan.media_by_channel)
+        terminal_cap = None
+        if candidate_plan.candidate_a_paid_search_cap is not None:
+            terminal_cap = np.full(
+                len(terminal_future_context.period_labels),
+                float(candidate_plan.candidate_a_paid_search_cap[-1]),
+                dtype=float,
+            )
         if is_market_specific:
             assert isinstance(params, FHMarketSpecificPosteriorParams)
             terminal = evaluate_terminal_incremental_response_market_specific(
@@ -515,6 +522,7 @@ def evaluate_manual_scenario_sequential(
                 meta=meta,
                 params=params,
                 named_event_fit_inputs=terminal_named_event_fit_inputs,
+                candidate_a_paid_search_cap=terminal_cap,
             )
         else:
             assert isinstance(params, FHPosteriorParams)
@@ -527,6 +535,7 @@ def evaluate_manual_scenario_sequential(
                 meta=meta,
                 params=params,
                 named_event_fit_inputs=terminal_named_event_fit_inputs,
+                candidate_a_paid_search_cap=terminal_cap,
             )
 
     posterior_weekly_incremental: Optional[np.ndarray] = None

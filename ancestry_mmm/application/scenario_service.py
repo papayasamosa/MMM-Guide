@@ -207,7 +207,11 @@ class OptimisationInput:
     capacity_limits: Optional[List[Any]] = None
     capacity_realised_by_limit_and_period: Optional[Dict[str, Dict[str, float]]] = None
     capacity_unit_to_spend_rate_by_limit_id: Optional[Dict[str, float]] = None
-    evaluation_method: str = "steady_state_monthly"
+    # Sequential weekly is the production default.  The page and callers
+    # may explicitly select steady-state monthly only as a labelled
+    # diagnostic/legacy path; omitting the method must not silently produce
+    # materially different recommendations.
+    evaluation_method: str = "sequential_weekly"
     sequential_context: Optional[Any] = None
 
 

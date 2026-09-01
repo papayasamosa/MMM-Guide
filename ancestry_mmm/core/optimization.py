@@ -3583,7 +3583,10 @@ def optimize_scenario(
     (Model C). ``evaluation_method="sequential_weekly"`` requires a
     ``SequentialOptimisationContext`` built by the caller and runs both the
     SLSQP objective and final predictions through the exact weekly replay
-    kernel. The default remains the existing steady-state monthly path.
+    kernel. The application-facing `ScenarioService` supplies that method by
+    default; this lower-level function retains its explicit steady-state
+    default for backwards-compatible direct callers, who must opt into the
+    production method by passing the context.
 
     Raises ApprovalMismatchError unless `approval` matches the current model
     run identity - checked up front, before running the (potentially slow)

@@ -12,8 +12,9 @@ bridge` (the generalised Shapley bridge itself). Fails closed - returns
 `errors`, never a fabricated result - whenever either period resolves
 to no weeks, an unknown market/outcome_id is requested, or the fitted
 model's trace is missing a required Deterministic (`core.contribution_
-waterfall.MissingGeneralisedEtaComponentError`) or is a Candidate A fit
-(`core.attribution.CandidateAAttributionNotSupportedError`).
+waterfall.MissingGeneralisedEtaComponentError`) or a Candidate A fit lacks
+the fit-time replay evidence required by
+`core.attribution.CandidateAAttributionNotSupportedError`.
 """
 
 from __future__ import annotations

@@ -52,19 +52,15 @@ delegated straight to `core.predict.predict_mu`/
 diverge from what those already-tested functions compute for every non-
 adstock term.
 
-Candidate A Search (WP3 boundary, unchanged): `simulate_sequential_outcomes`
-raises `CandidateAReplayNotSupportedError` for a Candidate A engine fit,
-exactly like `predict_mu` - the outcome-level replay still has no
-representation for `search_eta_contribution`, and wiring one in is a
-genuine unresolved modelling design question (REPO_REVIEW_AND_NEXT_STEPS.md,
-Work Package 3 entry), not a mechanical extension in scope here. What WP5
-*does* add is a bounded, explicitly diagnostic-only capability the brief
-calls for: `simulate_candidate_a_mediator_state_sequentially` replays the
-demand/capture/cap chain (not the final outcome) week by week for a
-hypothetical plan, reusing `core.search_capacity.candidate_a_forward`
-directly. This grants no planning or optimisation eligibility - Search
-planning eligibility remains governed separately
-(`core.search_capacity.candidate_a_use_gate`).
+Candidate A Search: `simulate_sequential_outcomes` replays the full
+demand/capture/cap contribution when `WeeklyPlan.candidate_a_paid_search_cap`
+contains an explicit value for every future week. The separate
+`simulate_candidate_a_mediator_state_sequentially` capability remains
+available for mediator-only diagnostics. This supplies the computation used
+by the production sequential planning and optimisation paths, but does not
+itself grant governance eligibility. Search eligibility remains governed
+separately (`core.search_capacity.candidate_a_use_gate`), and missing caps or
+replay evidence still fail closed.
 """
 
 from __future__ import annotations
@@ -703,25 +699,27 @@ def simulate_sequential_outcomes(
     params: FHPosteriorParams,
     *,
     named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
+    candidate_a_paid_search_cap: Optional[np.ndarray] = None,
 ) -> SequentialSimulationResult:
     """Model A (shared) weekly recursion over `plan`'s horizon, seeded by
-    `carry_in`. Raises `CandidateAReplayNotSupportedError` for a Candidate A
-    engine fit - see module docstring; use
-    `simulate_candidate_a_mediator_state_sequentially` for the bounded
-    diagnostic mediator-state replay instead.
+    `carry_in`. Candidate A requires an explicit paid-search cap for every
+    planned week; the full demand/capture/cap contribution is then replayed
+    through the final-outcome likelihood.
 
     Raises `NamedEventReplayNotSupportedError` for a fit that consumed a
     named-event response term UNLESS `named_event_fit_inputs` is supplied
     (build via `build_named_event_fit_inputs_for_sequential_replay` above) -
     same boundary/API as `core.predict.predict_mu`, which this function
     delegates the actual replay to."""
-    if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
+    candidate_a_cap = (
+        plan.candidate_a_paid_search_cap
+        if plan.candidate_a_paid_search_cap is not None
+        else candidate_a_paid_search_cap
+    )
+    if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE and candidate_a_cap is None:
         raise CandidateAReplayNotSupportedError(
-            "simulate_sequential_outcomes does not represent Candidate A's "
-            "search-mediated pathway (search_eta_contribution) in the final "
-            "outcome - same boundary as core.predict.predict_mu (WP3). See "
-            "simulate_candidate_a_mediator_state_sequentially for the "
-            "bounded diagnostic mediator-state replay."
+            "Candidate A sequential replay requires an explicit "
+            "plan.candidate_a_paid_search_cap for every future week."
         )
     if meta.named_event_response_definitions_at_fit and named_event_fit_inputs is None:
         raise NamedEventReplayNotSupportedError(
@@ -754,12 +752,32 @@ def simulate_sequential_outcomes(
         sat_media_future,
         market_idx_value=meta.markets.index(plan.market),
     )
+    candidate_a_cap_replay = candidate_a_cap
+    if (
+        meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE
+        and candidate_a_cap_replay is not None
+        and tail_len
+    ):
+        historical_cap = np.asarray(
+            getattr(meta, "candidate_a_historical_paid_search_cap", ()),
+            dtype=float,
+        )
+        if historical_cap.shape != (len(getattr(meta, "candidate_a_fit_period_labels", ())),):
+            raise CandidateAReplayNotSupportedError(
+                "Candidate A sequential replay needs the historical paid-search "
+                "cap tail recorded with the fitted model."
+            )
+        candidate_a_cap_replay = np.concatenate(
+            [historical_cap[-tail_len:], np.asarray(candidate_a_cap_replay, dtype=float)]
+        )
     mu_replay = predict_mu(
         replay_frame,
         meta,
         params,
         precomputed_sat_media=sat_media_replay,
         named_event_fit_inputs=named_event_fit_inputs,
+        candidate_a_paid_search_cap=candidate_a_cap_replay,
+        seo_use_reference_for_future=True,
     )
     mu_future = mu_replay[tail_len:]
 
@@ -838,6 +856,7 @@ def simulate_sequential_outcomes_market_specific(
         params,
         precomputed_sat_media=sat_media_replay,
         named_event_fit_inputs=named_event_fit_inputs,
+        seo_use_reference_for_future=True,
     )
     mu_future = mu_replay[tail_len:]
 
@@ -873,6 +892,7 @@ def simulate_terminal_carryover(
     params: FHPosteriorParams,
     *,
     named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
+    candidate_a_paid_search_cap: Optional[np.ndarray] = None,
 ) -> SequentialSimulationResult:
     """Continue the recursion beyond the plan horizon - typically with
     `zero_media_extension_plan`'s all-zero media, or an explicitly supplied
@@ -896,6 +916,7 @@ def simulate_terminal_carryover(
         meta,
         params,
         named_event_fit_inputs=named_event_fit_inputs,
+        candidate_a_paid_search_cap=candidate_a_paid_search_cap,
     )
 
 

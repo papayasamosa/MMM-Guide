@@ -1179,9 +1179,145 @@ class CandidateASequentialDrawParams:
     demand_market_offset: Dict[str, float]
     demand_media_beta: Dict[str, float]
     capture_share: Dict[str, float]  # {"paid", "organic", "direct", "unmet"}
+    # When the approved Google Trends anchor is present, the fitted demand
+    # index is translated into capture units by this posterior draw.  Keep
+    # the scale in the replay contract so the diagnostic sequential path
+    # cannot silently replay an anchored fit as if it were unanchored.
+    demand_to_capture_scale: float = 1.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class CandidateAReplayParams:
+    """Posterior parameters required to replay Candidate A's final outcome.
+
+    This is deliberately separate from :class:`CandidateASequentialDrawParams`
+    because final-outcome replay also needs the three fitted capture-to-
+    outcome coefficients.  Every field is a single posterior draw (or the
+    posterior mean), so the cap's ``min`` non-linearity is evaluated before
+    posterior aggregation by callers.
+    """
+
+    demand_channel_names: List[str]
+    demand_intercept: float
+    demand_market_offset: Dict[str, float]
+    demand_media_beta: Dict[str, float]
+    demand_to_capture_scale: float
+    capture_scale: float
+    capture_share: Dict[str, float]
+    paid_capture_outcome_beta: Dict[str, float]
+    organic_capture_outcome_beta: Dict[str, float]
+    direct_navigation_capture_outcome_beta: Dict[str, float]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def extract_candidate_a_replay_params(
+    trace: Any,
+    meta: Any,
+    at: Optional[tuple[int, int]] = None,
+) -> CandidateAReplayParams:
+    """Extract one Candidate A posterior draw for final-outcome replay.
+
+    The function is intentionally strict about the fitted variables.  A
+    caller cannot obtain a plausible-looking replay from a trace that lacks
+    one of the demand, capture-share, or outcome-link coefficients.
+    """
+
+    post = trace.posterior
+    required = (
+        "search_demand_intercept",
+        "search_demand_market_offset",
+        "search_demand_media_beta",
+        "search_capture_shares",
+        "search_paid_capture_outcome_beta",
+        "search_organic_capture_outcome_beta",
+        "search_direct_navigation_capture_outcome_beta",
+    )
+    missing = [name for name in required if name not in post]
+    if missing:
+        raise SearchCapacityValidationError(
+            "Trace is missing Candidate A replay variables: " + ", ".join(missing)
+        )
+
+    def _reduce(da: Any) -> Any:
+        if at is not None:
+            return da.isel(chain=at[0], draw=at[1])
+        return da.mean(dim=[d for d in da.dims if d in ("chain", "draw")])
+
+    demand_channel_names = [
+        str(v) for v in post.coords["search_demand_channel"].values
+    ]
+    outcome_ids = list(getattr(meta, "outcome_ids", ()))
+    if not outcome_ids:
+        outcome_ids = [str(v) for v in post.coords["outcome"].values]
+    market_names = [str(v) for v in post.coords["market"].values]
+
+    demand_media_beta_reduced = _reduce(post["search_demand_media_beta"])
+    demand_media_beta = {
+        name: float(
+            demand_media_beta_reduced.sel(search_demand_channel=name).values
+        )
+        for name in demand_channel_names
+    }
+    demand_market_offset_reduced = _reduce(post["search_demand_market_offset"])
+    demand_market_offset = {
+        market: float(demand_market_offset_reduced.sel(market=market).values)
+        for market in market_names
+    }
+    capture_shares_reduced = _reduce(post["search_capture_shares"])
+    capture_share = {
+        component: float(
+            capture_shares_reduced.sel(
+                search_capture_share_component=component
+            ).values
+        )
+        for component in CANDIDATE_A_CAPTURE_SHARE_COMPONENTS
+    }
+
+    def _outcome_values(var_name: str) -> Dict[str, float]:
+        reduced = _reduce(post[var_name])
+        return {
+            outcome_id: float(reduced.sel(outcome=outcome_id).values)
+            for outcome_id in outcome_ids
+        }
+
+    demand_to_capture_scale = 1.0
+    if "search_demand_to_capture_scale" in post:
+        demand_to_capture_scale = float(
+            _reduce(post["search_demand_to_capture_scale"]).values
+        )
+    capture_scale = float(getattr(meta, "candidate_a_capture_scale", 1.0))
+    if not np.isfinite(capture_scale) or capture_scale <= 0:
+        raise SearchCapacityValidationError(
+            "Candidate A fit metadata has an invalid capture scale."
+        )
+    if not np.isfinite(demand_to_capture_scale) or demand_to_capture_scale <= 0:
+        raise SearchCapacityValidationError(
+            "Candidate A demand_to_capture_scale must be finite and positive."
+        )
+
+    return CandidateAReplayParams(
+        demand_channel_names=demand_channel_names,
+        demand_intercept=float(_reduce(post["search_demand_intercept"]).values),
+        demand_market_offset=demand_market_offset,
+        demand_media_beta=demand_media_beta,
+        demand_to_capture_scale=demand_to_capture_scale,
+        capture_scale=capture_scale,
+        capture_share=capture_share,
+        paid_capture_outcome_beta=_outcome_values(
+            "search_paid_capture_outcome_beta"
+        ),
+        organic_capture_outcome_beta=_outcome_values(
+            "search_organic_capture_outcome_beta"
+        ),
+        direct_navigation_capture_outcome_beta=_outcome_values(
+            "search_direct_navigation_capture_outcome_beta"
+        ),
+    )
 
 
 def extract_candidate_a_sequential_params(
@@ -1237,6 +1373,11 @@ def extract_candidate_a_sequential_params(
         )
         for component in CANDIDATE_A_CAPTURE_SHARE_COMPONENTS
     }
+    demand_to_capture_scale = 1.0
+    if "search_demand_to_capture_scale" in post:
+        demand_to_capture_scale = float(
+            _reduce(post["search_demand_to_capture_scale"]).values
+        )
 
     return CandidateASequentialDrawParams(
         demand_channel_names=demand_channel_names,
@@ -1244,6 +1385,7 @@ def extract_candidate_a_sequential_params(
         demand_market_offset=demand_market_offset,
         demand_media_beta=demand_media_beta,
         capture_share=capture_share,
+        demand_to_capture_scale=demand_to_capture_scale,
     )
 
 
@@ -1572,6 +1714,7 @@ def build_candidate_a_search_model(
 __all__ = [
     "CandidateAForwardState",
     "CandidateAPosteriorOutputs",
+    "CandidateAReplayParams",
     "CandidateASearchFitInputs",
     "CandidateASequentialDrawParams",
     "SEARCH_CANDIDATE_A_ENGINE",
@@ -1587,6 +1730,7 @@ __all__ = [
     "candidate_a_use_gate",
     "counterfactual_search_effects",
     "extract_candidate_a_sequential_params",
+    "extract_candidate_a_replay_params",
     "identify_candidate_a_search",
     "posterior_outputs_from_forward_draws",
     "validate_candidate_a_spec",

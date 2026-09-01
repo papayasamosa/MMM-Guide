@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+from typing import Mapping, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -140,6 +141,9 @@ from ancestry_mmm.core.planning.future_context import (
     OFFICIAL_MODE,
     build_future_context,
 )
+from ancestry_mmm.core.planning.future_assumption_bundle import (
+    FutureAssumptionBundle,
+)
 from ancestry_mmm.core.planning.phasing import (
     HorizonConfiguration,
     canonical_weeks,
@@ -158,6 +162,7 @@ from ancestry_mmm.core.sequential_simulation import (
     reconstruct_starting_state,
     reconstruct_starting_state_market_specific,
 )
+from ancestry_mmm.core.search_capacity import SEARCH_CANDIDATE_A_ENGINE
 from ancestry_mmm.core.named_events import (
     EventResponseDefinition,
     NamedEventFamily,
@@ -166,6 +171,60 @@ from ancestry_mmm.core.named_events import (
 from ancestry_mmm.core.planning.terminal_response import (
     build_zero_decision_terminal_extension_plan,
 )
+
+
+def _persist_future_assumption_bundle(
+    *, market: str, context_by_key: Mapping[str, object]
+) -> FutureAssumptionBundle:
+    """Persist the exact system-generated future context used by a plan.
+
+    Trend, seasonality, promotions and controls are materialised once by the
+    existing future-context builder.  This wrapper gives that result durable
+    lineage without asking analysts to re-enter model-generated assumptions.
+    """
+    contexts = {
+        key: value
+        for key, value in context_by_key.items()
+        if hasattr(value, "fingerprint")
+    }
+    if not contexts:
+        raise ValueError("A future-assumption bundle requires at least one context.")
+    bundle_id = f"scenario-future-context::{market}"
+    existing = [
+        FutureAssumptionBundle.from_dict(item)
+        for item in (get_state("future_assumption_bundles") or [])
+        if isinstance(item, dict) and item.get("bundle_id") == bundle_id
+    ]
+    candidate = FutureAssumptionBundle(
+        bundle_id=bundle_id,
+        bundle_version=(max((item.bundle_version for item in existing), default=0) + 1),
+        context_by_key=contexts,
+        owner="Scenario Planner",
+        notes="System-generated trend/seasonality plus governed future controls and promotions.",
+    )
+    current = max(existing, key=lambda item: item.bundle_version, default=None)
+    if current is not None and current.fingerprint() == candidate.fingerprint():
+        return current
+    retained = [
+        item
+        for item in (get_state("future_assumption_bundles") or [])
+        if not (isinstance(item, dict) and item.get("bundle_id") == bundle_id)
+    ]
+    retained.append(candidate.to_dict())
+    set_state("future_assumption_bundles", retained)
+    return candidate
+
+
+def _candidate_a_cap_for_future_weeks(market: str, weeks) -> Optional[np.ndarray]:
+    """Resolve an explicit Search capacity cap for one planned market."""
+    caps = get_state("candidate_a_future_paid_search_cap_by_market") or {}
+    value = caps.get(market)
+    if value is None:
+        return None
+    value = float(value)
+    if not np.isfinite(value) or value < 0:
+        raise ValueError("Candidate A paid-search cap must be finite and non-negative.")
+    return np.full(len(weeks), value, dtype=float)
 
 
 def _catalogue_value(item, key, default=None):
@@ -455,6 +514,10 @@ def _build_sequential_optimisation_context(
         last_observed_controls=last_observed_controls,
         last_observed_outcome_controls=last_observed_outcome_controls,
     )
+    _persist_future_assumption_bundle(
+        market=market, context_by_key={"plan": future_context}
+    )
+    candidate_a_cap = _candidate_a_cap_for_future_weeks(market, weeks)
     build_kwargs = dict(
         market=market,
         meta=meta,
@@ -464,6 +527,7 @@ def _build_sequential_optimisation_context(
         expected_n_fourier_columns=2 * spec.fourier_harmonics,
         activity_definitions=activity_definitions or None,
         cost_registry=governed_cost_registry,
+        candidate_a_paid_search_cap=candidate_a_cap,
     )
 
     def build_plan(monthly_plan):
@@ -613,6 +677,7 @@ def _evaluate_sequential_manual_plan(
         last_observed_controls=last_observed_controls,
         last_observed_outcome_controls=last_observed_outcome_controls,
     )
+    candidate_a_cap = _candidate_a_cap_for_future_weeks(market, weeks)
 
     candidate_plan, candidate_provenance = build_governed_weekly_plan_from_monthly_plan(
         market=market,
@@ -624,6 +689,7 @@ def _evaluate_sequential_manual_plan(
         expected_n_fourier_columns=2 * n_fourier_harmonics,
         activity_definitions=activity_definitions or None,
         cost_registry=governed_cost_registry,
+        candidate_a_paid_search_cap=candidate_a_cap,
     )
     reference_plan, reference_provenance = build_governed_weekly_plan_from_monthly_plan(
         market=market,
@@ -635,6 +701,7 @@ def _evaluate_sequential_manual_plan(
         expected_n_fourier_columns=2 * n_fourier_harmonics,
         activity_definitions=activity_definitions or None,
         cost_registry=governed_cost_registry,
+        candidate_a_paid_search_cap=candidate_a_cap,
     )
 
     # Decision 12 replay boundary: a fit that consumed named events must
@@ -689,10 +756,25 @@ def _evaluate_sequential_manual_plan(
         last_observed_controls=last_observed_controls,
         last_observed_outcome_controls=last_observed_outcome_controls,
     )
+    future_assumption_bundle = _persist_future_assumption_bundle(
+        market=market,
+        context_by_key={"plan": future_context, "terminal": terminal_future_context},
+    )
     terminal_named_event_fit_inputs = None
     if named_event_fit_inputs is not None:
         terminal_extension_plan = build_zero_decision_terminal_extension_plan(
-            market, list(meta.channels), terminal_future_context
+            market,
+            list(meta.channels),
+            terminal_future_context,
+            candidate_a_paid_search_cap=(
+                np.full(
+                    len(terminal_weeks),
+                    float(candidate_a_cap[-1]),
+                    dtype=float,
+                )
+                if candidate_a_cap is not None
+                else None
+            ),
         )
         terminal_named_event_fit_inputs = _named_event_replay_inputs_for_plan(
             terminal_extension_plan, replay_carry_in, meta
@@ -707,7 +789,7 @@ def _evaluate_sequential_manual_plan(
         or "unset",
         evaluation_semantics_identity="sequential_weekly",
         phasing_policy_identity="calendar_day_overlap_v1",
-        future_assumption_identity=future_context.fingerprint(),
+        future_assumption_identity=future_assumption_bundle.fingerprint(),
         cost_context_identity="default",
         counterfactual_policy_identity=counterfactual_policy.fingerprint() or "unset",
     )
@@ -768,8 +850,8 @@ render_workspace_note(
     kind="derived",
 )
 st.info(
-    "**Two evaluation methods are available below: steady-state monthly "
-    "approximation, and sequential weekly.** The spend plan grid and optimiser "
+    "**Two evaluation methods are available below: sequential weekly (the "
+    "production default), and steady-state monthly (diagnostic/legacy).** The spend plan grid and optimiser "
     "tabs are shared; how a plan is calculated depends on the evaluation method "
     "you choose under Planning assumptions. Method-specific detail is shown "
     "once you choose one."
@@ -1088,6 +1170,35 @@ with SectionCard(
                     "not enough local data to estimate a market-specific curve confidently. Plan "
                     "against these with extra caution until more local evidence is available."
                 )
+
+if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
+    with st.expander("Candidate A Search capacity assumption", expanded=True):
+        st.caption(
+            "Candidate A requires an explicit future Paid Search delivery cap. "
+            "This is a capacity constraint, never realised spend or demand. "
+            "The same weekly cap is used by manual evaluation and optimisation; "
+            "without it, Search-mediated replay fails closed."
+        )
+        cap_by_market = dict(
+            get_state("candidate_a_future_paid_search_cap_by_market") or {}
+        )
+        cap_supplied = st.checkbox(
+            "Use an explicit future Paid Search cap for this market",
+            value=market in cap_by_market,
+            key="candidate_a_cap_supplied",
+        )
+        if cap_supplied:
+            cap_value = st.number_input(
+                "Future Paid Search delivery cap (capture units per week)",
+                min_value=0.0,
+                value=float(cap_by_market.get(market, 0.0)),
+                step=1.0,
+                key="candidate_a_future_cap_value",
+            )
+            cap_by_market[market] = float(cap_value)
+        else:
+            cap_by_market.pop(market, None)
+        set_state("candidate_a_future_paid_search_cap_by_market", cap_by_market)
 
 month_dates = pd.date_range(pd.Timestamp(start_month), periods=n_months, freq="MS")
 months = [d.strftime("%Y-%m") for d in month_dates]
@@ -1610,8 +1721,8 @@ cost_as_of_by_month = {
 }
 
 # WP5 (`Media-Mix-Lab: Coding LLM Next Steps Post PR262`): the manual-plan
-# evaluation method - steady-state (existing, default, every other tab
-# still uses it exclusively) or sequential weekly (new). Never silently
+# evaluation method - sequential weekly is the official production default;
+# steady-state remains an explicit diagnostic/legacy option. Never silently
 # switches: the radio's own return value is the single source of truth for
 # this rerun, exactly like governance_mode above. Sequential weekly only
 # evaluates the "Edited plan and calculated result" tab in this release -
@@ -1621,12 +1732,12 @@ cost_as_of_by_month = {
 st.markdown("#### Evaluation method")
 evaluation_method = st.radio(
     "Manual plan evaluation method",
-    ["steady_state_monthly", "sequential_weekly"],
+    ["sequential_weekly", "steady_state_monthly"],
     horizontal=True,
     key="scenario_evaluation_method",
     format_func=lambda value: {
-        "steady_state_monthly": "Steady-state monthly approximation",
         "sequential_weekly": "Sequential weekly",
+        "steady_state_monthly": "Steady-state monthly (diagnostic/legacy)",
     }[value],
     help=(
         "Sequential weekly simulates real week-by-week media carry-in from "
@@ -1643,7 +1754,7 @@ evaluation_method = st.radio(
 )
 if evaluation_method == "steady_state_monthly":
     st.info(
-        "**Steady-state monthly approximation** is selected.\n"
+        "**Steady-state monthly diagnostic/legacy mode** is selected.\n"
         "- Each month is approximated independently.\n"
         "- It uses the fitted model's steady-state response.\n"
         "- It does not reproduce starting carryover or sequential month-to-month "
@@ -1655,9 +1766,20 @@ else:
         "- It continues from this market's own historical fitted state.\n"
         "- It models real week-by-week media carryover.\n"
         "- It supports short/long response horizons and terminal carryover.\n"
-        "- Constrained and unconstrained optimisation below remain "
-        "steady-state-monthly only in this release - not available for "
-        "sequential weekly."
+        "- The constrained and unconstrained optimisers use the same "
+        "sequential weekly kernel when sequential mode is selected."
+    )
+
+_candidate_a_steady_state_blocked = (
+    meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE
+    and evaluation_method == "steady_state_monthly"
+)
+if _candidate_a_steady_state_blocked:
+    st.warning(
+        "Candidate A Search final-outcome replay is available through the "
+        "sequential weekly production path only. Steady-state monthly is "
+        "diagnostic/legacy for this fit and is blocked here so it cannot "
+        "produce a recommendation that omits the Search-mediated contribution."
     )
 
 # G2A.7a.7: build objective options from fitted outcome catalogue
@@ -2262,6 +2384,13 @@ tab_manual, tab_constrained, tab_unconstrained = st.tabs(
 
 
 def _render_steady_state_manual_tab():
+    if _candidate_a_steady_state_blocked:
+        st.error(
+            "Cannot evaluate a Candidate A plan in steady-state monthly mode. "
+            "Select Sequential weekly so the explicit future Search cap and "
+            "full final-outcome replay are used."
+        )
+        return
     st.caption("Evaluation method: **Steady-state monthly approximation**.")
     st.markdown("Predicted outcomes for the spend plan as edited above.")
     # PR 82C: routed through ScenarioService.evaluate_manual() with a typed
@@ -3190,6 +3319,13 @@ with tab_constrained:
                 f"is not available: {_objective_vocab_error}"
             )
             result = None
+        elif _candidate_a_steady_state_blocked:
+            st.error(
+                "Candidate A optimisation requires the sequential weekly "
+                "production path; steady-state monthly is blocked because it "
+                "cannot replay the Search-mediated final outcome."
+            )
+            result = None
         elif objective == "expected_value" and value_mapping is None:
             st.error(
                 "Cannot run optimisation: 'Maximise expected value' needs an outcome value mapping - a value weight for every target outcome and a single governed currency across them (set on the Structure page)."
@@ -3487,6 +3623,13 @@ with tab_unconstrained:
             st.error(
                 f"Cannot run optimisation: '{_objective_labels[objective_display_kind]}' "
                 f"is not available: {_objective_vocab_error}"
+            )
+            result = None
+        elif _candidate_a_steady_state_blocked:
+            st.error(
+                "Candidate A optimisation requires the sequential weekly "
+                "production path; steady-state monthly is blocked because it "
+                "cannot replay the Search-mediated final outcome."
             )
             result = None
         elif objective == "expected_value" and value_mapping is None:

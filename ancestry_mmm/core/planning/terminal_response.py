@@ -25,7 +25,7 @@ structurally separate, typed result - never merged into a plan-window
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Sequence, Tuple
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -54,6 +54,7 @@ def build_zero_decision_terminal_extension_plan(
     market: str,
     channels: Sequence[str],
     future_context: FutureContextResult,
+    candidate_a_paid_search_cap: Optional[np.ndarray] = None,
 ) -> WeeklyPlan:
     """The terminal-carryover extension plan for the initial residual-
     carryover policy: every channel's future media is set to zero (the
@@ -81,6 +82,7 @@ def build_zero_decision_terminal_extension_plan(
             oid: list(names)
             for oid, names in future_context.outcome_control_names.items()
         },
+        candidate_a_paid_search_cap=candidate_a_paid_search_cap,
     )
 
 
@@ -131,10 +133,14 @@ def evaluate_terminal_incremental_response(
     meta: FHModelMeta,
     params: FHPosteriorParams,
     named_event_fit_inputs: NamedEventFitInputs | None = None,
+    candidate_a_paid_search_cap: Optional[np.ndarray] = None,
 ) -> TerminalIncrementalResult:
     """Model A (shared) terminal candidate/reference evaluation."""
     extension_plan = build_zero_decision_terminal_extension_plan(
-        market, channels, future_context
+        market,
+        channels,
+        future_context,
+        candidate_a_paid_search_cap=candidate_a_paid_search_cap,
     )
     candidate = simulate_terminal_carryover(
         extension_plan,
@@ -142,6 +148,7 @@ def evaluate_terminal_incremental_response(
         meta,
         params,
         named_event_fit_inputs=named_event_fit_inputs,
+        candidate_a_paid_search_cap=candidate_a_paid_search_cap,
     )
     reference = simulate_terminal_carryover(
         extension_plan,
@@ -149,6 +156,7 @@ def evaluate_terminal_incremental_response(
         meta,
         params,
         named_event_fit_inputs=named_event_fit_inputs,
+        candidate_a_paid_search_cap=candidate_a_paid_search_cap,
     )
     incremental = compute_incremental_outcome(candidate, reference)
     return TerminalIncrementalResult(
@@ -171,11 +179,15 @@ def evaluate_terminal_incremental_response_market_specific(
     meta: FHModelMeta,
     params: FHMarketSpecificPosteriorParams,
     named_event_fit_inputs: NamedEventFitInputs | None = None,
+    candidate_a_paid_search_cap: Optional[np.ndarray] = None,
 ) -> TerminalIncrementalResult:
     """Model C (market-specific) mirror of
     `evaluate_terminal_incremental_response`."""
     extension_plan = build_zero_decision_terminal_extension_plan(
-        market, channels, future_context
+        market,
+        channels,
+        future_context,
+        candidate_a_paid_search_cap=candidate_a_paid_search_cap,
     )
     candidate = simulate_terminal_carryover_market_specific(
         extension_plan,

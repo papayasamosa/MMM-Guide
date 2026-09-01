@@ -430,6 +430,10 @@ class TestScenarioValueAssumptionsEditor:
     def test_provenance_disclosure_shown_after_evaluation(self):
         at = AppTest.from_file(str(PAGE), default_timeout=60)
         _seed_consistent_session_state(at, value_currency="GBP")
+        # This assertion exercises the legacy monthly result disclosure; the
+        # production default is covered by the explicit sequential-method
+        # tests below.
+        at.session_state["scenario_evaluation_method"] = "steady_state_monthly"
         at.session_state["scenario_value_assumptions"] = ScenarioValueAssumptions(
             fh_value_by_outcome_id={"New": 88.0},
             dna_value_by_outcome_id={},
@@ -634,6 +638,7 @@ def test_saving_a_manual_scenario_persists_cost_mapping_governance_dependency():
         ]
     )
     at.session_state["media_cost_mappings"] = registry.to_dict()
+    at.session_state["scenario_evaluation_method"] = "steady_state_monthly"
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
 
@@ -1206,54 +1211,46 @@ def test_evaluation_method_selection_shows_method_specific_detail():
     visible while sequential weekly is selected, or vice versa."""
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_consistent_session_state(at, value_currency="GBP")
+    at.session_state["scenario_evaluation_method"] = "sequential_weekly"
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
 
     info_texts = [i.value or "" for i in at.info]
-    assert any(
-        "Steady-state monthly approximation** is selected" in text
-        for text in info_texts
-    )
-    steady_detail = next(
-        text
-        for text in info_texts
-        if "Steady-state monthly approximation** is selected" in text
-    )
-    assert "does not reproduce starting carryover" in steady_detail
-    assert "Sequential weekly** is selected" not in " ".join(info_texts)
-
-    method_radio = next(
-        r for r in at.radio if r.label == "Manual plan evaluation method"
-    )
-    method_radio.set_value("sequential_weekly").run()
-    assert not at.exception, f"selecting sequential_weekly raised: {at.exception}"
-
-    info_texts = [i.value or "" for i in at.info]
-    assert not any(
-        "Steady-state monthly approximation** is selected" in text
-        for text in info_texts
-    )
+    assert any("Sequential weekly** is selected" in text for text in info_texts)
     sequential_detail = next(
         text for text in info_texts if "Sequential weekly** is selected" in text
     )
     assert "week-by-week media carryover" in sequential_detail
     assert "terminal carryover" in sequential_detail
-    assert "steady-state-monthly only" in sequential_detail
+
+    method_radio = next(
+        r for r in at.radio if r.label == "Manual plan evaluation method"
+    )
+    method_radio.set_value("steady_state_monthly").run()
+    assert not at.exception, f"selecting steady_state_monthly raised: {at.exception}"
+
+    info_texts = [i.value or "" for i in at.info]
+    steady_detail = next(
+        text
+        for text in info_texts
+        if "Steady-state monthly diagnostic/legacy mode** is selected" in text
+    )
+    assert "does not reproduce starting carryover" in steady_detail
+    assert "Sequential weekly** is selected" not in " ".join(info_texts)
 
 
 def test_optimiser_tabs_state_their_evaluation_method():
-    """UI-WP2: the constrained and unconstrained optimiser tabs must state
-    they use steady-state monthly evaluation, since neither supports
-    sequential weekly."""
+    """The optimiser tabs disclose the selected production evaluation method."""
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_consistent_session_state(at, value_currency="GBP")
+    at.session_state["scenario_evaluation_method"] = "sequential_weekly"
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
     caption_texts = [c.value or "" for c in at.caption]
     matching = [
         text
         for text in caption_texts
-        if "Evaluation method" in text and "steady-state monthly" in text
+        if "Evaluation method" in text and "sequential weekly" in text
     ]
     assert len(matching) >= 2, caption_texts
 
@@ -1261,6 +1258,7 @@ def test_optimiser_tabs_state_their_evaluation_method():
 def test_spend_plan_grid_is_labelled_as_the_editable_decision():
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_consistent_session_state(at, value_currency="GBP")
+    at.session_state["scenario_evaluation_method"] = "steady_state_monthly"
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
     assert any("Spend plan - editable decision" in (m.value or "") for m in at.markdown)
@@ -1270,6 +1268,7 @@ def test_spend_plan_grid_is_labelled_as_the_editable_decision():
 def test_constraints_are_visually_distinct_from_assumptions():
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_consistent_session_state(at, value_currency="GBP")
+    at.session_state["scenario_evaluation_method"] = "steady_state_monthly"
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
     assert any("Planning assumptions & use" in (m.value or "") for m in at.markdown)
@@ -1342,6 +1341,7 @@ def test_sequential_weekly_manual_tab_blocks_until_assumptions_acknowledged():
     automatic page default standing in for analyst consent."""
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_official_governance_state(at)
+    at.session_state["scenario_evaluation_method"] = "sequential_weekly"
     at.run()
 
     method_radio = next(
@@ -1371,7 +1371,7 @@ def test_sequential_weekly_manual_tab_renders_without_exception():
     method_radio = next(
         r for r in at.radio if r.label == "Manual plan evaluation method"
     )
-    assert method_radio.value == "steady_state_monthly"
+    assert method_radio.value == "sequential_weekly"
     method_radio.set_value("sequential_weekly").run()
     assert not at.exception, f"selecting sequential_weekly raised: {at.exception}"
 
@@ -1807,6 +1807,9 @@ def _seed_two_channel_session_state(at: AppTest) -> None:
     at.session_state["outcome_approvals"] = [a.to_dict() for a in outcome_approvals]
     at.session_state["activity_definitions"] = []
     at.session_state["media_cost_mappings"] = None
+    # These tests exercise the legacy SLSQP constraint plumbing. Select it
+    # explicitly now that sequential weekly is the application default.
+    at.session_state["scenario_evaluation_method"] = "steady_state_monthly"
 
 
 class TestGovernedConstraintVocabularyReachableFromTheRealPage:
