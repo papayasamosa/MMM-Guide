@@ -15,8 +15,11 @@ replace the approved implementation brief, decision records, or the
 - **Last verified implementation HEAD before this handoff commit:**
   `87dab168` (the final handoff commit SHA is reported in the delivery
   summary because the commit ID necessarily changes when this file changes).
-- **Pushed:** the four integration commits through `87dab168` are ready to be
-  pushed after this handoff commit is created and verified.
+- **Pushed:** yes. The branch was pushed and the remote matched
+  `eb6184bf905ebbd0215fbc8bbaddede13ed6ad19` immediately before this
+  documentation-only correction; the final documentation commit SHA is
+  reported in the delivery summary because editing this file necessarily
+  changes HEAD.
 - `.mcp.json`, `.playwright-mcp/`, `designs/`, `tools/`, local logs, caches,
   and machine-specific files remain deliberately outside the commits.
 
