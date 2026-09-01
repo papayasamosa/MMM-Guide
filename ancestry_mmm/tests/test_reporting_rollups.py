@@ -9,7 +9,12 @@ from ancestry_mmm.core.reporting_rollups import (
     build_reporting_views,
     enrich_reporting_rows,
     roll_up_reporting_draws,
+    roll_up_paid_search_reporting_draws,
     summarize_reporting_draws,
+)
+from ancestry_mmm.core.search_intent_taxonomy import (
+    SEARCH_INTENT_GROUP_ID_BRAND,
+    SEARCH_INTENT_GROUP_ID_NON_BRAND,
 )
 
 
@@ -256,3 +261,62 @@ def test_ambiguous_legacy_reporting_channel_fails_closed(activities):
     )
     with pytest.raises(ReportingEnrichmentError, match="ambiguous"):
         enrich_reporting_rows(rows, activities, strict=True)
+
+
+def test_paid_search_reporting_hierarchy_rolls_up_each_posterior_draw():
+    """REQ-SEARCH-004: taxonomy roll-up is draw-safe and four-leaf complete."""
+    activities = [
+        ActivityDefinition(
+            activity_id="google-brand",
+            channel="Paid Search",
+            activity_ownership="paid",
+            model_role="intervention",
+            economic_treatment="paid_media_cost",
+            planning_eligibility="optimisable",
+            source="approved activity mapping",
+            market="UK",
+            platform="Google",
+            campaign_type="paid_search",
+            model_input_column="paid_search_google_brand",
+            funnel_stage="performance_lower",
+            search_intent_group_id=SEARCH_INTENT_GROUP_ID_BRAND,
+            search_platform="google",
+        ),
+        ActivityDefinition(
+            activity_id="bing-non-brand",
+            channel="Paid Search",
+            activity_ownership="paid",
+            model_role="intervention",
+            economic_treatment="paid_media_cost",
+            planning_eligibility="optimisable",
+            source="approved activity mapping",
+            market="UK",
+            platform="Bing",
+            campaign_type="paid_search",
+            model_input_column="paid_search_bing_non_brand",
+            funnel_stage="performance_lower",
+            search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+            search_platform="bing",
+        ),
+    ]
+    rows = pd.DataFrame(
+        [
+            {
+                "market": "UK",
+                "activity_id": activity_id,
+                "outcome_id": "fh_new",
+                "posterior_draw": draw,
+                "incremental_response": value,
+                "pathway_role": "direct",
+            }
+            for draw, values in ((0, (10.0, 4.0)), (1, (14.0, 6.0)))
+            for activity_id, value in zip(("google-brand", "bing-non-brand"), values)
+        ]
+    )
+
+    rolled = roll_up_paid_search_reporting_draws(rows, activities, strict=True)
+
+    assert len(rolled) == 2
+    assert rolled.set_index("posterior_draw").loc[0, "google_brand"] == 10.0
+    assert rolled.set_index("posterior_draw").loc[0, "bing_non_brand"] == 4.0
+    assert rolled.set_index("posterior_draw").loc[1, "total_paid_search"] == 20.0

@@ -62,6 +62,11 @@ from ancestry_mmm.core.search_objects import (
     new_search_object_version,
     validate_search_object_catalogue,
 )
+from ancestry_mmm.core.search_intent_taxonomy import (
+    APPROVED_MINIMUM_SEARCH_INTENT_GROUPS,
+    SEARCH_PLATFORMS,
+    validate_activity_search_taxonomy,
+)
 from ancestry_mmm.data import detect_column_types
 
 st.set_page_config(
@@ -225,6 +230,8 @@ with SectionCard(
             "Media input": item.resolved_model_input_column,
             "Planning eligibility": readable_label(item.planning_eligibility),
             "Review status": readable_label(item.approval_status),
+            "Search intent": item.search_intent_group_id or "Not classified",
+            "Search platform": item.search_platform or "Not classified",
         }
         for item in activity_definitions
     ]
@@ -327,6 +334,8 @@ with SectionCard(
             message_type="",
             marketing_objective="",
             funnel_stage="unclassified",
+            search_intent_group_id=None,
+            search_platform="",
             pooling_group_id=None,
             pathway_ids=(),
             evidence_status="not_assessed",
@@ -415,6 +424,45 @@ with SectionCard(
             "Comparable activity group",
             value=_text(detail.pooling_group_id),
             help="Stable cross-market reporting identity only; it does not choose statistical pooling.",
+        )
+        search_a, search_b = st.columns(2)
+        search_group_options = [""] + [
+            group.search_intent_group_id
+            for group in APPROVED_MINIMUM_SEARCH_INTENT_GROUPS
+        ]
+        search_intent_group_id = search_a.selectbox(
+            "Search intent group",
+            search_group_options,
+            index=(
+                search_group_options.index(detail.search_intent_group_id)
+                if detail.search_intent_group_id in search_group_options
+                else 0
+            ),
+            format_func=lambda value: (
+                "Not classified"
+                if not value
+                else next(
+                    (
+                        group.search_intent_group_name
+                        for group in APPROVED_MINIMUM_SEARCH_INTENT_GROUPS
+                        if group.search_intent_group_id == value
+                    ),
+                    value,
+                )
+            ),
+            help="Optional governed Brand or Non-Brand intent. Leave blank when the activity is not a Search activity or the source cannot support classification.",
+        )
+        search_platform_options = [""] + list(SEARCH_PLATFORMS)
+        search_platform = search_b.selectbox(
+            "Search platform",
+            search_platform_options,
+            index=(
+                search_platform_options.index(detail.search_platform)
+                if detail.search_platform in search_platform_options
+                else 0
+            ),
+            format_func=lambda value: value.title() if value else "Not classified",
+            help="Separate platform axis for Search reporting; it does not replace the intent group and does not classify PMax, Demand Gen, or YouTube as Paid Search.",
         )
 
         st.markdown("#### Model and planning")
@@ -537,6 +585,8 @@ with SectionCard(
                 "economic_treatment": economic_treatment,
                 "planning_eligibility": planning_eligibility,
                 "pooling_group_id": pooling_group_id.strip() or None,
+                "search_intent_group_id": search_intent_group_id or None,
+                "search_platform": search_platform,
                 "pathway_ids": tuple(
                     item.strip() for item in pathway_ids.split(",") if item.strip()
                 ),
@@ -577,6 +627,11 @@ with SectionCard(
                     )
                 seen_keys.add(item.activity_key)
                 seen_inputs.add((item.market, item.resolved_model_input_column))
+            search_taxonomy_errors = validate_activity_search_taxonomy(
+                updated, APPROVED_MINIMUM_SEARCH_INTENT_GROUPS
+            )
+            if search_taxonomy_errors:
+                raise ValueError("; ".join(search_taxonomy_errors))
 
             previous = [
                 ActivityDefinition.from_dict(item) for item in existing_activity_items

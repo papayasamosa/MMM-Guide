@@ -57,6 +57,7 @@ from ancestry_mmm.core.canonical_curves import (
 from ancestry_mmm.core.reporting_rollups import (
     ReportingEnrichmentError,
     build_reporting_views,
+    roll_up_paid_search_reporting_draws,
     summarize_reporting_draws,
 )
 from ancestry_mmm.core.outcome_group_totals import reporting_group_options
@@ -875,6 +876,8 @@ def _humanise_reporting_summary(dataframe, outcome_labels):
     rename = {
         "reporting_channel": "Reporting channel",
         "platform": "Platform / supplier",
+        "search_intent_group_id": "Search intent group",
+        "search_platform": "Search platform",
         "activity_id": "Activity",
         "market": "Market",
         "segment": "Segment",
@@ -902,6 +905,8 @@ def _humanise_reporting_summary(dataframe, outcome_labels):
         "Funnel reporting group",
         "Reporting channel",
         "Platform / supplier",
+        "Search intent group",
+        "Search platform",
         "Activity",
         "Market",
         "Outcome",
@@ -1362,6 +1367,45 @@ def _render_official_reporting_views(artifact, activity_definitions, outcome_lab
                 width="stretch",
                 column_config=dataframe_column_config(displayed_summary),
             )
+            if _view_name == "channel_platform":
+                try:
+                    paid_search_draws = roll_up_paid_search_reporting_draws(
+                        draws,
+                        activity_definitions,
+                        measure="incremental_response",
+                        strict=True,
+                    )
+                except ReportingEnrichmentError as exc:
+                    st.error(
+                        "Paid Search hierarchy cannot be rendered until its "
+                        f"taxonomy is resolved: {exc}"
+                    )
+                else:
+                    if not paid_search_draws.empty:
+                        search_dimensions = [
+                            column
+                            for column in (
+                                "market",
+                                "outcome_id",
+                                "effect_type",
+                            )
+                            if column in paid_search_draws.columns
+                        ]
+                        search_summary = summarize_reporting_draws(
+                            paid_search_draws,
+                            by=search_dimensions,
+                        )
+                        st.markdown("**Paid Search reporting hierarchy**")
+                        st.caption(
+                            "Incremental response is aggregated within each "
+                            "posterior draw, then rolled up as Google/Bing × "
+                            "Brand/Non-Brand → Brand/Non-Brand → Total Paid Search."
+                        )
+                        st.dataframe(
+                            search_summary,
+                            width="stretch",
+                            column_config=dataframe_column_config(search_summary),
+                        )
             if view["funnel_rollup_status"].eq("contains_unclassified").any():
                 st.warning(
                     "Some activity results are grouped as Unclassified because "

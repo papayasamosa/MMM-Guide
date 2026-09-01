@@ -23,6 +23,7 @@ from .activities import (
     activity_reporting_fingerprint,
 )
 from .outcome_group_totals import aggregate_outcome_group_draws
+from .search_intent_taxonomy import SearchReportingCell, roll_up_paid_search_reporting
 
 FUNNEL_STAGE_LABELS = {
     "brand_upper": "Brand / upper funnel",
@@ -42,6 +43,8 @@ REPORTING_DIMENSIONS = (
     "message_type",
     "funnel_stage",
     "product_advertised",
+    "search_intent_group_id",
+    "search_platform",
     "market",
     "outcome_id",
     "segment",
@@ -192,6 +195,8 @@ def _unclassified_values(row: Mapping[str, object]) -> dict[str, object]:
         "activity_market": row.get("activity_market") or row.get("market") or "*",
         "reporting_channel": row.get("reporting_channel"),
         "platform": row.get("platform"),
+        "search_intent_group_id": row.get("search_intent_group_id"),
+        "search_platform": row.get("search_platform"),
         "campaign_type": row.get("campaign_type"),
         "marketing_objective": row.get("marketing_objective"),
         "message_type": row.get("message_type"),
@@ -240,6 +245,8 @@ def enrich_reporting_rows(
             "activity_market",
             "reporting_channel",
             "platform",
+            "search_intent_group_id",
+            "search_platform",
             "campaign_type",
             "marketing_objective",
             "message_type",
@@ -277,6 +284,8 @@ def enrich_reporting_rows(
                 "activity_market": effective_market,
                 "reporting_channel": definition.channel,
                 "platform": definition.platform,
+                "search_intent_group_id": definition.search_intent_group_id,
+                "search_platform": definition.search_platform,
                 "campaign_type": definition.campaign_type,
                 "marketing_objective": definition.marketing_objective,
                 "message_type": definition.message_type,
@@ -481,6 +490,71 @@ def summarize_reporting_draws(
     return result
 
 
+def roll_up_paid_search_reporting_draws(
+    rows: pd.DataFrame,
+    activity_definitions: Iterable[ActivityDefinition | Mapping[str, object]],
+    *,
+    measure: str = "incremental_response",
+    strict: bool = False,
+) -> pd.DataFrame:
+    """Build the approved Paid Search hierarchy at posterior-draw grain.
+
+    Search taxonomy is a reporting split, so this helper enriches ordinary
+    activity rows and aggregates each leaf before calling the governed four-
+    leaf roll-up.  It never treats branded demand, delivery, caps, or
+    residual incrementality as interchangeable; the caller selects the
+    additive reporting measure explicitly.
+    """
+    if measure not in SUMMARY_MEASURES:
+        raise ValueError(f"measure must be one of {SUMMARY_MEASURES}, got {measure!r}.")
+    if "posterior_draw" not in rows.columns:
+        raise ValueError("Paid Search reporting draws require posterior_draw.")
+    data = enrich_reporting_rows(rows, activity_definitions, strict=strict)
+    if data.empty or measure not in data.columns:
+        return pd.DataFrame()
+
+    taxonomy = data[["search_intent_group_id", "search_platform"]].map(_text)
+    has_any_search_taxonomy = taxonomy.ne("").any(axis=1)
+    malformed = taxonomy.loc[has_any_search_taxonomy].eq("").any(axis=1)
+    if malformed.any():
+        raise ReportingEnrichmentError(
+            "Paid Search reporting requires both search intent group and "
+            "search platform for every classified Search activity."
+        )
+    search = data[has_any_search_taxonomy].copy()
+    if search.empty:
+        return pd.DataFrame()
+
+    dimensions = ["posterior_draw"]
+    for column in ("market", "outcome_id", "effect_type"):
+        if column in search.columns:
+            dimensions.append(column)
+    leaf_dimensions = [*dimensions, "search_intent_group_id", "search_platform"]
+    leaves = (
+        search.groupby(leaf_dimensions, dropna=False, sort=False)[measure]
+        .sum(min_count=1)
+        .reset_index()
+    )
+
+    output: list[dict[str, object]] = []
+    for key, group in leaves.groupby(dimensions, dropna=False, sort=False):
+        key_values = key if isinstance(key, tuple) else (key,)
+        base = dict(zip(dimensions, key_values))
+        rollup = roll_up_paid_search_reporting(
+            [
+                SearchReportingCell(
+                    search_intent_group_id=str(row["search_intent_group_id"]),
+                    platform=str(row["search_platform"]),
+                    value=float(row[measure]),
+                )
+                for _, row in group.iterrows()
+            ]
+        )
+        base.update(rollup.to_dict())
+        output.append(base)
+    return pd.DataFrame(output)
+
+
 def build_reporting_views(
     rows: pd.DataFrame,
     activity_definitions: Iterable[ActivityDefinition | Mapping[str, object]],
@@ -537,7 +611,14 @@ def build_reporting_views(
         ),
         "channel_platform": roll_up_reporting_draws(
             enriched,
-            by=["funnel_stage", "reporting_channel", "platform", *common],
+            by=[
+                "funnel_stage",
+                "reporting_channel",
+                "platform",
+                "search_intent_group_id",
+                "search_platform",
+                *common,
+            ],
             activity_definitions=definitions,
             strict=strict,
         ),
