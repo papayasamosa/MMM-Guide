@@ -384,6 +384,12 @@ class _HasEventCoefs(Protocol):
     event_coefs: Dict[str, Dict[str, np.ndarray]]
 
 
+class _HasSeoVisibilityBeta(Protocol):
+    """Structural type for posterior objects that carry SEO replay draws."""
+
+    seo_visibility_beta: Optional[np.ndarray]
+
+
 def _named_event_eta_contribution(
     meta: FHModelMeta,
     params: _HasEventCoefs,
@@ -571,7 +577,7 @@ def _seo_eta_contribution(
     *,
     frame: Dict,
     meta: FHModelMeta,
-    params: FHPosteriorParams,
+    params: _HasSeoVisibilityBeta,
     n_obs: int,
     explicit_values: Optional[np.ndarray],
     explicit_active_mask: Optional[np.ndarray],

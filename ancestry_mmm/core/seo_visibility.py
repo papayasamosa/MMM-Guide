@@ -452,11 +452,11 @@ class SeoModelFitInputs:
             )
         )
         by_key: dict[tuple[str, str], SeoPositionalVisibilityObservation] = {}
-        for observation in observations:
-            key = (observation.market, observation.week)
+        for source_observation in observations:
+            key = (source_observation.market, source_observation.week)
             if key in by_key:
                 raise ValueError(f"Duplicate SEO observation for {key}.")
-            by_key[key] = observation
+            by_key[key] = source_observation
 
         values: list[Optional[float]] = []
         active: list[float] = []
