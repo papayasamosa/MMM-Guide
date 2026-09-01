@@ -46,6 +46,7 @@ def resolve_generation_blockers(
     reference_context_confirmed: Mapping[str, bool],
     invalid_support_cells: Sequence[str],
     artifact_id: str,
+    missing_fx_pairs: Sequence[str] = (),
 ) -> "List[GenerationBlocker]":
     """Every reason Generate would currently fail, in a fixed, deterministic
     order - never a single generic "cannot generate" message. Returns an
@@ -90,6 +91,14 @@ def resolve_generation_blockers(
                 GenerationBlocker(
                     "missing_reporting_currency",
                     "Reporting currency is not set.",
+                )
+            )
+        if missing_fx_pairs:
+            blockers.append(
+                GenerationBlocker(
+                    "missing_fx_rate",
+                    "No valid FX evidence is available for: "
+                    f"{', '.join(sorted(missing_fx_pairs))}.",
                 )
             )
 

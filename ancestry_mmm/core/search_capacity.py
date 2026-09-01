@@ -35,6 +35,7 @@ from .search_objects import (
     current_search_object_versions,
 )
 from .capacity import CapHitClassification, classify_cap_hit_status_series
+from .google_trends_anchor import GoogleTrendsAnchorFitInputs
 
 
 SEARCH_CANDIDATE_A_ENGINE = "pymc_search_candidate_a"
@@ -687,6 +688,7 @@ class CandidateASearchFitInputs:
     search_objects: List[SearchObjectDefinition | Mapping[str, Any]] = field(
         default_factory=list
     )
+    google_trends_anchor: Optional[GoogleTrendsAnchorFitInputs] = None
 
     def __post_init__(self) -> None:
         if not self.demand_channel_names:
@@ -712,6 +714,56 @@ class CandidateASearchFitInputs:
             raise SearchCapacityValidationError(
                 "observed Paid Search delivery exceeds its cap"
             )
+        if (
+            self.google_trends_anchor is not None
+            and len(self.google_trends_anchor.model_weeks) != delivery.size
+        ):
+            raise SearchCapacityValidationError(
+                "Google Trends anchor model_weeks must match Candidate A periods"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the complete fit boundary for project persistence."""
+        return {
+            "spec": self.spec.to_dict(),
+            "demand_channel_names": list(self.demand_channel_names),
+            "paid_search_delivery": self.paid_search_delivery.tolist(),
+            "paid_search_cap": self.paid_search_cap.tolist(),
+            "organic_search_capture": self.organic_search_capture.tolist(),
+            "direct_navigation_capture": self.direct_navigation_capture.tolist(),
+            "search_objects": [
+                item.to_dict() if isinstance(item, SearchObjectDefinition) else item
+                for item in self.search_objects
+            ],
+            "google_trends_anchor": (
+                self.google_trends_anchor.to_dict()
+                if self.google_trends_anchor is not None
+                else None
+            ),
+        }
+
+    @classmethod
+    def from_dict(cls, values: Mapping[str, Any]) -> "CandidateASearchFitInputs":
+        return cls(
+            spec=SearchCandidateASpec.from_dict(values["spec"]),
+            demand_channel_names=list(values["demand_channel_names"]),
+            paid_search_delivery=np.asarray(
+                values["paid_search_delivery"], dtype=float
+            ),
+            paid_search_cap=np.asarray(values["paid_search_cap"], dtype=float),
+            organic_search_capture=np.asarray(
+                values["organic_search_capture"], dtype=float
+            ),
+            direct_navigation_capture=np.asarray(
+                values["direct_navigation_capture"], dtype=float
+            ),
+            search_objects=list(values.get("search_objects") or []),
+            google_trends_anchor=(
+                GoogleTrendsAnchorFitInputs.from_dict(values["google_trends_anchor"])
+                if values.get("google_trends_anchor")
+                else None
+            ),
+        )
 
 
 def attach_candidate_a_demand_capture_chain(
@@ -785,6 +837,11 @@ def attach_candidate_a_demand_capture_chain(
     default_demand_intercept_mu = float(
         np.log(max(float(np.mean(fit_inputs.paid_search_cap)), 1.0))
     )
+    default_demand_intercept_mu = (
+        float(np.log(0.5))
+        if fit_inputs.google_trends_anchor is not None
+        else float(np.log(max(float(np.mean(fit_inputs.paid_search_cap)), 1.0)))
+    )
     demand_intercept = pm.Normal(
         "search_demand_intercept",
         mu=float(prior.get("demand_intercept_mu", default_demand_intercept_mu)),
@@ -796,11 +853,43 @@ def attach_candidate_a_demand_capture_chain(
         dims="search_demand_channel",
     )
     demand_media_term = pm.math.dot(sat_media[:, demand_channel_idx], demand_media_beta)
-    demand = pm.Deterministic(
-        "search_latent_branded_demand",
-        pt.exp(demand_intercept + demand_market_offset[market_idx] + demand_media_term),
-        dims="obs",
+    demand_index = pt.exp(
+        demand_intercept + demand_market_offset[market_idx] + demand_media_term
     )
+    if fit_inputs.google_trends_anchor is not None:
+        anchor_values = fit_inputs.google_trends_anchor.values_for_model_weeks()
+        pm.Normal(
+            "google_trends_anchor_obs",
+            mu=demand_index,
+            sigma=float(fit_inputs.google_trends_anchor.measurement_sigma),
+            observed=anchor_values,
+            dims="obs",
+        )
+        pm.Deterministic(
+            "google_trends_anchor_value",
+            pt.as_tensor_variable(anchor_values),
+            dims="obs",
+        )
+        demand_to_capture_scale = pm.HalfNormal(
+            "search_demand_to_capture_scale",
+            sigma=float(
+                prior.get(
+                    "demand_to_capture_scale_sigma",
+                    max(capture_scale, 1.0),
+                )
+            ),
+        )
+        demand = pm.Deterministic(
+            "search_latent_branded_demand",
+            demand_index * demand_to_capture_scale,
+            dims="obs",
+        )
+    else:
+        demand = pm.Deterministic(
+            "search_latent_branded_demand",
+            demand_index,
+            dims="obs",
+        )
 
     share_alpha = np.asarray(
         prior.get("capture_share_alpha", [2.0, 1.5, 1.5, 2.0]), dtype=float

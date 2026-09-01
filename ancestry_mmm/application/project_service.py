@@ -64,7 +64,11 @@ class ProjectExportInput:
     approval_readiness: Optional[dict] = None
     counterfactual_policy: Optional[dict] = None
     currency_context: Optional[dict] = None
+    fx_rate_set: Optional[dict] = None
+    fx_rate_records: Optional[List[dict]] = None
     value_mapping: Optional[dict] = None
+    google_trends_anchor: Optional[dict] = None
+    candidate_a_fit_inputs: Optional[dict] = None
     causal_graphs: Optional[List[dict]] = None
     search_objects: Optional[List[dict]] = None
     source_versions: Optional[List[dict]] = None
@@ -188,7 +192,11 @@ class ProjectService:
                 approval_readiness=exp_input.approval_readiness,
                 counterfactual_policy=exp_input.counterfactual_policy,
                 currency_context=exp_input.currency_context,
+                fx_rate_set=exp_input.fx_rate_set,
+                fx_rate_records=exp_input.fx_rate_records,
                 value_mapping=exp_input.value_mapping,
+                google_trends_anchor=exp_input.google_trends_anchor,
+                candidate_a_fit_inputs=exp_input.candidate_a_fit_inputs,
                 causal_graphs=exp_input.causal_graphs,
                 search_objects=exp_input.search_objects,
                 source_versions=exp_input.source_versions,

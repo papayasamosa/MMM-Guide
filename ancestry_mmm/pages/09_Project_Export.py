@@ -65,6 +65,10 @@ from ancestry_mmm.application.experiment_service import (
     registry_has_content,
     registry_to_dict,
 )
+from ancestry_mmm.application.fx_service import (
+    FXUploadValidationError,
+    build_manual_fx_rate_set,
+)
 from ancestry_mmm.application.event_service import (
     registry_has_content as named_event_registry_has_content,
     registry_to_dict as named_event_registry_to_dict,
@@ -175,6 +179,7 @@ _CONTAINS_LABELS = {
     "approval_readiness": "Approval readiness evidence",
     "counterfactual_policy": "Counterfactual policy",
     "currency_context": "Currency context",
+    "fx_rate_set": "Finance FX rate set",
     "value_mapping": "Outcome value mapping",
     "causal_graphs": "Causal graph versions",
     "search_objects": "Search definitions and versions",
@@ -391,6 +396,9 @@ def _resolve_official_curve_artifact_rows() -> list[dict]:
                     else None
                 ),
                 official_preparation_evidence=get_state("official_preparation_result"),
+                calibration_fit_fingerprint=(
+                    getattr(meta, "calibration_fit_fingerprint", "") or None
+                ),
             ),
             "posterior_fingerprint": fingerprint_posterior(params),
         }
@@ -637,6 +645,87 @@ with SectionCard(
         )
 
 st.markdown("---")
+with SectionCard(
+    "Finance FX rate set",
+    description=(
+        "Optional manual upload boundary for Finance-approved rates. No rate is "
+        "invented or fetched automatically; an uploaded set remains pending until "
+        "Finance approval is recorded."
+    ),
+):
+    _fx_current = get_state("fx_rate_set")
+    if _fx_current:
+        st.caption(
+            f"Loaded rate set `{_fx_current.get('rate_set_id', '')}` "
+            f"v{_fx_current.get('rate_set_version', '?')} "
+            f"({_fx_current.get('approval_status', 'pending')}); "
+            f"records: {len(get_state('fx_rate_records') or [])}."
+        )
+    else:
+        st.info(
+            "No Finance rate set is loaded. Cross-currency constant-dollar "
+            "conversion remains unavailable until an approved set is supplied."
+        )
+    with st.expander("Upload or replace a Finance rate set", expanded=False):
+        _fx_upload = st.file_uploader(
+            "Rate CSV",
+            type=["csv"],
+            key="fx_rate_upload",
+            help=(
+                "Required columns: rate_date, source_currency, target_currency, "
+                "rate, method, frequency; annual rows also require financial_year."
+            ),
+        )
+        _fx_meta_cols = st.columns(3)
+        _fx_name = _fx_meta_cols[0].text_input("Rate-set name", key="fx_rate_name")
+        _fx_provider = _fx_meta_cols[1].text_input(
+            "Provider identity", key="fx_rate_provider"
+        )
+        _fx_reference = _fx_meta_cols[2].text_input(
+            "Reference currency", value="GBP", key="fx_rate_reference"
+        )
+        _fx_dates = st.columns(2)
+        _fx_start = _fx_dates[0].text_input(
+            "Start date (YYYY-MM-DD)", key="fx_rate_start"
+        )
+        _fx_end = _fx_dates[1].text_input("End date (YYYY-MM-DD)", key="fx_rate_end")
+        _fx_policy = st.text_input(
+            "Finance rate policy / approval reference", key="fx_rate_policy"
+        )
+        if st.button("Validate and load rate set", key="load_fx_rate_set"):
+            if _fx_upload is None:
+                st.error("Choose a Finance rate CSV before loading it.")
+            else:
+                try:
+                    _fx_version = (
+                        int((_fx_current or {}).get("rate_set_version", 0)) + 1
+                    )
+                    _fx_set, _fx_records = build_manual_fx_rate_set(
+                        _fx_upload.getvalue(),
+                        rate_set_id=(_fx_current or {}).get(
+                            "rate_set_id", "manual-fx-pending"
+                        ),
+                        rate_set_version=_fx_version,
+                        name=_fx_name,
+                        provider=_fx_provider,
+                        base_or_reference_currency=_fx_reference,
+                        start_date=_fx_start,
+                        end_date=_fx_end,
+                        rate_policy=_fx_policy,
+                    )
+                    set_state("fx_rate_set", _fx_set.to_dict())
+                    set_state(
+                        "fx_rate_records", [record.to_dict() for record in _fx_records]
+                    )
+                    st.success(
+                        f"Validated {len(_fx_records)} FX record(s). The set is pending "
+                        "Finance approval and is now included in the next bundle."
+                    )
+                    st.rerun()
+                except (FXUploadValidationError, ValueError, TypeError) as exc:
+                    st.error(f"FX rate-set validation failed: {exc}")
+
+st.markdown("---")
 st.markdown("### Build durable project bundle")
 st.caption(
     "The primary recovery object: one portable .zip that can be restored into a working project."
@@ -765,6 +854,8 @@ if st.button("Build export bundle", type="primary"):
             # module docstring.
             counterfactual_policy=get_state("counterfactual_policy"),
             currency_context=get_state("currency_context"),
+            fx_rate_set=get_state("fx_rate_set"),
+            fx_rate_records=get_state("fx_rate_records"),
             value_mapping=get_state("value_mapping"),
             # REQ-GRAPH-001 work package (graph portability): every saved
             # graph version plus the current live (possibly unsaved) graph -
@@ -779,6 +870,12 @@ if st.button("Build export bundle", type="primary"):
             search_objects=search_object_versions_for_export(
                 current_definitions=get_state("search_objects") or [],
                 version_history=get_state("search_object_versions"),
+            ),
+            google_trends_anchor=get_state("google_trends_anchor"),
+            candidate_a_fit_inputs=(
+                get_state("candidate_a_fit_inputs").to_dict()
+                if hasattr(get_state("candidate_a_fit_inputs"), "to_dict")
+                else get_state("candidate_a_fit_inputs")
             ),
             # REQ-COVERAGE-001 S3: the full append-only immutable
             # SourceVersion history - never only the latest per source_id,
@@ -1130,6 +1227,8 @@ if uploaded_zip is not None and st.button("Import bundle"):
                 for defn in current_search_object_versions(_resolved_search_objects)
             ],
         )
+        set_state("google_trends_anchor", imported.get("google_trends_anchor"))
+        set_state("candidate_a_fit_inputs", imported.get("candidate_a_fit_inputs"))
         for _search_object_warning in _search_object_warnings:
             st.warning(_search_object_warning)
         # REQ-COVERAGE-001 S3: restore the quarantine-checked immutable
@@ -1242,6 +1341,8 @@ if uploaded_zip is not None and st.button("Import bundle"):
         # of this same session round-trips the identical policy/context.
         set_state("counterfactual_policy", imported.get("counterfactual_policy"))
         set_state("currency_context", imported.get("currency_context"))
+        set_state("fx_rate_set", imported.get("fx_rate_set"))
+        set_state("fx_rate_records", imported.get("fx_rate_records") or [])
         set_state("value_mapping", imported.get("value_mapping"))
         # Fresh review finding: a cached constrained_result/unconstrained_
         # result left over from a DIFFERENT project earlier in this same

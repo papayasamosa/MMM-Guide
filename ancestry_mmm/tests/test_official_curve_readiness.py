@@ -139,6 +139,22 @@ def test_monetary_curve_fully_satisfied_is_not_blocked_on_monetary_grounds():
     assert "missing_reporting_currency" not in codes
 
 
+def test_monetary_curve_missing_fx_pair_blocks_before_generation():
+    kwargs = {
+        **_BASE_KWARGS,
+        "curve_type": "monetary",
+        "cost_mapping_registry_present": True,
+        "currency_by_market": {"UK": "GBP"},
+        "reporting_currency": "USD",
+        "missing_fx_pairs": ["GBP->USD"],
+    }
+    blockers = resolve_generation_blockers(**kwargs)
+    assert any(b.code == "missing_fx_rate" for b in blockers)
+    assert "GBP->USD" in next(
+        b.message for b in blockers if b.code == "missing_fx_rate"
+    )
+
+
 def test_multiple_blockers_all_reported_not_just_the_first():
     kwargs = {
         **_BASE_KWARGS,

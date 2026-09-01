@@ -94,6 +94,11 @@ from ancestry_mmm.application.curve_service import (
     CurveService,
     OfficialCurveGovernance,
 )
+from ancestry_mmm.application.fx_service import (
+    FXUploadValidationError,
+    resolve_approved_fx_rate,
+    validate_persisted_fx_rate_set,
+)
 from ancestry_mmm.components.charts import create_response_curve_with_band
 
 _COST_MAPPING_TYPES = {
@@ -582,6 +587,9 @@ if model_run_id and spec_dict is not None:
                 else None
             ),
             official_preparation_evidence=get_state("official_preparation_result"),
+            calibration_fit_fingerprint=(
+                getattr(meta, "calibration_fit_fingerprint", "") or None
+            ),
         ),
         "posterior_fingerprint": fingerprint_posterior(params),
     }
@@ -740,9 +748,29 @@ cost_mapping_registry = None
 currency_by_market: dict[str, str] = {}
 reporting_currency = ""
 currency_rates: dict[tuple[str, str], float] = {}
+missing_fx_pairs: list[str] = []
 fx_as_of_date_value = ""
 fx_source_value = ""
 cost_as_of_date_value = ""
+
+_approved_fx_rate_set = None
+_approved_fx_records = []
+_stored_fx_rate_set = get_state("fx_rate_set")
+_stored_fx_records = get_state("fx_rate_records") or []
+if _stored_fx_rate_set is not None:
+    try:
+        _loaded_fx_rate_set, _loaded_fx_records = validate_persisted_fx_rate_set(
+            _stored_fx_rate_set, _stored_fx_records
+        )
+    except (FXUploadValidationError, TypeError, ValueError) as exc:
+        st.error(
+            "The stored Finance FX rate set is invalid and cannot be used for "
+            f"monetary curves: {exc}"
+        )
+    else:
+        if _loaded_fx_rate_set.approval_status == "approved":
+            _approved_fx_rate_set = _loaded_fx_rate_set
+            _approved_fx_records = _loaded_fx_records
 
 if curve_type == "monetary":
     st.caption(
@@ -862,6 +890,24 @@ if curve_type == "monetary":
     )
 
     st.markdown("**Currency & FX**")
+    if _stored_fx_rate_set is None:
+        st.info(
+            "No governed Finance FX rate set is loaded. Same-currency identity "
+            "conversion remains available; cross-currency curves require an "
+            "explicit rate and source below, and no rate is prefilled."
+        )
+    elif _approved_fx_rate_set is not None:
+        st.success(
+            "Approved Finance FX rate set available: "
+            f"{_approved_fx_rate_set.rate_set_id} v{_approved_fx_rate_set.rate_set_version}. "
+            "Applicable rates will be resolved automatically for the selected "
+            "FX as-of date."
+        )
+    else:
+        st.warning(
+            "The loaded Finance FX rate set is not approved. It is retained in "
+            "the project, but cannot supply official monetary-curve FX evidence."
+        )
     for market in selected_markets:
         currency_by_market[market] = st.text_input(
             f"Local currency - {market} (ISO code)",
@@ -876,16 +922,56 @@ if curve_type == "monetary":
         c2.date_input("FX as-of date", value=date.today(), key="ocg_fx_as_of_date")
     )
     fx_source_value = c3.text_input("FX source", value="", key="ocg_fx_source")
-    distinct_locals = sorted(
-        {cur for cur in currency_by_market.values() if cur} - {reporting_currency}
-    )
-    for local_currency in distinct_locals:
-        currency_rates[(local_currency, reporting_currency)] = st.number_input(
-            f"FX rate: 1 {local_currency} -> {reporting_currency}",
-            value=1.0,
-            min_value=0.0,
-            key=f"ocg_fx_rate_{local_currency}",
+    if _approved_fx_rate_set is not None and not fx_source_value:
+        fx_source_value = (
+            f"{_approved_fx_rate_set.provider}/"
+            f"{_approved_fx_rate_set.rate_set_id}/v"
+            f"{_approved_fx_rate_set.rate_set_version}"
         )
+    distinct_pairs = sorted(
+        {
+            (cur, reporting_currency or cur)
+            for cur in currency_by_market.values()
+            if cur and cur != (reporting_currency or cur)
+        }
+    )
+    for local_currency, target_currency in distinct_pairs:
+        resolved_rate = None
+        if _approved_fx_rate_set is not None:
+            try:
+                resolved_rate = resolve_approved_fx_rate(
+                    _approved_fx_rate_set,
+                    _approved_fx_records,
+                    source_currency=local_currency,
+                    target_currency=target_currency,
+                    as_of_date=fx_as_of_date_value,
+                )
+            except FXUploadValidationError as exc:
+                st.error(f"Cannot use the approved Finance FX set: {exc}")
+        if resolved_rate is not None:
+            currency_rates[(local_currency, target_currency)] = float(resolved_rate)
+            st.caption(
+                f"Using approved rate 1 {local_currency} -> {target_currency}: "
+                f"{resolved_rate}"
+            )
+        else:
+            if _approved_fx_rate_set is not None:
+                st.error(
+                    f"The approved Finance FX set has no applicable "
+                    f"{local_currency}->{target_currency} rate on or before "
+                    f"{fx_as_of_date_value}."
+                )
+            rate = st.number_input(
+                f"Explicit FX rate: 1 {local_currency} -> {target_currency} "
+                "(no default)",
+                value=0.0,
+                min_value=0.0,
+                key=f"ocg_fx_rate_{local_currency}",
+            )
+            if rate > 0:
+                currency_rates[(local_currency, target_currency)] = rate
+            else:
+                missing_fx_pairs.append(f"{local_currency}->{target_currency}")
 
 # ---------------------------------------------------------------------------
 # 3. Reference context per market
@@ -1387,6 +1473,7 @@ _generation_blockers = resolve_generation_blockers(
     reporting_currency=reporting_currency,
     reference_context_confirmed=reference_context_confirmed,
     invalid_support_cells=invalid_support_cells,
+    missing_fx_pairs=missing_fx_pairs,
     artifact_id=artifact_id,
 )
 if _generation_blockers:

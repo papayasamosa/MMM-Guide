@@ -51,24 +51,23 @@ Formula summary (see the decision record for full reasoning):
 
 This module does NOT implement a Google Trends API client/ingestion
 mechanism (out of scope, mirrors `core.seo_visibility`'s equivalent
-scope boundary), and does NOT wire the fixed-loading constraint into
-`core.search_capacity`'s actual linked-PyMC construction of
-`latent_branded_search_demand` - that is a separate, materially
-statistical model change requiring its own prior-predictive and
-synthetic-recovery validation (`REQ-LATENT-001` Requirement 4),
-explicitly deferred as a follow-up integration item, exactly as
-`REQ-LATENT-001`'s own Requirement 3 (compiler-blocking) and Requirement
-4's remaining sub-items are already deferred. This module only
-assembles a `LatentStateIdentificationDeclaration` a future fit-time
-integration would consume - it mirrors `core.latent_state_
-identification`'s own "the caller supplies the declaration" pattern and
-never modifies that module.
+scope boundary).  It does provide the governed fit-time observation
+boundary consumed by `core.search_capacity`: Candidate A uses a fixed
+one-unit loading for the relative Trends index and estimates a separate
+translation scale into observed capture units.  The query set, complete
+weekly coverage, and measurement uncertainty are persisted with the fit
+inputs; missing live series data remains a fail-closed external-data
+condition.  The compiler-blocking and full synthetic-recovery items in
+`REQ-LATENT-001` remain evidence gates rather than being silently marked
+as passed.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from typing import Any, List, Mapping, Optional, Sequence, Tuple, cast
+
+import numpy as np
 
 from .coverage import COVERAGE_STATES, STATE_SUPPRESSED
 from .latent_state_identification import (
@@ -266,6 +265,94 @@ class GoogleTrendsAnchorObservation:
     def from_dict(cls, values: Mapping[str, Any]) -> "GoogleTrendsAnchorObservation":
         known = set(cls.__dataclass_fields__)
         return cls(**cast(Any, {k: v for k, v in values.items() if k in known}))
+
+
+@dataclass(frozen=True)
+class GoogleTrendsAnchorFitInputs:
+    """The fit-time Google Trends observation boundary for Candidate A.
+
+    ``observations`` must cover the complete model window in one governed
+    query-set extraction.  ``model_weeks`` is supplied separately because a
+    multi-market fit can contain more than one row for the same calendar
+    week.  The builder expands the one weekly anchor value to each matching
+    model row; it never interpolates, forward-fills, or silently drops a
+    missing week.
+
+    The observation likelihood uses a fixed loading of one: the latent
+    Candidate A demand state is measured in the same rescaled relative-index
+    units as ``anchor_value``.  ``measurement_sigma`` is an explicitly
+    configured observation uncertainty, not a free scale/loading parameter.
+    """
+
+    query_set: GoogleTrendsQuerySetDefinition
+    observations: Tuple[GoogleTrendsAnchorObservation, ...]
+    model_weeks: Tuple[str, ...]
+    measurement_sigma: float = 0.15
+
+    def __post_init__(self) -> None:
+        if not self.observations:
+            raise ValueError(
+                "GoogleTrendsAnchorFitInputs requires at least one observation."
+            )
+        if not self.model_weeks:
+            raise ValueError(
+                "GoogleTrendsAnchorFitInputs requires at least one model week."
+            )
+        if not np.isfinite(self.measurement_sigma) or self.measurement_sigma <= 0:
+            raise ValueError(
+                "GoogleTrendsAnchorFitInputs.measurement_sigma must be finite "
+                "and strictly positive."
+            )
+        query_ids = {item.query_set_id for item in self.observations}
+        if query_ids != {self.query_set.query_set_id}:
+            raise ValueError(
+                "GoogleTrendsAnchorFitInputs observations must all belong to "
+                "the supplied governed query set."
+            )
+        observed_weeks = [item.week for item in self.observations]
+        if len(set(observed_weeks)) != len(observed_weeks):
+            raise ValueError(
+                "GoogleTrendsAnchorFitInputs observations must have unique weeks."
+            )
+        missing = sorted(set(self.model_weeks) - set(observed_weeks))
+        if missing:
+            raise ValueError(
+                "GoogleTrendsAnchorFitInputs is missing anchor observations for "
+                f"model week(s): {missing}. A Candidate A fit must not infer "
+                "or fill an absent Trends week."
+            )
+
+    def values_for_model_weeks(self) -> np.ndarray:
+        """Return anchor values aligned to ``model_weeks`` exactly."""
+
+        by_week = {item.week: item.anchor_value for item in self.observations}
+        return np.asarray([by_week[week] for week in self.model_weeks], dtype=float)
+
+    def coverage_states_for_model_weeks(self) -> Tuple[Optional[str], ...]:
+        by_week = {item.week: item.coverage_state for item in self.observations}
+        return tuple(by_week[week] for week in self.model_weeks)
+
+    def to_dict(self) -> dict:
+        return {
+            "query_set": self.query_set.to_dict(),
+            "observations": [item.to_dict() for item in self.observations],
+            "model_weeks": list(self.model_weeks),
+            "measurement_sigma": self.measurement_sigma,
+        }
+
+    @classmethod
+    def from_dict(cls, values: Mapping[str, Any]) -> "GoogleTrendsAnchorFitInputs":
+        query_set = GoogleTrendsQuerySetDefinition.from_dict(values["query_set"])
+        observations = tuple(
+            GoogleTrendsAnchorObservation.from_dict(item)
+            for item in values.get("observations") or ()
+        )
+        return cls(
+            query_set=query_set,
+            observations=observations,
+            model_weeks=tuple(str(item) for item in values.get("model_weeks") or ()),
+            measurement_sigma=float(values.get("measurement_sigma", 0.15)),
+        )
 
 
 def compute_anchor_series(
