@@ -21,10 +21,10 @@ Summary (see the decision record for full reasoning):
    PyMC-Marketing's own documented `df_lift_test` row shape exactly
    (`channel`/`x`/`delta_x`/`delta_y`/`sigma`/`date`). It does NOT call
    `add_lift_test_measurements` itself, and does NOT touch any real
-   model-fitting code - actually wiring this into a live model build is
-   a separate, materially statistical follow-up requiring its own
-   validation, mirroring every other Phase B/C step's scope boundary in
-   this repository.
+   model-fitting code - the raw-PyMC builder adapter below composes the
+   same observation-model idea against the existing Hill response and
+   log-link. It is deliberately limited to direct channel/outcome rows;
+   temporal/adstock translation remains an explicit future extension.
 3. The mapping fails closed: it raises rather than silently substituting
    a default whenever the evidence mode is not `likelihood_calibration`,
    the supplied compatibility assessment is not fully compatible (this
@@ -39,8 +39,12 @@ Summary (see the decision record for full reasoning):
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import asdict, dataclass
 from typing import Any, List, Mapping, Optional, Sequence, cast
+
+import numpy as np
 
 from .experiments import (
     EVIDENCE_MODE_LIKELIHOOD_CALIBRATION,
@@ -48,6 +52,7 @@ from .experiments import (
     ExperimentRecord,
     ExperimentToModelUse,
 )
+from .transformations import pt_hill_function
 
 EXPERIMENT_LIFT_TEST_MAPPING_SCHEMA_VERSION = 1
 
@@ -79,6 +84,12 @@ class LiftTestCalibrationRow:
             raise ValueError("LiftTestCalibrationRow requires a channel.")
         if self.x < 0:
             raise ValueError("LiftTestCalibrationRow.x cannot be negative.")
+        if self.delta_x < 0:
+            raise ValueError("LiftTestCalibrationRow.delta_x cannot be negative.")
+        if not np.isfinite(self.x) or not np.isfinite(self.delta_x):
+            raise ValueError("LiftTestCalibrationRow x and delta_x must be finite.")
+        if not np.isfinite(self.delta_y):
+            raise ValueError("LiftTestCalibrationRow.delta_y must be finite.")
         if self.sigma <= 0:
             raise ValueError(
                 "LiftTestCalibrationRow.sigma must be strictly positive - a "
@@ -93,6 +104,140 @@ class LiftTestCalibrationRow:
     def from_dict(cls, values: Mapping[str, Any]) -> "LiftTestCalibrationRow":
         known = set(cls.__dataclass_fields__)
         return cls(**cast(Any, {k: v for k, v in values.items() if k in known}))
+
+
+@dataclass(frozen=True)
+class ModelLiftTestCalibrationInput:
+    """One row plus the explicit outcome identity required by Ancestry's
+    joint model.
+
+    ``x`` and ``delta_x`` are the prepared model-input units for the named
+    channel. This is intentional: the adapter does not guess a spend-to-input
+    translation or silently apply a second adstock transformation.
+    """
+
+    row: LiftTestCalibrationRow
+    outcome_id: str
+
+    def __post_init__(self) -> None:
+        if not self.outcome_id:
+            raise ValueError(
+                "ModelLiftTestCalibrationInput requires an explicit outcome_id."
+            )
+        if self.row.delta_y <= 0:
+            raise ValueError(
+                "The supported Gamma lift-test likelihood requires a strictly "
+                "positive delta_y; signed effects need a separately approved "
+                "calibration mechanism."
+            )
+
+    def to_dict(self) -> dict:
+        return {"row": self.row.to_dict(), "outcome_id": self.outcome_id}
+
+    @classmethod
+    def from_dict(cls, values: Mapping[str, Any]) -> "ModelLiftTestCalibrationInput":
+        return cls(
+            row=LiftTestCalibrationRow.from_dict(values["row"]),
+            outcome_id=str(values["outcome_id"]),
+        )
+
+
+def calibration_inputs_fingerprint(
+    inputs: Optional[Sequence[ModelLiftTestCalibrationInput]],
+) -> Optional[str]:
+    """Fingerprint the calibration terms consumed by one fitted model.
+
+    Experiment rows are an unordered set of separately named observation
+    terms. Sorting the canonical rows makes the identity independent of UI
+    declaration order while retaining every fit-relevant value.
+    """
+    if not inputs:
+        return None
+    payload = sorted(
+        (item.to_dict() for item in inputs),
+        key=lambda item: (item["row"]["experiment_id"], item["outcome_id"]),
+    )
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+
+def attach_lift_test_calibration_terms(
+    *,
+    model: Any,
+    sat_media: Any,
+    hill_K: Any,
+    hill_S: Any,
+    beta: Any,
+    eta: Any,
+    channels: Sequence[str],
+    outcome_ids: Sequence[str],
+    primary_mask: np.ndarray,
+    market_idx: Optional[np.ndarray],
+    inputs: Sequence[ModelLiftTestCalibrationInput],
+) -> None:
+    """Attach compatible positive lift-test observations to a raw PyMC model.
+
+    PyMC-Marketing's documented ``MMM.add_lift_test_measurements`` API is
+    the upstream reference. The production builders here are raw PyMC, so
+    this adapter composes the equivalent Gamma observation term against the
+    existing Hill curve and model log-link rather than creating a second MMM.
+    Predicted effects are calculated on the outcome scale. Only a direct
+    primary channel/outcome cell is accepted; unsupported structural cases
+    fail closed.
+    """
+
+    import pymc as pm
+    import pytensor.tensor as pt
+
+    if not inputs:
+        return
+    if primary_mask.shape != (len(outcome_ids), len(channels)):
+        raise ValueError("primary_mask does not match model dimensions")
+    for item in inputs:
+        row = item.row
+        if row.channel not in channels:
+            raise ValueError(
+                f"Lift-test channel {row.channel!r} is not in this model's channels."
+            )
+        oi = outcome_ids.index(item.outcome_id)
+        ci = channels.index(row.channel)
+        if float(primary_mask[oi, ci]) != 1.0:
+            raise ValueError(
+                f"Lift-test row {row.experiment_id!r} targets a non-direct "
+                f"pathway ({row.channel!r}, {item.outcome_id!r})."
+            )
+        if getattr(beta, "ndim", None) == 3:
+            if market_idx is None:
+                raise ValueError(
+                    "market_idx is required for market-specific calibration"
+                )
+            beta_obs = beta[market_idx, oi, ci]
+        else:
+            beta_obs = beta[oi, ci]
+        base_eta = eta[:, oi] - beta_obs * sat_media[:, ci]
+        base_mu = pt.exp(base_eta)
+        response_at_x = pt_hill_function(
+            pt.as_tensor_variable(float(row.x)), hill_K[ci], hill_S[ci]
+        )
+        response_at_x_plus_delta = pt_hill_function(
+            pt.as_tensor_variable(float(row.x + row.delta_x)), hill_K[ci], hill_S[ci]
+        )
+        predicted_lift = pt.mean(
+            base_mu * pt.expm1(beta_obs * (response_at_x_plus_delta - response_at_x))
+        )
+        safe_id = "".join(
+            character if character.isalnum() else "_" for character in row.experiment_id
+        )
+        pm.Deterministic(f"lift_test_{safe_id}_predicted_lift", predicted_lift)
+        pm.Gamma(
+            f"lift_test_{safe_id}_obs",
+            mu=pt.clip(predicted_lift, 1e-9, 1e12),
+            sigma=float(row.sigma),
+            observed=float(row.delta_y),
+        )
 
 
 def build_lift_test_calibration_row(

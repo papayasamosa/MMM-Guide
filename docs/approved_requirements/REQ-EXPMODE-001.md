@@ -323,3 +323,25 @@ relevant to Decision 11's broader governance intent.
 No `application`/`pages` code changes accompany this addendum beyond
 the additive `ExperimentRecord` fields; no model-fitting module is
 touched.
+
+## Implementation addendum, 2026-09-01
+
+The production fitting architecture remains raw PyMC rather than a
+`pymc_marketing.MMM` object. The approved mechanism is therefore composed
+through a narrow compatibility adapter in
+`ancestry_mmm/core/experiment_lift_test_mapping.py`: a compatible,
+positive lift-test row targets an explicit `direct:<channel>:<outcome_id>`
+primary pathway, uses the existing Hill transform and log link, and adds a
+Gamma observation term on the outcome scale before the count likelihood.
+The adapter records the deliberate divergence from the PyMC-Marketing API;
+it does not claim to provide general temporal/adstock experiment
+translation, signed-effect calibration, or prior calibration. Invalid
+targets, missing compatibility evidence, missing baseline/treatment, and
+non-positive effects fail closed.
+
+Model A and Model C accept these rows through their framework-independent
+builders, and Model Training resolves them from the governed experiment
+registry for the next fit. A valid compatible experiment record is still
+required before this path can produce a calibrated model. The uncalibrated
+versus calibrated comparison artefact remains a separate follow-up under
+`REQ-CALIB-001`.

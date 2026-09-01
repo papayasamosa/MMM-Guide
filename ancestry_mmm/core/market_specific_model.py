@@ -30,7 +30,7 @@ side for the model comparison workflow (docs/model_validation.md).
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import pymc as pm
@@ -53,6 +53,11 @@ from .net_billthrough import assert_model_frame_net_billthrough_complete
 from .schema import ModelSpec
 from .transformations import pt_geometric_adstock_matrix, pt_hill_function
 from .named_event_fit_inputs import NamedEventFitInputs
+from .experiment_lift_test_mapping import (
+    ModelLiftTestCalibrationInput,
+    attach_lift_test_calibration_terms,
+    calibration_inputs_fingerprint,
+)
 from .named_event_response import (
     EVENT_RESPONSE_SHRINKAGE_PRIOR_DEFAULT_SCALE,
     NAMED_EVENT_RESPONSE_STRUCTURE,
@@ -91,6 +96,7 @@ def build_fh_market_specific_model(
     direct_dna_outcome_ids: Optional[List[str]] = None,
     causal_graph: Optional[CausalGraph] = None,
     named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
+    calibration_inputs: Optional[Sequence[ModelLiftTestCalibrationInput]] = None,
 ) -> "tuple[pm.Model, FHModelMeta]":
     """
     Build the market-specific, partially-pooled joint hierarchical FH model
@@ -569,6 +575,21 @@ def build_fh_market_specific_model(
             )
             eta = eta + eta_events
 
+        if calibration_inputs:
+            attach_lift_test_calibration_terms(
+                model=model,
+                sat_media=sat_media,
+                hill_K=hill_K,
+                hill_S=hill_S,
+                beta=beta,
+                eta=eta,
+                channels=channels,
+                outcome_ids=outcome_ids,
+                primary_mask=pathway_masks.primary_matrix(outcome_ids, channels),
+                market_idx=market_idx,
+                inputs=calibration_inputs,
+            )
+
         mu = pm.Deterministic(
             "mu", pt.clip(pt.exp(eta), 1e-6, 1e9), dims=("obs", "outcome")
         )
@@ -630,5 +651,10 @@ def build_fh_market_specific_model(
         named_event_response_definitions_at_fit=consumed_response_definitions,
         named_event_response_method_version=named_event_response_method_version,
         named_event_fit_blocks=named_event_fit_blocks,
+        calibration_inputs_at_fit=[
+            item.to_dict() for item in (calibration_inputs or ())
+        ],
+        calibration_fit_fingerprint=calibration_inputs_fingerprint(calibration_inputs)
+        or "",
     )
     return model, meta

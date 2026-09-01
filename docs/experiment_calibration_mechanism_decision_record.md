@@ -174,6 +174,29 @@ Tests: `ancestry_mmm/tests/test_experiment_lift_test_mapping.py`, and
 `ExperimentRecord`'s new fields are covered by additions to
 `ancestry_mmm/tests/test_experiments.py`.
 
+## Production adapter addendum, 2026-09-01
+
+The repository's production builders are intentionally raw PyMC and do not
+instantiate `pymc_marketing.MMM`. To finish the approved integration without
+duplicating the whole model architecture, the production path now composes
+the same lift-test observation-model semantics through
+`attach_lift_test_calibration_terms` in
+`core.experiment_lift_test_mapping`.
+
+The adapter is intentionally narrower than the upstream API: it requires an
+explicit `ModelLiftTestCalibrationInput` outcome id, accepts only a direct
+primary channel/outcome cell, treats `x` and `delta_x` as prepared model-input
+units, uses the existing Hill response and outcome-scale log link, and adds a
+Gamma observation term for strictly positive observed lift. This is a
+documented custom divergence, not a claim of full PyMC-Marketing API
+equivalence. Any temporal/adstock translation, signed-effect likelihood, and
+`prior_calibration` mechanism remain out of scope and fail closed.
+
+`build_model_for_spec` and Model Training now pass compatible registry rows
+into both raw-PyMC builders. A specific experiment record is still external
+data: no calibration is applied when no valid record, use, assessment, and
+explicit target are present.
+
 ## Owner and status
 
 Owner: Modelling / Platform engineering (mapping contract);

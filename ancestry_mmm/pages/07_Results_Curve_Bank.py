@@ -2189,6 +2189,9 @@ if model_run_id and spec_dict is not None:
                 else None
             ),
             official_preparation_evidence=get_state("official_preparation_result"),
+            calibration_fit_fingerprint=(
+                getattr(meta, "calibration_fit_fingerprint", "") or None
+            ),
         ),
         "posterior_fingerprint": fingerprint_posterior(params),
     }

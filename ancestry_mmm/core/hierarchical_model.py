@@ -21,7 +21,7 @@ of scope here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Sequence, cast
 
 import numpy as np
 import pymc as pm
@@ -58,6 +58,11 @@ from .pathways import (
 )
 from .net_billthrough import assert_model_frame_net_billthrough_complete
 from .named_event_fit_inputs import NamedEventFitInputs
+from .experiment_lift_test_mapping import (
+    ModelLiftTestCalibrationInput,
+    attach_lift_test_calibration_terms,
+    calibration_inputs_fingerprint,
+)
 from .named_event_response import (
     EVENT_RESPONSE_SHRINKAGE_PRIOR_DEFAULT_SCALE,
     NAMED_EVENT_RESPONSE_STRUCTURE,
@@ -225,6 +230,11 @@ class FHModelMeta:
     # None) when no named event was consumed - identical backward-
     # compatibility contract as the two fields above.
     named_event_fit_blocks: List[Any] = field(default_factory=list)
+    # Production calibration provenance (Decision 11): exact positive lift
+    # rows and target outcomes consumed by the fit, plus their identity
+    # component. Empty/"" preserves old bundles and means no calibration term.
+    calibration_inputs_at_fit: List[Any] = field(default_factory=list)
+    calibration_fit_fingerprint: str = ""
 
     def __post_init__(self) -> None:
         if not self.direct_dna_outcome_ids:
@@ -605,6 +615,7 @@ def build_fh_hierarchical_model(
     causal_graph: Optional[CausalGraph] = None,
     search_candidate_a: Optional[CandidateASearchFitInputs] = None,
     named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
+    calibration_inputs: Optional[Sequence[ModelLiftTestCalibrationInput]] = None,
 ) -> "tuple[pm.Model, FHModelMeta]":
     """
     Build the joint hierarchical FH model.
@@ -1410,6 +1421,21 @@ def build_fh_hierarchical_model(
             )
             eta = eta + eta_events
 
+        if calibration_inputs:
+            attach_lift_test_calibration_terms(
+                model=model,
+                sat_media=sat_media,
+                hill_K=hill_K,
+                hill_S=hill_S,
+                beta=beta,
+                eta=eta,
+                channels=channels,
+                outcome_ids=outcome_ids,
+                primary_mask=pathway_masks.primary_matrix(outcome_ids, channels),
+                market_idx=market_idx,
+                inputs=calibration_inputs,
+            )
+
         # Clip is a numerical safety net (not a modelling assumption): eta is
         # a sum of several additive terms before this exp(), so pathological
         # prior draws (e.g. during prior-predictive checks) can otherwise
@@ -1484,5 +1510,10 @@ def build_fh_hierarchical_model(
         named_event_response_definitions_at_fit=consumed_response_definitions,
         named_event_response_method_version=named_event_response_method_version,
         named_event_fit_blocks=named_event_fit_blocks,
+        calibration_inputs_at_fit=[
+            item.to_dict() for item in (calibration_inputs or ())
+        ],
+        calibration_fit_fingerprint=calibration_inputs_fingerprint(calibration_inputs)
+        or "",
     )
     return model, meta

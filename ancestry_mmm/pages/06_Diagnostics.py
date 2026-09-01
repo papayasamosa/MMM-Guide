@@ -127,7 +127,11 @@ from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
 from ancestry_mmm.core.market_specific_model import build_fh_market_specific_model
 from ancestry_mmm.core.models import fit_model
 from ancestry_mmm.application.model_fit_service import build_model_for_spec
-from ancestry_mmm.core.search_capacity import SEARCH_CANDIDATE_A_ENGINE
+from ancestry_mmm.core.search_capacity import (
+    SEARCH_CANDIDATE_A_ENGINE,
+    CandidateASearchFitInputs,
+)
+from ancestry_mmm.core.google_trends_anchor import GoogleTrendsAnchorFitInputs
 from ancestry_mmm.core.predict import extract_posterior_params, predict_mu
 from ancestry_mmm.core.market_specific_predict import (
     extract_market_specific_posterior_params,
@@ -159,6 +163,9 @@ from ancestry_mmm.core.experiments import (
     CompatibilityAssessment,
     ExperimentRecord,
     ExperimentToModelUse,
+)
+from ancestry_mmm.core.experiment_lift_test_mapping import (
+    ModelLiftTestCalibrationInput,
 )
 
 MODEL_TYPE_LABEL = {
@@ -227,6 +234,54 @@ def _backtest_named_event_replay_inputs(frame, fitted_response_definitions):
         response_definitions=definitions,
         fitted_response_definitions=fitted_response_definitions,
     )
+
+
+def _candidate_a_fit_inputs_for_rebuild():
+    """Restore the exact Candidate A observation boundary for diagnostics.
+
+    Candidate A is an engine choice, not a generic Search label. A calibrated
+    or prior-predictive rebuild must receive the same validated arrays and
+    Trends anchor used by fitting; otherwise Diagnostics would test a
+    different model or silently fall back to the ordinary MMM.
+    """
+    if getattr(meta, "causal_graph_engine", "") != SEARCH_CANDIDATE_A_ENGINE:
+        return None
+    payload = get_state("candidate_a_fit_inputs")
+    if payload is None:
+        raise ValueError(
+            "This fit used Candidate A, but its persisted Search fit inputs "
+            "are unavailable; cannot rebuild the exact fit-time model."
+        )
+    fit_inputs = (
+        payload
+        if isinstance(payload, CandidateASearchFitInputs)
+        else CandidateASearchFitInputs.from_dict(payload)
+    )
+    anchor_payload = get_state("google_trends_anchor")
+    if anchor_payload:
+        anchor = GoogleTrendsAnchorFitInputs.from_dict(anchor_payload)
+        if tuple(anchor.model_weeks) != tuple(
+            str(pd.Timestamp(value).date()) for value in frame["dates"]
+        ):
+            raise ValueError(
+                "The persisted Google Trends anchor no longer covers this "
+                "fit's frame; cannot rebuild the exact model."
+            )
+        from dataclasses import replace
+
+        fit_inputs = replace(fit_inputs, google_trends_anchor=anchor)
+    return fit_inputs
+
+
+def _calibration_inputs_for_rebuild():
+    """Restore fit-pinned calibration inputs from `FHModelMeta`."""
+    payload = getattr(meta, "calibration_inputs_at_fit", []) or []
+    if getattr(meta, "calibration_fit_fingerprint", "") and not payload:
+        raise ValueError(
+            "This fit records calibration identity but not its fit-time rows; "
+            "cannot rebuild the exact calibrated model."
+        )
+    return [ModelLiftTestCalibrationInput.from_dict(item) for item in payload]
 
 
 st.set_page_config(
@@ -421,6 +476,9 @@ if model_run_id and posterior_params is not None and model_spec_dict is not None
                 else None
             ),
             official_preparation_evidence=get_state("official_preparation_result"),
+            calibration_fit_fingerprint=(
+                getattr(meta, "calibration_fit_fingerprint", "") or None
+            ),
         ),
         posterior_fingerprint=fingerprint_posterior(posterior_params),
     )
@@ -1875,16 +1933,10 @@ def _rebuild_fit_time_model():
 
     WP3 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`): routes
     through `application.model_fit_service.build_model_for_spec` (the same
-    engine-selection adapter Model Training uses) instead of the previous
-    inline shared/market-specific ternary, which silently rebuilt the
-    *ordinary* model - dropping the entire Candidate A Search chain - for
-    any fit whose approved graph required the Candidate A engine. No UI on
-    this page (or Model Training) yet collects Candidate A Search
-    observations into session state, so `build_model_for_spec` currently
-    fails closed with a specific `ModelFitServiceError` for such a fit
-    instead: an honest "cannot rebuild" error is safer than a silently
-    wrong prior-predictive/predictive-density check against the wrong
-    model structure.
+    engine-selection adapter Model Training uses), restoring both the
+    fit-pinned Candidate A Search boundary and fit-pinned calibration terms.
+    If either boundary is unavailable or stale, the rebuild fails closed with
+    an explicit evidence error rather than checking the wrong model.
     """
     rebuild_spec = ModelSpec.from_dict(get_state("model_spec"))
     rebuild_causal_graph = None
@@ -1928,6 +1980,8 @@ def _rebuild_fit_time_model():
         direct_dna_outcome_ids=meta.direct_dna_outcome_ids,
         causal_graph=rebuild_causal_graph,
         search_objects=get_state("search_objects") or [],
+        candidate_a_fit_inputs=_candidate_a_fit_inputs_for_rebuild(),
+        calibration_inputs=_calibration_inputs_for_rebuild(),
     )
     return result.model
 
@@ -2749,11 +2803,10 @@ with st.expander("Experiment & calibration evidence", expanded=False):
         "individually attributed evidence groups - never averaged into one "
         "score, and never used to silently override this model's fitted "
         "estimates. Provenance below comes from the governed experiment "
-        "registry (adopted on the Data Sources page); declaring a use here "
-        "records evidence mode and target identity only - no calibration "
-        "method runs in this application, so the calibrated-vs-uncalibrated "
-        "comparison stays empty until an approved calibration mechanism "
-        "exists."
+        "registry (adopted on the Data Sources page). A compatible, positive "
+        "direct likelihood-calibration use is attached to the next model fit "
+        "through the raw-PyMC lift-test adapter; prior calibration and local "
+        "or otherwise inapplicable experiments remain evidence-only."
     )
     ec_section = diag_artefact.experiment_calibration if diag_artefact else None
 
@@ -2901,8 +2954,9 @@ with st.expander("Experiment & calibration evidence", expanded=False):
     ):
         st.info(
             "No experiment uses are registered for the current model, and no "
-            "calibrated-model comparison exists (no calibration mechanism is "
-            "implemented in this application)."
+            "calibrated-model comparison is available. A valid compatible "
+            "likelihood-calibration use is applied on the next fit; a specific "
+            "experiment record is still required."
         )
 
     render_next_step("diagnostics")

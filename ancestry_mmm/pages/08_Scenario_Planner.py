@@ -75,6 +75,13 @@ from ancestry_mmm.core.planning.value import (
     ScenarioValueAssumptions,
     build_scenario_value_assumptions,
 )
+from ancestry_mmm.core.outcome_valuation import (
+    VALUATION_KIND_DNA_REVENUE,
+    VALUATION_KIND_FH_LTR,
+    WeeklyOutcomeValuationRecord,
+)
+from ancestry_mmm.core.outcome_valuation_rates import derive_weekly_value_rates
+from ancestry_mmm.core.planning.value_prefill import suggest_value_prefill
 from ancestry_mmm.core.planning.planned_activity import (
     PromotionPeriod,
     materialize_promo_future,
@@ -910,6 +917,9 @@ if model_run_id and spec_dict is not None:
                 else None
             ),
             official_preparation_evidence=get_state("official_preparation_result"),
+            calibration_fit_fingerprint=(
+                getattr(meta, "calibration_fit_fingerprint", "") or None
+            ),
         ),
         "posterior_fingerprint": fingerprint_posterior(params),
     }
@@ -1782,6 +1792,60 @@ def _render_scenario_value_assumptions_editor(
     }
     stored = get_state("scenario_value_assumptions") or {}
 
+    prefill_suggestions: dict[tuple[str, str], object] = {}
+    valuation_payload = get_state("outcome_valuation_records") or []
+    if valuation_payload:
+        try:
+            valuation_records = [
+                WeeklyOutcomeValuationRecord.from_dict(item)
+                for item in valuation_payload
+            ]
+            observed_rows = []
+            for row_index, date_value in enumerate(frame["dates"]):
+                for outcome_index, outcome_id in enumerate(meta.outcome_ids):
+                    observed_rows.append(
+                        {
+                            "market": str(
+                                meta.markets[int(frame["market_idx"][row_index])]
+                            ),
+                            "week": str(pd.Timestamp(date_value).date()),
+                            "segment": outcome_labels.get(outcome_id, outcome_id),
+                            "outcome_id": outcome_id,
+                            "count": float(frame["Y"][row_index, outcome_index]),
+                        }
+                    )
+            value_rates, prefill_issues = derive_weekly_value_rates(
+                valuation_records, pd.DataFrame(observed_rows)
+            )
+            if prefill_issues:
+                st.warning(
+                    "Some historical value rates could not be derived and are not "
+                    "available as suggestions: " + "; ".join(prefill_issues[:3])
+                )
+            for outcome_id in fh_target_ids:
+                suggestion = suggest_value_prefill(
+                    value_rates,
+                    valuation_kind=VALUATION_KIND_FH_LTR,
+                    market=market,
+                    segment=outcome_labels.get(outcome_id, outcome_id),
+                )
+                if suggestion is not None:
+                    prefill_suggestions[("fh", outcome_id)] = suggestion
+            for outcome_id in dna_target_ids:
+                suggestion = suggest_value_prefill(
+                    value_rates,
+                    valuation_kind=VALUATION_KIND_DNA_REVENUE,
+                    market=market,
+                    segment=outcome_labels.get(outcome_id, outcome_id),
+                )
+                if suggestion is not None:
+                    prefill_suggestions[("dna", outcome_id)] = suggestion
+        except (TypeError, ValueError, KeyError) as exc:
+            st.warning(
+                "Historical value prefill is unavailable because the governed "
+                f"valuation catalogue is invalid: {exc}"
+            )
+
     with st.expander("Economic value assumptions (forward, for this scenario)"):
         st.caption(
             "Explicit future value assumptions for this scenario only - "
@@ -1789,6 +1853,12 @@ def _render_scenario_value_assumptions_editor(
             "data. Distinct from the Results page's historical ROI, "
             "which reports what already happened."
         )
+        if not valuation_payload:
+            st.info(
+                "No governed historical valuation catalogue is loaded for this "
+                "project. Enter an explicit forward assumption; the app will not "
+                "reuse historical realised values automatically."
+            )
         currency = st.text_input(
             "Currency (ISO-3)",
             value=stored.get("currency") or default_currency or "",
@@ -1803,11 +1873,25 @@ def _render_scenario_value_assumptions_editor(
                 default_value = (stored.get("fh_value_by_outcome_id") or {}).get(
                     oid, 0.0
                 )
+                widget_key = f"sva_fh_{oid}"
+                suggestion = prefill_suggestions.get(("fh", oid))
+                if suggestion is not None:
+                    st.caption(
+                        f"Governed suggestion: {suggestion.suggested_value:.2f} "
+                        f"{suggestion.currency} (week {suggestion.source_week}; "
+                        "most recent observed rate). This is not applied automatically."
+                    )
+                    if st.button(
+                        "Use governed suggestion",
+                        key=f"sva_prefill_fh_{oid}",
+                    ):
+                        st.session_state[widget_key] = float(suggestion.suggested_value)
+                        st.rerun()
                 fh_values[oid] = st.number_input(
                     f"{outcome_labels.get(oid, oid)} ({oid})",
                     min_value=0.0,
-                    value=float(default_value),
-                    key=f"sva_fh_{oid}",
+                    value=float(st.session_state.get(widget_key, default_value)),
+                    key=widget_key,
                 )
 
         dna_mode = DNA_VALUE_MODE_OVERALL
@@ -1829,6 +1913,10 @@ def _render_scenario_value_assumptions_editor(
                 else DNA_VALUE_MODE_SEGMENT_SPECIFIC
             )
             if dna_mode == DNA_VALUE_MODE_OVERALL:
+                st.caption(
+                    "Overall DNA value has no single-cell historical prefill. "
+                    "Enter an explicit governed assumption or choose segment-specific values."
+                )
                 stored_dna = stored.get("dna_value_by_outcome_id") or {}
                 default_overall = next(iter(stored_dna.values()), 0.0)
                 dna_overall_value = st.number_input(
@@ -1842,11 +1930,27 @@ def _render_scenario_value_assumptions_editor(
                     default_value = (stored.get("dna_value_by_outcome_id") or {}).get(
                         oid, 0.0
                     )
+                    widget_key = f"sva_dna_{oid}"
+                    suggestion = prefill_suggestions.get(("dna", oid))
+                    if suggestion is not None:
+                        st.caption(
+                            f"Governed suggestion: {suggestion.suggested_value:.2f} "
+                            f"{suggestion.currency} (week {suggestion.source_week}; "
+                            "most recent observed rate). This is not applied automatically."
+                        )
+                        if st.button(
+                            "Use governed suggestion",
+                            key=f"sva_prefill_dna_{oid}",
+                        ):
+                            st.session_state[widget_key] = float(
+                                suggestion.suggested_value
+                            )
+                            st.rerun()
                     dna_values[oid] = st.number_input(
                         f"{outcome_labels.get(oid, oid)} ({oid})",
                         min_value=0.0,
-                        value=float(default_value),
-                        key=f"sva_dna_{oid}",
+                        value=float(st.session_state.get(widget_key, default_value)),
+                        key=widget_key,
                     )
 
         if not currency or len(currency) != 3:
