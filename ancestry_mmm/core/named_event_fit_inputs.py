@@ -146,6 +146,87 @@ class NamedEventFitInputs:
         return tuple(seen)
 
 
+def build_named_event_fit_inputs_for_replay(
+    frame: Mapping[str, Any],
+    *,
+    families: Sequence[NamedEventFamily],
+    occurrences: Sequence[NamedEventOccurrence],
+    response_definitions: Sequence[EventResponseDefinition],
+    fitted_response_definitions: Sequence[Tuple[str, int]],
+) -> NamedEventFitInputs:
+    """Replay-time counterpart of `build_named_event_fit_inputs` - closes
+    the predict/scenario-replay gap `core.predict.predict_mu`/
+    `core.market_specific_predict.predict_mu_market_specific`/
+    `core.sequential_simulation.simulate_sequential_outcomes` raise
+    `NamedEventReplayNotSupportedError` for (a fit that consumed a
+    named-event response term).
+
+    Two deliberate differences from `build_named_event_fit_inputs`, both
+    required for a *replay* (as opposed to a *fit*) call:
+
+    1. **`response_definitions` is pinned to the exact fit-time version**,
+       via `fitted_response_definitions` (`meta.named_event_response_
+       definitions_at_fit` - `(response_definition_id, response_definition_
+       version)` pairs recorded at fit time). Replaying MUST use the exact
+       window (`max_lead`/`max_lag`) and outcome scope that produced the
+       already-fitted `event_coefs_<family>_<market>` posterior - using
+       whatever the registry's *current* version happens to be today would
+       silently mismatch the basis width (if the window changed since
+       fitting) or the outcome scope, against coefficients that do not
+       know about that change. `occurrences`/`families` are NOT pinned -
+       using the CURRENT registry for occurrences is exactly what lets a
+       replay frame that extends into future weeks pick up a future,
+       not-yet-occurred occurrence of the same family/event automatically
+       (see point 2) - this mirrors `core.planning.future_context`'s own
+       "Promotions/events" contract (REQ-SCEN-002: "an explicit planned
+       value or approved event schedule for every future period").
+    2. **Never returns `None`.** `build_named_event_fit_inputs` returns
+       `None` at FIT time to mean "nothing opted in - add nothing to the
+       model graph at all," a meaning specific to the fit-time byte-for-
+       byte-unchanged contract. At replay time the caller already knows
+       (from `meta.named_event_response_definitions_at_fit` being
+       non-empty) that named events were fit; this function's only job is
+       to say what applies to THIS replay frame, and "nothing in this
+       particular frame's date range" is a legitimate, non-exceptional
+       empty result (e.g. a short backtest window with no event in it) -
+       represented as a `NamedEventFitInputs` with an empty `blocks`
+       tuple, never `None`. This is what lets `predict_mu`'s own
+       `named_event_fit_inputs` parameter use `None` to mean specifically
+       "the caller did not attempt replay support at all" (still raises)
+       versus an actual (possibly block-empty) `NamedEventFitInputs`
+       instance (replay support was attempted; compute whatever applies).
+
+    A (family, market) block this function builds for the replay frame
+    that was never actually fit (no corresponding `event_coefs_<family>_
+    <market>` posterior exists - e.g. a market's first-ever occurrence of
+    this family falls inside the replay window but not inside the
+    historical fit window) is handled downstream by `predict_mu`/
+    `predict_mu_market_specific` treating it as a zero contribution
+    (mirroring every other "coefficient not found" default already in
+    those modules, e.g. `outcome_control_coef.get(name, 0.0)`) - a direct,
+    mechanical consequence of Decision 12's own already-approved
+    "unpooled per market/family by default" choice (no pooling mechanism
+    exists to borrow strength from another market's coefficients, so zero
+    is the only defensible default without inventing a new, unapproved
+    pooling mechanism), never a new business decision.
+    """
+    fitted_pairs = {tuple(pair) for pair in fitted_response_definitions}
+    pinned_definitions = [
+        d
+        for d in response_definitions
+        if (d.response_definition_id, d.response_definition_version) in fitted_pairs
+    ]
+    result = build_named_event_fit_inputs(
+        frame,
+        families=families,
+        occurrences=occurrences,
+        response_definitions=pinned_definitions,
+    )
+    if result is not None:
+        return result
+    return NamedEventFitInputs(blocks=(), shrinkage_prior_scale_by_family={})
+
+
 def build_named_event_fit_inputs(
     frame: Mapping[str, Any],
     *,

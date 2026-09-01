@@ -212,6 +212,19 @@ class FHModelMeta:
     # unchanged.
     named_event_response_definitions_at_fit: List[Any] = field(default_factory=list)
     named_event_response_method_version: str = ""
+    # Production integration (predict/scenario-replay gap closure): exactly
+    # which `(family_id, market)` pairs actually got their own
+    # `event_coefs_<family_id>_<market>` posterior variable at fit time -
+    # i.e. `[(b.family_id, b.market) for b in named_event_fit_inputs.blocks]`.
+    # `core.predict.predict_mu`/`core.market_specific_predict.
+    # predict_mu_market_specific` consult this (never string-parsing a
+    # variable name back apart) to know which replay-time design blocks
+    # have a real posterior coefficient to dot against versus which ones
+    # (e.g. a market's first-ever occurrence of a family, present in a
+    # replay frame but never fit) must contribute zero. Empty list (never
+    # None) when no named event was consumed - identical backward-
+    # compatibility contract as the two fields above.
+    named_event_fit_blocks: List[Any] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.direct_dna_outcome_ids:
@@ -1351,11 +1364,15 @@ def build_fh_hierarchical_model(
         # -----------------------------------------------------------------
         consumed_response_definitions: List[Any] = []
         named_event_response_method_version = ""
+        named_event_fit_blocks: List[Any] = []
         if named_event_fit_inputs is not None:
             named_event_response_method_version = NAMED_EVENT_RESPONSE_STRUCTURE
             consumed_response_definitions = list(
                 named_event_fit_inputs.consumed_response_definitions()
             )
+            named_event_fit_blocks = [
+                (b.family_id, b.market) for b in named_event_fit_inputs.blocks
+            ]
             eta_events = pt.zeros((n_obs, n_outcomes))
             for family_id in named_event_fit_inputs.family_ids:
                 family_tau = pm.HalfNormal(
@@ -1466,5 +1483,6 @@ def build_fh_hierarchical_model(
         media_input_scales=media_input_scales,
         named_event_response_definitions_at_fit=consumed_response_definitions,
         named_event_response_method_version=named_event_response_method_version,
+        named_event_fit_blocks=named_event_fit_blocks,
     )
     return model, meta

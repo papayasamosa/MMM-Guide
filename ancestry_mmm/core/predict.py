@@ -21,7 +21,7 @@ budget optimisers use; it is documented here rather than hidden.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Protocol
 
 import numpy as np
@@ -36,6 +36,7 @@ from .transformations import (
 )
 from .hierarchical_model import FHModelMeta
 from .control_scaling import apply_control_mapping_scaling, apply_control_scaling
+from .named_event_fit_inputs import NamedEventFitInputs
 from .outcomes import (
     dna_kit_sale_outcome_ids,
     fh_gsa_outcome_ids,
@@ -68,29 +69,33 @@ class NamedEventReplayNotSupportedError(ValueError):
     """Raised by `predict_mu` (and therefore every caller: curves, scenario
     planning, backtest, optimisation) for a fit that consumed a named-event
     response term (`core.named_event_fit_inputs`, Decision 12) -
-    `meta.named_event_response_definitions_at_fit` non-empty.
+    `meta.named_event_response_definitions_at_fit` non-empty - UNLESS the
+    caller also supplies this call's `named_event_fit_inputs` parameter
+    (a `core.named_event_fit_inputs.NamedEventFitInputs` built for the
+    frame being replayed, typically via `core.named_event_fit_inputs.
+    build_named_event_fit_inputs_for_replay`).
 
-    Mirrors `CandidateAReplayNotSupportedError` exactly, for the identical
-    reason: this NumPy replay reconstructs `eta` from intercept/market/
-    trend/season/channels/promo/controls only - it has no term for the
-    `event_coefs_<family>_<market>` contribution `core.hierarchical_model`/
-    `core.market_specific_model` add when `named_event_fit_inputs` is
-    supplied at fit time. Recomputing that term for an arbitrary
-    (possibly future/hypothetical) `frame` also needs the governed
-    registry itself (which family/occurrences/response definitions
-    applied), which this function is never given - unlike the fit-time
-    design matrix, it cannot simply be recomputed from `frame` alone.
-    Before this guard existed, curves/scenario planning/backtest/
-    optimisation for any project using named events would silently
-    evaluate a `mu` missing that entire pathway's contribution - never
-    raising, never warning, and biased specifically in the weeks that
-    matter most (the planted event windows). A hard failure here rather
-    than a plausible-but-wrong number is the correct way to keep this
-    disabled until predict/scenario-replay integration (a separate,
-    materially statistical follow-up of its own - it also requires
-    deciding whether/how a *future*, not-yet-occurred event should be
-    represented in a scenario frame, which no record approves today) is
-    done.
+    This NumPy replay reconstructs `eta` from intercept/market/trend/
+    season/channels/promo/controls (plus, when supplied, the named-event
+    term below) only - it has no way to recompute the `event_coefs_
+    <family>_<market>` contribution `core.hierarchical_model`/
+    `core.market_specific_model` add at fit time from `frame` alone: doing
+    so needs the governed registry itself (which family/occurrences/
+    response definitions applied), which this function is never given by
+    default - unlike every other term, it is not a pure function of
+    `frame`/`meta`/`params`. Before this guard existed, curves/scenario
+    planning/backtest/optimisation for any project using named events
+    would silently evaluate a `mu` missing that entire pathway's
+    contribution - never raising, never warning, and biased specifically
+    in the weeks that matter most (the planted event windows). A caller
+    that does not (yet) supply `named_event_fit_inputs` still gets this
+    hard failure rather than a plausible-but-wrong number; a caller that
+    does gets the correct, already-fitted-coefficient replay (including
+    correctly into a scenario frame that extends into future weeks - see
+    `build_named_event_fit_inputs_for_replay`'s own docstring for why that
+    needs no new decision: the governed registry's occurrence dates,
+    including future/planned ones, drive the same relative-offset spline
+    basis used at fit time either way).
     """
 
 
@@ -120,6 +125,49 @@ class FHPosteriorParams:
     alpha: Dict[str, float]
     control_coef: Dict[str, float]
     outcome_control_coef: Dict[str, Dict[str, float]]  # [outcome_id][control_name]
+    # Production integration (predict/scenario-replay gap closure, Decision
+    # 12): event_coefs[family_id][market] -> the fitted `event_coefs_
+    # <family_id>_<market>` posterior vector (n_basis,). Empty dict (never
+    # populated) for any fit before this field existed, or any fit that
+    # never consumed a named-event response term - see `predict_mu`'s own
+    # handling of `meta.named_event_fit_blocks`.
+    event_coefs: Dict[str, Dict[str, np.ndarray]] = field(default_factory=dict)
+
+
+def extract_event_coefs(
+    trace: az.InferenceData,
+    meta: FHModelMeta,
+    at: Optional[tuple[int, int]] = None,
+) -> Dict[str, Dict[str, np.ndarray]]:
+    """`event_coefs[family_id][market]` (predict/scenario-replay gap
+    closure, Decision 12) - the fitted `event_coefs_<family_id>_<market>`
+    posterior vector for every `(family_id, market)` pair actually fit
+    (`meta.named_event_fit_blocks` - set once, at fit time, from
+    `named_event_fit_inputs.blocks`; never reconstructed by parsing the
+    variable name back apart, which would be ambiguous whenever a
+    family_id or market itself contains an underscore).
+
+    Shared by `extract_posterior_params` (Model A) and `core.
+    market_specific_predict.extract_market_specific_posterior_params`
+    (Model C) - the variable is named and fit identically by both model
+    builders (`core.hierarchical_model.build_fh_hierarchical_model`/
+    `core.market_specific_model.build_fh_market_specific_model`)."""
+    post = trace.posterior
+
+    def _reduce(da):
+        if at is not None:
+            return da.isel(chain=at[0], draw=at[1])
+        return da.mean(dim=["chain", "draw"])
+
+    event_coefs: Dict[str, Dict[str, np.ndarray]] = {}
+    for family_id, market in meta.named_event_fit_blocks:
+        var_name = f"event_coefs_{family_id}_{market}"
+        if var_name not in post:
+            continue
+        event_coefs.setdefault(family_id, {})[market] = np.asarray(
+            _reduce(post[var_name]).values
+        )
+    return event_coefs
 
 
 def extract_pathway_strength(
@@ -252,6 +300,8 @@ def extract_posterior_params(
                 n: float(v_reduced.sel({coord_name: n}).values) for n in names
             }
 
+    event_coefs = extract_event_coefs(trace, meta, at=at)
+
     return FHPosteriorParams(
         decay_rate=decay_rate,
         hill_K=hill_K,
@@ -266,6 +316,7 @@ def extract_posterior_params(
         alpha=alpha,
         control_coef=control_coef,
         outcome_control_coef=outcome_control_coef,
+        event_coefs=event_coefs,
     )
 
 
@@ -299,6 +350,62 @@ def lag_frame(X: np.ndarray, market_bounds: List[tuple], lag_weeks: int) -> np.n
         else:
             out[start + lag_weeks : end] = X[start : end - lag_weeks]
     return out
+
+
+class _HasEventCoefs(Protocol):
+    """Structural type both `FHPosteriorParams` (Model A) and
+    `core.market_specific_predict.FHMarketSpecificPosteriorParams` (Model
+    C) satisfy - only `event_coefs` is needed by `_named_event_eta_
+    contribution`, mirroring `_HasPathwayStrength`'s identical role/reason
+    just below."""
+
+    event_coefs: Dict[str, Dict[str, np.ndarray]]
+
+
+def _named_event_eta_contribution(
+    meta: FHModelMeta,
+    params: _HasEventCoefs,
+    named_event_fit_inputs: NamedEventFitInputs,
+    n_obs: int,
+    outcome_ids: List[str],
+) -> np.ndarray:
+    """The additive named-event `eta` contribution, replaying already-
+    fitted `event_coefs_<family_id>_<market>` posterior coefficients
+    against `named_event_fit_inputs`'s design blocks for THIS replay
+    frame - the exact mirror of `core.hierarchical_model.
+    build_fh_hierarchical_model`'s fit-time `eta_events` construction
+    (same design-times-coefficients dot product, same outcome-scope
+    restriction), just in NumPy against a fixed coefficient vector
+    instead of PyMC against a random variable.
+
+    A block whose `(family_id, market)` was never actually fit (not in
+    `meta.named_event_fit_blocks`, or the trace was missing that specific
+    variable at extraction time) contributes zero, never fabricated or
+    borrowed from another market - see `build_named_event_fit_inputs_
+    for_replay`'s docstring for why this is a mechanical consequence of
+    Decision 12's own already-approved unpooled-by-default choice, not a
+    new business decision.
+    """
+    fit_blocks = {tuple(pair) for pair in meta.named_event_fit_blocks}
+    eta_events = np.zeros((n_obs, len(outcome_ids)))
+    for event_block in named_event_fit_inputs.blocks:
+        if (event_block.family_id, event_block.market) not in fit_blocks:
+            continue
+        coefs = params.event_coefs.get(event_block.family_id, {}).get(
+            event_block.market
+        )
+        if coefs is None:
+            continue
+        contrib = event_block.design @ coefs
+        if event_block.outcome_scope:
+            for scoped_outcome in event_block.outcome_scope:
+                if scoped_outcome not in outcome_ids:
+                    continue
+                o_idx = outcome_ids.index(scoped_outcome)
+                eta_events[:, o_idx] += contrib
+        else:
+            eta_events += contrib[:, None]
+    return eta_events
 
 
 class _HasPathwayStrength(Protocol):
@@ -388,6 +495,7 @@ def predict_mu(
     params: FHPosteriorParams,
     *,
     precomputed_sat_media: Optional[np.ndarray] = None,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> np.ndarray:
     """
     Replay the model's full linear predictor in NumPy for an arbitrary frame
@@ -398,6 +506,14 @@ def predict_mu(
 
     Raises `CandidateAReplayNotSupportedError` for a Candidate A fit - see
     that exception's docstring.
+
+    Raises `NamedEventReplayNotSupportedError` for a fit that consumed a
+    named-event response term UNLESS `named_event_fit_inputs` is supplied
+    (typically built via `core.named_event_fit_inputs.
+    build_named_event_fit_inputs_for_replay` against this same `frame`) -
+    see that exception's docstring for the full reasoning and
+    `_named_event_eta_contribution` for how the supplied design blocks are
+    replayed against `params.event_coefs`.
 
     `precomputed_sat_media` (WP5, `Media-Mix-Lab: Coding LLM Next Steps
     After PR #253`, sequential simulation kernel): when given, this exact
@@ -419,14 +535,15 @@ def predict_mu(
             "backtest, and optimisation are not yet available for a "
             "Candidate A fit. See REPO_REVIEW_AND_NEXT_STEPS.md."
         )
-    if meta.named_event_response_definitions_at_fit:
+    if meta.named_event_response_definitions_at_fit and named_event_fit_inputs is None:
         raise NamedEventReplayNotSupportedError(
-            "predict_mu does not yet represent this fit's named-event "
-            "response term (event_coefs_<family>_<market>) - curves, "
-            "scenario planning, backtest, and optimisation are not yet "
-            "available for a fit that consumed a named-event response "
-            f"definition. Consumed: "
-            f"{meta.named_event_response_definitions_at_fit!r}."
+            "predict_mu does not represent this fit's named-event response "
+            "term (event_coefs_<family>_<market>) unless the caller supplies "
+            "named_event_fit_inputs (see core.named_event_fit_inputs."
+            "build_named_event_fit_inputs_for_replay) - curves, scenario "
+            "planning, backtest, and optimisation are not available for a "
+            "fit that consumed a named-event response definition without "
+            f"it. Consumed: {meta.named_event_response_definitions_at_fit!r}."
         )
     outcome_ids = meta.outcome_ids
     n_obs = (
@@ -535,6 +652,11 @@ def predict_mu(
             meta.control_scaling,
         )
         eta += (scaled_controls @ coefs)[:, None]
+
+    if named_event_fit_inputs is not None:
+        eta = eta + _named_event_eta_contribution(
+            meta, params, named_event_fit_inputs, n_obs, outcome_ids
+        )
 
     mu = np.clip(np.exp(eta), 1e-6, 1e9)
     return mu

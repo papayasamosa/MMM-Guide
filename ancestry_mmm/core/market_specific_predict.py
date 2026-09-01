@@ -12,7 +12,7 @@ matching core.market_specific_model's structure exactly.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import arviz as az
@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 
 from .hierarchical_model import FHModelMeta
+from .named_event_fit_inputs import NamedEventFitInputs
 from .outcomes import (
     dna_kit_sale_outcome_ids,
     fh_gsa_outcome_ids,
@@ -29,7 +30,9 @@ from .outcomes import (
 from .predict import (
     NamedEventReplayNotSupportedError,
     _cross_product_strength_matrix,
+    _named_event_eta_contribution,
     _pathway_weight,
+    extract_event_coefs,
     extract_pathway_strength,
     lag_frame,
 )
@@ -65,6 +68,10 @@ class FHMarketSpecificPosteriorParams:
     alpha: Dict[str, float]
     control_coef: Dict[str, float]
     outcome_control_coef: Dict[str, Dict[str, float]]
+    # See core.predict.FHPosteriorParams.event_coefs - identical role/shape,
+    # not market-specific in structure (the market key already lives inside
+    # this dict, same as core.predict's).
+    event_coefs: Dict[str, Dict[str, np.ndarray]] = field(default_factory=dict)
 
 
 def extract_market_specific_posterior_params(
@@ -155,6 +162,8 @@ def extract_market_specific_posterior_params(
                 n: float(v_reduced.sel({coord_name: n}).values) for n in names
             }
 
+    event_coefs = extract_event_coefs(trace, meta, at=at)
+
     return FHMarketSpecificPosteriorParams(
         decay_rate=decay_rate,
         hill_K=hill_K,
@@ -169,6 +178,7 @@ def extract_market_specific_posterior_params(
         alpha=alpha,
         control_coef=control_coef,
         outcome_control_coef=outcome_control_coef,
+        event_coefs=event_coefs,
     )
 
 
@@ -198,6 +208,7 @@ def predict_mu_market_specific(
     params: FHMarketSpecificPosteriorParams,
     *,
     precomputed_sat_media: Optional[np.ndarray] = None,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> np.ndarray:
     """Replay Model C's full linear predictor in NumPy. Returns mu, shape
     (n_obs, n_outcomes), matching frame["outcome_ids"] order - same contract
@@ -207,15 +218,18 @@ def predict_mu_market_specific(
     parameter (WP5, `Media-Mix-Lab: Coding LLM Next Steps After PR #253`).
 
     Raises `NamedEventReplayNotSupportedError` for a fit that consumed a
-    named-event response term - see that exception's docstring in
-    `core.predict` (identical reasoning, mirrored here for Model C)."""
-    if meta.named_event_response_definitions_at_fit:
+    named-event response term UNLESS `named_event_fit_inputs` is supplied -
+    see that exception's docstring in `core.predict` (identical reasoning
+    and API, mirrored here for Model C)."""
+    if meta.named_event_response_definitions_at_fit and named_event_fit_inputs is None:
         raise NamedEventReplayNotSupportedError(
-            "predict_mu_market_specific does not yet represent this fit's "
-            "named-event response term (event_coefs_<family>_<market>) - "
-            "curves, scenario planning, backtest, and optimisation are not "
-            "yet available for a fit that consumed a named-event response "
-            f"definition. Consumed: "
+            "predict_mu_market_specific does not represent this fit's "
+            "named-event response term (event_coefs_<family>_<market>) "
+            "unless the caller supplies named_event_fit_inputs (see core."
+            "named_event_fit_inputs.build_named_event_fit_inputs_for_replay) "
+            "- curves, scenario planning, backtest, and optimisation are "
+            "not available for a fit that consumed a named-event response "
+            f"definition without it. Consumed: "
             f"{meta.named_event_response_definitions_at_fit!r}."
         )
     outcome_ids = meta.outcome_ids
@@ -324,6 +338,11 @@ def predict_mu_market_specific(
     if control_names and params.control_coef:
         coefs = np.array([params.control_coef.get(n, 0.0) for n in control_names])
         eta += (frame["X_controls"] @ coefs)[:, None]
+
+    if named_event_fit_inputs is not None:
+        eta = eta + _named_event_eta_contribution(
+            meta, params, named_event_fit_inputs, n_obs, outcome_ids
+        )
 
     mu = np.clip(np.exp(eta), 1e-6, 1e9)
     return mu

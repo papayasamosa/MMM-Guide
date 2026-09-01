@@ -523,11 +523,15 @@ def build_fh_market_specific_model(
         # -----------------------------------------------------------------
         consumed_response_definitions: List[Any] = []
         named_event_response_method_version = ""
+        named_event_fit_blocks: List[Any] = []
         if named_event_fit_inputs is not None:
             named_event_response_method_version = NAMED_EVENT_RESPONSE_STRUCTURE
             consumed_response_definitions = list(
                 named_event_fit_inputs.consumed_response_definitions()
             )
+            named_event_fit_blocks = [
+                (b.family_id, b.market) for b in named_event_fit_inputs.blocks
+            ]
             eta_events = pt.zeros((n_obs, n_outcomes))
             for family_id in named_event_fit_inputs.family_ids:
                 family_tau = pm.HalfNormal(
@@ -580,7 +584,6 @@ def build_fh_market_specific_model(
             "y_obs", mu=mu, alpha=alpha[None, :], observed=Y, dims=("obs", "outcome")
         )
 
-    outcome_catalogue: List[Any] = frame.get("outcomes") or []
     meta = FHModelMeta(
         markets=markets,
         outcome_ids=outcome_ids,
@@ -626,5 +629,6 @@ def build_fh_market_specific_model(
         ),
         named_event_response_definitions_at_fit=consumed_response_definitions,
         named_event_response_method_version=named_event_response_method_version,
+        named_event_fit_blocks=named_event_fit_blocks,
     )
     return model, meta

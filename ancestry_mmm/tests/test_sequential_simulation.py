@@ -1176,6 +1176,280 @@ class TestUnsupportedGraphRolesFailClosed:
         with pytest.raises(NamedEventReplayNotSupportedError):
             simulate_sequential_outcomes(plan, carry_in, meta, params)
 
+    def test_named_event_meta_raises_for_market_specific_outcome_level_replay(self):
+        """Model C's `simulate_sequential_outcomes_market_specific` had no
+        explicit early guard of its own before this fix (it only ever
+        failed closed indirectly, via `predict_mu_market_specific`'s own
+        guard) - it now has one, for API parity with Model A."""
+        import dataclasses
+
+        from ancestry_mmm.core.market_specific_predict import (
+            NamedEventReplayNotSupportedError as MarketSpecificNamedEventError,
+        )
+
+        meta = dataclasses.replace(
+            _meta(),
+            named_event_response_definitions_at_fit=[("mothers-day-def", 1)],
+        )
+        params = _market_specific_params()
+        carry_in = SequentialCarryInState(
+            market="UK",
+            channels=tuple(CHANNELS),
+            starting_adstock={"TV": 0.0, "DNA_Media": 0.0},
+            lag_context_sat_media=np.zeros((DNA_LAG_WEEKS, len(CHANNELS))),
+            lag_context_length=DNA_LAG_WEEKS,
+        )
+        plan = _plan_from_media("UK", ["w0"], np.zeros((1, 2)))
+        with pytest.raises(MarketSpecificNamedEventError):
+            simulate_sequential_outcomes_market_specific(plan, carry_in, meta, params)
+
+
+def _named_event_registry_for_sequential_tests():
+    from ancestry_mmm.core.named_event_response import NAMED_EVENT_RESPONSE_STRUCTURE
+    from ancestry_mmm.core.named_events import (
+        EventResponseDefinition,
+        NamedEventFamily,
+        NamedEventOccurrence,
+    )
+
+    family = NamedEventFamily(
+        family_id="mothers_day",
+        family_version=1,
+        display_name="Mother's Day",
+        classification="gifting",
+    )
+    occurrence = NamedEventOccurrence(
+        event_id="md-2026",
+        event_version=1,
+        display_name="Mother's Day 2026",
+        start_date="2026-01-25",
+        end_date="2026-01-25",
+        market_scope=("UK",),
+        source_id="events",
+        family_id="mothers_day",
+    )
+    definition = EventResponseDefinition(
+        response_definition_id="md-def",
+        response_definition_version=1,
+        family_id="mothers_day",
+        treatment="anticipatory",
+        max_lead=3,
+        max_lag=0,
+        transformation_method_reference=NAMED_EVENT_RESPONSE_STRUCTURE,
+    )
+    return family, occurrence, definition
+
+
+class TestSequentialSimulationNamedEventReplay:
+    """Production integration: predict/scenario-replay gap closure
+    (Decision 12) through the sequential (WP5) kernel -
+    `simulate_sequential_outcomes`/`simulate_sequential_outcomes_
+    market_specific`, given a `named_event_fit_inputs` built via
+    `build_named_event_fit_inputs_for_sequential_replay`, must replay the
+    already-fitted event coefficients exactly - a deterministic check,
+    since this delegates the actual arithmetic straight to `core.predict.
+    predict_mu`/`predict_mu_market_specific`, already proven exact in
+    test_predict.py/test_market_specific_predict.py."""
+
+    @staticmethod
+    def _plan_and_carry_in(n_weeks=8):
+        import pandas as pd
+
+        period_labels = tuple(
+            pd.date_range("2026-01-05", periods=n_weeks, freq="W").strftime("%Y-%m-%d")
+        )
+        plan = WeeklyPlan(
+            market="UK",
+            period_labels=period_labels,
+            media_by_channel={c: np.zeros(n_weeks) for c in CHANNELS},
+            promo=np.zeros((n_weeks, len(OUTCOME_IDS))),
+            trend=np.zeros(n_weeks),
+            fourier=np.zeros((n_weeks, N_FOURIER)),
+        )
+        carry_in = SequentialCarryInState(
+            market="UK",
+            channels=tuple(CHANNELS),
+            starting_adstock={c: 0.0 for c in CHANNELS},
+            lag_context_sat_media=np.zeros((0, len(CHANNELS))),
+            lag_context_length=0,
+        )
+        return plan, carry_in
+
+    def test_shared_model_replay_matches_design_times_coefficients(self):
+        from ancestry_mmm.core.sequential_simulation import (
+            build_named_event_fit_inputs_for_sequential_replay,
+        )
+
+        meta = _meta()
+        params = _params()
+        plan, carry_in = self._plan_and_carry_in()
+        family, occurrence, definition = _named_event_registry_for_sequential_tests()
+
+        named_event_meta = replace(
+            meta,
+            named_event_response_definitions_at_fit=[("md-def", 1)],
+            named_event_fit_blocks=[("mothers_day", "UK")],
+        )
+        event_coefs_vector = np.array([0.3, -0.1, 0.2, 0.05, 0.02, 0.01])
+        named_params = replace(
+            params, event_coefs={"mothers_day": {"UK": event_coefs_vector}}
+        )
+
+        fit_inputs = build_named_event_fit_inputs_for_sequential_replay(
+            plan,
+            carry_in,
+            named_event_meta,
+            families=[family],
+            occurrences=[occurrence],
+            response_definitions=[definition],
+        )
+        assert len(fit_inputs.blocks) == 1
+        block = fit_inputs.blocks[0]
+        contrib = block.design @ event_coefs_vector
+        assert np.any(contrib != 0.0)
+
+        baseline = simulate_sequential_outcomes(plan, carry_in, meta, params)
+        with_event = simulate_sequential_outcomes(
+            plan,
+            carry_in,
+            named_event_meta,
+            named_params,
+            named_event_fit_inputs=fit_inputs,
+        )
+        expected = baseline.mu * np.exp(contrib)[:, None]
+        np.testing.assert_allclose(with_event.mu, expected, rtol=1e-10)
+
+    def test_market_specific_replay_matches_design_times_coefficients(self):
+        from ancestry_mmm.core.sequential_simulation import (
+            build_named_event_fit_inputs_for_sequential_replay,
+        )
+
+        meta = _meta()
+        params = _market_specific_params()
+        plan, carry_in = self._plan_and_carry_in()
+        family, occurrence, definition = _named_event_registry_for_sequential_tests()
+
+        named_event_meta = replace(
+            meta,
+            named_event_response_definitions_at_fit=[("md-def", 1)],
+            named_event_fit_blocks=[("mothers_day", "UK")],
+        )
+        event_coefs_vector = np.array([0.3, -0.1, 0.2, 0.05, 0.02, 0.01])
+        named_params = replace(
+            params, event_coefs={"mothers_day": {"UK": event_coefs_vector}}
+        )
+
+        fit_inputs = build_named_event_fit_inputs_for_sequential_replay(
+            plan,
+            carry_in,
+            named_event_meta,
+            families=[family],
+            occurrences=[occurrence],
+            response_definitions=[definition],
+        )
+        contrib = fit_inputs.blocks[0].design @ event_coefs_vector
+        assert np.any(contrib != 0.0)
+
+        baseline = simulate_sequential_outcomes_market_specific(
+            plan, carry_in, meta, params
+        )
+        with_event = simulate_sequential_outcomes_market_specific(
+            plan,
+            carry_in,
+            named_event_meta,
+            named_params,
+            named_event_fit_inputs=fit_inputs,
+        )
+        expected = baseline.mu * np.exp(contrib)[:, None]
+        np.testing.assert_allclose(with_event.mu, expected, rtol=1e-10)
+
+    def test_a_plan_extending_beyond_history_picks_up_a_future_occurrence(self):
+        """A scenario/optimisation plan whose weeks lie beyond the fitted
+        historical range must still pick up a future, not-yet-occurred
+        occurrence of the same family from the CURRENT registry - the
+        exact case the original guard's own docstring flagged as an open
+        question. No new decision is needed: the same relative-offset
+        spline basis applies to any occurrence, historical or future."""
+        from ancestry_mmm.core.sequential_simulation import (
+            build_named_event_fit_inputs_for_sequential_replay,
+        )
+        from ancestry_mmm.core.named_event_response import (
+            NAMED_EVENT_RESPONSE_STRUCTURE,
+        )
+        from ancestry_mmm.core.named_events import (
+            EventResponseDefinition,
+            NamedEventFamily,
+            NamedEventOccurrence,
+        )
+
+        meta = _meta()
+        params = _params()
+        # A plan far in the future relative to any historical fit window.
+        plan, carry_in = self._plan_and_carry_in(n_weeks=6)
+        import pandas as pd
+
+        future_labels = tuple(
+            pd.date_range("2030-01-06", periods=6, freq="W").strftime("%Y-%m-%d")
+        )
+        plan = replace(plan, period_labels=future_labels)
+
+        family = NamedEventFamily(
+            family_id="mothers_day",
+            family_version=1,
+            display_name="Mother's Day",
+            classification="gifting",
+        )
+        future_occurrence = NamedEventOccurrence(
+            event_id="md-2030",
+            event_version=1,
+            display_name="Mother's Day 2030",
+            start_date=str(pd.Timestamp(future_labels[3]).date()),
+            end_date=str(pd.Timestamp(future_labels[3]).date()),
+            market_scope=("UK",),
+            source_id="events",
+            family_id="mothers_day",
+        )
+        definition = EventResponseDefinition(
+            response_definition_id="md-def",
+            response_definition_version=1,
+            family_id="mothers_day",
+            treatment="anticipatory",
+            max_lead=3,
+            max_lag=0,
+            transformation_method_reference=NAMED_EVENT_RESPONSE_STRUCTURE,
+        )
+        named_event_meta = replace(
+            meta,
+            named_event_response_definitions_at_fit=[("md-def", 1)],
+            named_event_fit_blocks=[("mothers_day", "UK")],
+        )
+        fit_inputs = build_named_event_fit_inputs_for_sequential_replay(
+            plan,
+            carry_in,
+            named_event_meta,
+            families=[family],
+            occurrences=[future_occurrence],
+            response_definitions=[definition],
+        )
+        assert len(fit_inputs.blocks) == 1
+        assert np.any(fit_inputs.blocks[0].design != 0.0)
+
+        event_coefs_vector = np.array([0.3, -0.1, 0.2, 0.05, 0.02, 0.01])
+        named_params = replace(
+            params, event_coefs={"mothers_day": {"UK": event_coefs_vector}}
+        )
+        baseline = simulate_sequential_outcomes(plan, carry_in, meta, params)
+        with_event = simulate_sequential_outcomes(
+            plan,
+            carry_in,
+            named_event_meta,
+            named_params,
+            named_event_fit_inputs=fit_inputs,
+        )
+        contrib = fit_inputs.blocks[0].design @ event_coefs_vector
+        expected = baseline.mu * np.exp(contrib)[:, None]
+        np.testing.assert_allclose(with_event.mu, expected, rtol=1e-10)
+
 
 class TestWeeklyPlanValidation:
     def test_missing_channel_raises(self):

@@ -19,6 +19,7 @@ from ancestry_mmm.core.named_event_fit_inputs import (
     NamedEventFamilyFitBlock,
     NamedEventFitInputs,
     build_named_event_fit_inputs,
+    build_named_event_fit_inputs_for_replay,
 )
 from ancestry_mmm.core.named_event_response import NAMED_EVENT_RESPONSE_STRUCTURE
 from ancestry_mmm.core.named_events import (
@@ -301,3 +302,122 @@ class TestMultiWeekOccurrence:
         # would (loosely - exact row count depends on the spline basis).
         nonzero_rows = int(np.any(block.design != 0.0, axis=1).sum())
         assert nonzero_rows > 1
+
+
+class TestBuildNamedEventFitInputsForReplay:
+    """Tests for the predict/scenario-replay gap closure's construction
+    half - `build_named_event_fit_inputs_for_replay`, consumed by
+    `core.predict.predict_mu`/`core.market_specific_predict.
+    predict_mu_market_specific`/`core.sequential_simulation.
+    simulate_sequential_outcomes` via their own `named_event_fit_inputs`
+    parameter."""
+
+    def test_never_returns_none_even_with_no_matching_weeks(self):
+        """Fit-time build_named_event_fit_inputs returns None for "nothing
+        opted in" - the replay counterpart must never return None (see its
+        own docstring): a frame with no event weeks in range is a
+        legitimate empty result, not an exceptional one."""
+        frame = _frame(["UK"], 10, start="2026-01-01")  # ends before March
+        result = build_named_event_fit_inputs_for_replay(
+            frame,
+            families=[_family()],
+            occurrences=[_occurrence()],
+            response_definitions=[_definition()],
+            fitted_response_definitions=[("md-def", 1)],
+        )
+        assert isinstance(result, NamedEventFitInputs)
+        assert result.blocks == ()
+
+    def test_pins_to_the_fit_time_version_not_the_current_registry_version(self):
+        """The registry may have since moved on to version 2 (e.g. an
+        analyst widened the window after this model was fit) - replay must
+        still use the EXACT version that produced the already-fitted
+        event_coefs, never "whatever is current today", or the basis width
+        would silently mismatch the fitted coefficient vector's length."""
+        frame = _frame(["UK"], 20, start="2026-01-01")
+        old_definition = _definition(max_lead=3)  # version 1, fit-time
+        new_definition = _definition(response_definition_version=2, max_lead=5)
+
+        result = build_named_event_fit_inputs_for_replay(
+            frame,
+            families=[_family()],
+            occurrences=[_occurrence()],
+            response_definitions=[old_definition, new_definition],
+            fitted_response_definitions=[("md-def", 1)],  # pinned to v1
+        )
+        assert len(result.blocks) == 1
+        # max_lead=3 -> 4 offsets (-3..0) -> 6 basis functions (2 interior
+        # knots + degree 3 + 1); max_lead=5 would give a wider basis - a
+        # width matching only v1 confirms the pin actually took effect.
+        expected_width = (
+            build_named_event_fit_inputs(
+                frame,
+                families=[_family()],
+                occurrences=[_occurrence()],
+                response_definitions=[old_definition],
+            )
+            .blocks_for_family("mothers_day")[0]
+            .design.shape[1]
+        )
+        assert result.blocks[0].design.shape[1] == expected_width
+        assert result.blocks[0].response_definition_version == 1
+
+    def test_a_response_definition_not_in_fitted_pairs_is_ignored(self):
+        """A response definition that was never actually consumed at fit
+        time (e.g. registered afterwards, or a different family entirely)
+        must never silently start contributing at replay time either."""
+        frame = _frame(["UK"], 20, start="2026-01-01")
+        result = build_named_event_fit_inputs_for_replay(
+            frame,
+            families=[_family()],
+            occurrences=[_occurrence()],
+            response_definitions=[_definition()],
+            fitted_response_definitions=[("some-other-def", 1)],
+        )
+        assert result.blocks == ()
+
+    def test_current_occurrences_include_a_future_occurrence_beyond_the_fit_window(
+        self,
+    ):
+        """A replay frame extending into future weeks must pick up a
+        future, not-yet-occurred occurrence of the same family from the
+        CURRENT registry automatically - occurrences (unlike response
+        definitions) are deliberately NOT pinned to the fit-time set, since
+        a future occurrence could not have existed in that set."""
+        frame = _frame(["UK"], 10, start="2027-01-01")  # a future scenario window
+        future_occurrence = _occurrence(
+            event_id="md-2027", start_date="2027-01-17", end_date="2027-01-17"
+        )
+        result = build_named_event_fit_inputs_for_replay(
+            frame,
+            families=[_family()],
+            occurrences=[future_occurrence],
+            response_definitions=[_definition()],
+            fitted_response_definitions=[("md-def", 1)],
+        )
+        assert len(result.blocks) == 1
+        assert np.any(result.blocks[0].design != 0.0)
+
+    def test_matches_build_named_event_fit_inputs_when_nothing_needs_pinning(self):
+        """When only one version of the response definition exists (the
+        common case), the replay builder's result must be identical to the
+        plain fit-time builder's - the pinning logic is a no-op in this
+        case, not a different construction path."""
+        frame = _frame(["UK"], 20, start="2026-01-01")
+        fit_time_result = build_named_event_fit_inputs(
+            frame,
+            families=[_family()],
+            occurrences=[_occurrence()],
+            response_definitions=[_definition()],
+        )
+        replay_result = build_named_event_fit_inputs_for_replay(
+            frame,
+            families=[_family()],
+            occurrences=[_occurrence()],
+            response_definitions=[_definition()],
+            fitted_response_definitions=[("md-def", 1)],
+        )
+        assert fit_time_result is not None
+        np.testing.assert_allclose(
+            replay_result.blocks[0].design, fit_time_result.blocks[0].design
+        )

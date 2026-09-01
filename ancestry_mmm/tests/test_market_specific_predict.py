@@ -3,6 +3,7 @@ math, mirroring how core.predict's Model A equivalents would be tested
 (hand-constructed FHModelMeta/params/frame, no PyMC/MCMC involved)."""
 
 import numpy as np
+import pandas as pd
 import pytest
 import arviz as az
 
@@ -239,6 +240,132 @@ class TestPredictMuMarketSpecificFailsClosedForNamedEvents:
         assert meta.named_event_response_definitions_at_fit == []
         # Must not raise.
         predict_mu_market_specific(frame, meta, params)
+
+
+class TestPredictMuMarketSpecificNamedEventReplay:
+    """Model C mirror of test_predict.py's
+    TestPredictMuNamedEventReplay - the predict/scenario-replay gap
+    closure (Decision 12), deterministic replay of already-fitted
+    event_coefs_<family>_<market> coefficients."""
+
+    @pytest.fixture
+    def event_frame(self, params):
+        n = 8
+        n_fourier = len(params.gamma_fourier["New"])
+        return {
+            "markets": ["UK"],
+            "market_idx": np.zeros(n, dtype=int),
+            "market_bounds": [(0, n)],
+            "X_media": np.zeros((n, len(CHANNELS))),
+            "promo": np.zeros((n, len(OUTCOME_IDS))),
+            "trend": np.zeros(n),
+            "fourier": np.zeros((n, n_fourier)),
+            "control_names": [],
+            "X_controls": np.zeros((n, 0)),
+            "outcome_controls": {},
+            "outcome_control_names": {},
+            "dates": pd.date_range("2026-01-05", periods=n, freq="W").values,
+        }
+
+    @staticmethod
+    def _registry():
+        from ancestry_mmm.core.named_event_response import (
+            NAMED_EVENT_RESPONSE_STRUCTURE,
+        )
+        from ancestry_mmm.core.named_events import (
+            EventResponseDefinition,
+            NamedEventFamily,
+            NamedEventOccurrence,
+        )
+
+        family = NamedEventFamily(
+            family_id="mothers_day",
+            family_version=1,
+            display_name="Mother's Day",
+            classification="gifting",
+        )
+        occurrence = NamedEventOccurrence(
+            event_id="md-2026",
+            event_version=1,
+            display_name="Mother's Day 2026",
+            start_date="2026-01-25",
+            end_date="2026-01-25",
+            market_scope=("UK",),
+            source_id="events",
+            family_id="mothers_day",
+        )
+        definition = EventResponseDefinition(
+            response_definition_id="md-def",
+            response_definition_version=1,
+            family_id="mothers_day",
+            treatment="anticipatory",
+            max_lead=3,
+            max_lag=0,
+            transformation_method_reference=NAMED_EVENT_RESPONSE_STRUCTURE,
+        )
+        return family, occurrence, definition
+
+    def test_replay_matches_manual_design_times_coefficients(
+        self, meta, params, event_frame
+    ):
+        import dataclasses
+
+        from ancestry_mmm.core.named_event_fit_inputs import (
+            build_named_event_fit_inputs_for_replay,
+        )
+
+        family, occurrence, definition = self._registry()
+        named_event_meta = dataclasses.replace(
+            meta,
+            named_event_response_definitions_at_fit=[("md-def", 1)],
+            named_event_fit_blocks=[("mothers_day", "UK")],
+        )
+        event_coefs_vector = np.array([0.3, -0.1, 0.2, 0.05, 0.02, 0.01])
+        named_params = dataclasses.replace(
+            params, event_coefs={"mothers_day": {"UK": event_coefs_vector}}
+        )
+        fit_inputs = build_named_event_fit_inputs_for_replay(
+            event_frame,
+            families=[family],
+            occurrences=[occurrence],
+            response_definitions=[definition],
+            fitted_response_definitions=(
+                named_event_meta.named_event_response_definitions_at_fit
+            ),
+        )
+        assert len(fit_inputs.blocks) == 1
+        block = fit_inputs.blocks[0]
+
+        baseline_mu = predict_mu_market_specific(event_frame, meta, params)
+        mu_with_event = predict_mu_market_specific(
+            event_frame,
+            named_event_meta,
+            named_params,
+            named_event_fit_inputs=fit_inputs,
+        )
+        contrib = block.design @ event_coefs_vector
+        assert np.any(contrib != 0.0)
+        expected = baseline_mu * np.exp(contrib)[:, None]
+        np.testing.assert_allclose(mu_with_event, expected, rtol=1e-10)
+
+    def test_supplying_an_explicitly_empty_fit_inputs_does_not_raise(
+        self, meta, params, event_frame
+    ):
+        import dataclasses
+
+        from ancestry_mmm.core.named_event_fit_inputs import NamedEventFitInputs
+
+        named_event_meta = dataclasses.replace(
+            meta, named_event_response_definitions_at_fit=[("md-def", 1)]
+        )
+        empty_inputs = NamedEventFitInputs(
+            blocks=(), shrinkage_prior_scale_by_family={}
+        )
+        mu = predict_mu_market_specific(
+            event_frame, named_event_meta, params, named_event_fit_inputs=empty_inputs
+        )
+        baseline_mu = predict_mu_market_specific(event_frame, meta, params)
+        np.testing.assert_allclose(mu, baseline_mu)
 
 
 class TestSteadyStateSegmentResponseMarketSpecific:
