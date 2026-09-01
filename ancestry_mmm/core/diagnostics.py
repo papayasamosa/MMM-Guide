@@ -17,6 +17,7 @@ import pymc as pm
 
 from .models import compute_model_diagnostics
 from .hierarchical_model import FHModelMeta
+from .named_event_fit_inputs import NamedEventFitInputs
 from .outcomes import outcome_catalogue_at_fit_by_id
 from .predict import FHPosteriorParams, extract_posterior_params, predict_mu
 
@@ -76,7 +77,11 @@ def _bias(actual: np.ndarray, pred: np.ndarray) -> float:
 
 
 def error_metrics_by_outcome(
-    frame: Dict, meta: FHModelMeta, params: FHPosteriorParams
+    frame: Dict,
+    meta: FHModelMeta,
+    params: FHPosteriorParams,
+    *,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> pd.DataFrame:
     """MAE, RMSE, sMAPE, WAPE and bias per outcome_id, comparing the
     posterior-mean prediction to actuals - the same (actual, predicted)
@@ -84,7 +89,7 @@ def error_metrics_by_outcome(
     category (a UK validation reviewer wants volume-weighted and
     symmetric error figures alongside R-squared/MAPE, not instead of
     them - see REQ-VAL-001)."""
-    mu = predict_mu(frame, meta, params)
+    mu = predict_mu(frame, meta, params, named_event_fit_inputs=named_event_fit_inputs)
     Y = frame["Y"]
     rows = []
     for i, oid in enumerate(meta.outcome_ids):
@@ -212,19 +217,26 @@ def posterior_predictive_metric_distributions(
     params: FHPosteriorParams,
     *,
     credible_mass: float = 0.9,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> pd.DataFrame:
     """REQ-PPD-001 (Model A / shared model): see
     `_posterior_predictive_metric_distributions_core` for the full
     contract. The point-metric column reuses `error_metrics_by_outcome`
     unchanged."""
-    point_metrics = error_metrics_by_outcome(frame, meta, params)
+    point_metrics = error_metrics_by_outcome(
+        frame, meta, params, named_event_fit_inputs=named_event_fit_inputs
+    )
     return _posterior_predictive_metric_distributions_core(
         trace, frame, meta, point_metrics, credible_mass=credible_mass
     )
 
 
 def residual_temporal_diagnostics(
-    frame: Dict, meta: FHModelMeta, params: FHPosteriorParams
+    frame: Dict,
+    meta: FHModelMeta,
+    params: FHPosteriorParams,
+    *,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> pd.DataFrame:
     """Residual (actual - posterior-mean-prediction) temporal structure per
     market x outcome_id: lag-1 autocorrelation and the Durbin-Watson
@@ -256,7 +268,7 @@ def residual_temporal_diagnostics(
     computation and approval policy are separate"; an approved policy
     decides thresholds later).
     """
-    mu = predict_mu(frame, meta, params)
+    mu = predict_mu(frame, meta, params, named_event_fit_inputs=named_event_fit_inputs)
     Y = frame["Y"]
     markets = frame["markets"]
     market_bounds = frame["market_bounds"]
@@ -284,6 +296,8 @@ def residual_series(
     params: FHPosteriorParams,
     trace: Optional[az.InferenceData] = None,
     credible_mass: float = 0.9,
+    *,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> pd.DataFrame:
     """WP2.11 item 6: the canonical per-`market x date x outcome_id` residual
     evidence the Residual Explorer (`pages/06_Diagnostics.py`) and any
@@ -305,7 +319,7 @@ def residual_series(
     compute) - the column names say "expected_mean", not "predictive" or
     "ppc", specifically so this distinction cannot be lost downstream.
     """
-    mu = predict_mu(frame, meta, params)
+    mu = predict_mu(frame, meta, params, named_event_fit_inputs=named_event_fit_inputs)
     Y = frame["Y"]
     markets = frame["markets"]
     market_bounds = frame["market_bounds"]
@@ -756,10 +770,14 @@ def predictive_density_summary(
 
 
 def in_sample_fit(
-    frame: Dict, meta: FHModelMeta, params: FHPosteriorParams
+    frame: Dict,
+    meta: FHModelMeta,
+    params: FHPosteriorParams,
+    *,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> pd.DataFrame:
     """R-squared and MAPE per outcome_id, comparing posterior-mean prediction to actuals."""
-    mu = predict_mu(frame, meta, params)
+    mu = predict_mu(frame, meta, params, named_event_fit_inputs=named_event_fit_inputs)
     Y = frame["Y"]
     rows = []
     for i, oid in enumerate(meta.outcome_ids):
@@ -1036,12 +1054,16 @@ def compute_scorecard(
     frame: Dict,
     meta: FHModelMeta,
     roi_bounds: Optional[Dict[str, Tuple[float, float]]] = None,
+    *,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> Dict[str, Any]:
     """Assemble the full scorecard: convergence + in-sample fit + PPC coverage + plausibility flags."""
     params = extract_posterior_params(trace, meta)
     return {
         "convergence": compute_model_diagnostics(trace),
-        "in_sample_fit": in_sample_fit(frame, meta, params).to_dict(orient="records"),
+        "in_sample_fit": in_sample_fit(
+            frame, meta, params, named_event_fit_inputs=named_event_fit_inputs
+        ).to_dict(orient="records"),
         "ppc_coverage": posterior_predictive_coverage(trace, frame, meta).to_dict(
             orient="records"
         ),

@@ -97,6 +97,15 @@ from ancestry_mmm.core.causal_graph import (
     CausalGraph,
     current_structural_fingerprint_for_identity,
 )
+from ancestry_mmm.core.named_event_fit_inputs import (
+    build_named_event_fit_inputs,
+    build_named_event_fit_inputs_for_replay,
+)
+from ancestry_mmm.core.named_events import (
+    EventResponseDefinition,
+    NamedEventFamily,
+    NamedEventOccurrence,
+)
 from ancestry_mmm.core.funnel import FunnelLink, funnel_coherence_diagnostics
 from ancestry_mmm.core.outcomes import (
     outcome_catalogue_fingerprint_payload,
@@ -156,6 +165,69 @@ MODEL_TYPE_LABEL = {
     "shared": "Shared response across markets",
     "market_specific": "Market-specific response with partial pooling",
 }
+
+
+def _diagnostics_named_event_fit_inputs(frame, meta):
+    """Build the exact fit-time named-event basis for diagnostics replay.
+
+    Diagnostics is a replay caller, so it must use the current factual event
+    registry while pinning response-definition versions to the fit metadata.
+    An event-consuming fit is intentionally left fail-closed when the
+    registry cannot supply those records.
+    """
+    if not meta.named_event_response_definitions_at_fit:
+        return None
+    families, occurrences, definitions = _current_named_event_registry()
+    return build_named_event_fit_inputs_for_replay(
+        frame,
+        families=families,
+        occurrences=occurrences,
+        response_definitions=definitions,
+        fitted_response_definitions=meta.named_event_response_definitions_at_fit,
+    )
+
+
+def _current_named_event_registry():
+    """Return the current project event registry as typed records."""
+    families = [
+        NamedEventFamily.from_dict(item)
+        for item in (get_state("named_event_families") or [])
+    ]
+    occurrences = [
+        NamedEventOccurrence.from_dict(item)
+        for item in (get_state("named_event_occurrences") or [])
+    ]
+    definitions = [
+        EventResponseDefinition.from_dict(item)
+        for item in (get_state("named_event_response_definitions") or [])
+    ]
+    return families, occurrences, definitions
+
+
+def _backtest_named_event_fit_inputs(frame):
+    """Build fit-time named-event inputs for one leakage-safe train frame."""
+    families, occurrences, definitions = _current_named_event_registry()
+    return build_named_event_fit_inputs(
+        frame,
+        families=families,
+        occurrences=occurrences,
+        response_definitions=definitions,
+    )
+
+
+def _backtest_named_event_replay_inputs(frame, fitted_response_definitions):
+    """Build a fold-test replay basis pinned to that fold's fit metadata."""
+    if not fitted_response_definitions:
+        return None
+    families, occurrences, definitions = _current_named_event_registry()
+    return build_named_event_fit_inputs_for_replay(
+        frame,
+        families=families,
+        occurrences=occurrences,
+        response_definitions=definitions,
+        fitted_response_definitions=fitted_response_definitions,
+    )
+
 
 st.set_page_config(
     page_title="Model Diagnostics | Ancestry Family History & DNA MMM",
@@ -292,6 +364,7 @@ experiment_assessments = [
 # can silently drift apart on what they each think "the current model" is.
 current_model_identity: "ModelIdentity | None" = None
 if model_run_id and posterior_params is not None and model_spec_dict is not None:
+    current_named_event_fit_inputs = _backtest_named_event_fit_inputs(frame)
     current_model_identity = ModelIdentity(
         model_run_id=model_run_id,
         data_fingerprint=fingerprint_dataframe(frame["df"]),
@@ -335,6 +408,11 @@ if model_run_id and posterior_params is not None and model_spec_dict is not None
                     consumed_model_input_columns=model_spec_dict.get("channels") or [],
                 )
                 if search_objects
+                else None
+            ),
+            named_event_fit_fingerprint=(
+                current_named_event_fit_inputs.fingerprint()
+                if current_named_event_fit_inputs is not None
                 else None
             ),
             variable_coverage_fingerprint=(
@@ -381,6 +459,7 @@ if st.button("Compute scorecard", type="primary"):
             frame=frame,
             meta=meta,
             model_type=model_type,
+            named_event_fit_inputs=_diagnostics_named_event_fit_inputs(frame, meta),
             model_identity=current_model_identity,
             raw_model_spec=(
                 ModelSpec.from_dict(model_spec_dict) if model_spec_dict else None
@@ -2073,6 +2152,7 @@ with st.expander("Out-of-sample accuracy (expanding-window backtest)", expanded=
 
             def fit_fold(train_df, test_df):
                 train_frame = prepare_fh_modeling_frame(train_df, spec)
+                named_event_fit_inputs = _backtest_named_event_fit_inputs(train_frame)
                 if model_type == "market_specific" and len(train_frame["markets"]) >= 2:
                     fold_model, fold_meta = build_fh_market_specific_model(
                         train_frame,
@@ -2080,6 +2160,7 @@ with st.expander("Out-of-sample accuracy (expanding-window backtest)", expanded=
                         dna_lag_weeks=dna_lag_weeks,
                         prior_config=prior_config,
                         dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
+                        named_event_fit_inputs=named_event_fit_inputs,
                     )
                 else:
                     fold_model, fold_meta = build_fh_hierarchical_model(
@@ -2088,6 +2169,7 @@ with st.expander("Out-of-sample accuracy (expanding-window backtest)", expanded=
                         dna_lag_weeks=dna_lag_weeks,
                         prior_config=prior_config,
                         dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
+                        named_event_fit_inputs=named_event_fit_inputs,
                     )
                 fold_trace = fit_model(
                     fold_model,
@@ -2099,16 +2181,38 @@ with st.expander("Out-of-sample accuracy (expanding-window backtest)", expanded=
                 )
 
                 test_frame = prepare_fh_modeling_frame(test_df, spec)
+                families, occurrences, definitions = _current_named_event_registry()
+                named_event_test_inputs = (
+                    build_named_event_fit_inputs_for_replay(
+                        test_frame,
+                        families=families,
+                        occurrences=occurrences,
+                        response_definitions=definitions,
+                        fitted_response_definitions=(
+                            fold_meta.named_event_response_definitions_at_fit
+                        ),
+                    )
+                    if fold_meta.named_event_response_definitions_at_fit
+                    else None
+                )
                 if model_type == "market_specific" and len(train_frame["markets"]) >= 2:
                     fold_params = extract_market_specific_posterior_params(
                         fold_trace, fold_meta
                     )
                     mu_test = predict_mu_market_specific(
-                        test_frame, fold_meta, fold_params
+                        test_frame,
+                        fold_meta,
+                        fold_params,
+                        named_event_fit_inputs=named_event_test_inputs,
                     )
                 else:
                     fold_params = extract_posterior_params(fold_trace, fold_meta)
-                    mu_test = predict_mu(test_frame, fold_meta, fold_params)
+                    mu_test = predict_mu(
+                        test_frame,
+                        fold_meta,
+                        fold_params,
+                        named_event_fit_inputs=named_event_test_inputs,
+                    )
 
                 r2_by_seg, mape_by_seg = {}, {}
                 for i, oid in enumerate(fold_meta.outcome_ids):
@@ -2369,6 +2473,12 @@ with st.expander("Historical validation & structural stability", expanded=False)
                             prior_config=get_state("prior_config"),
                             draws=int(hv_draws),
                             tune=int(hv_draws),
+                            named_event_fit_inputs_factory=(
+                                _backtest_named_event_fit_inputs
+                            ),
+                            named_event_replay_inputs_factory=(
+                                _backtest_named_event_replay_inputs
+                            ),
                         )
                 else:
                     with st.spinner(
@@ -2389,6 +2499,12 @@ with st.expander("Historical validation & structural stability", expanded=False)
                             prior_config=get_state("prior_config"),
                             draws=int(hv_draws),
                             tune=int(hv_draws),
+                            named_event_fit_inputs_factory=(
+                                _backtest_named_event_fit_inputs
+                            ),
+                            named_event_replay_inputs_factory=(
+                                _backtest_named_event_replay_inputs
+                            ),
                         )
             except Exception as e:
                 # Fold construction/assessment failed before any fit could even

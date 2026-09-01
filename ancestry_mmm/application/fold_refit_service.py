@@ -115,6 +115,7 @@ from ancestry_mmm.core.fit_progress import (
 )
 from ancestry_mmm.core.fold_data_support import fold_support_report
 from ancestry_mmm.core.models import fit_model
+from ancestry_mmm.core.named_event_fit_inputs import NamedEventFitInputs
 from ancestry_mmm.core.official_preparation import (
     OfficialPreparationDataError,
     build_official_capability_report,
@@ -290,6 +291,14 @@ def fit_fold_with_real_model(
     posterior_draw_subsample: int = 100,
     random_seed: int = 42,
     on_progress_line: Optional[Callable[[str], None]] = None,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
+    named_event_replay_inputs: Optional[NamedEventFitInputs] = None,
+    named_event_replay_inputs_factory: Optional[
+        Callable[
+            [Mapping[str, Any], Sequence[Tuple[str, int]]],
+            Optional[NamedEventFitInputs],
+        ]
+    ] = None,
 ) -> FoldRefitOutcome:
     """Refit the real production model on `train_df`, evaluate it on
     `test_df`, and extract a genuine `FoldParameterSnapshot` - the same
@@ -403,6 +412,7 @@ def fit_fold_with_real_model(
         direct_dna_outcome_ids=resolved_direct_dna_outcome_ids,
         causal_graph=causal_graph,
         prior_config=prior_config,
+        named_event_fit_inputs=named_event_fit_inputs,
     )
     _build_seconds = time.monotonic() - _build_start
 
@@ -450,17 +460,34 @@ def fit_fold_with_real_model(
             net_billthrough_metadata, test_df, spec
         ),
     )
+    resolved_named_event_replay_inputs = named_event_replay_inputs
+    if (
+        resolved_named_event_replay_inputs is None
+        and named_event_replay_inputs_factory is not None
+    ):
+        resolved_named_event_replay_inputs = named_event_replay_inputs_factory(
+            test_frame,
+            tuple(fit_result.meta.named_event_response_definitions_at_fit),
+        )
     if is_market_specific:
         market_specific_point_params = extract_market_specific_posterior_params(
             trace, fit_result.meta
         )
         mu_test = predict_mu_market_specific(
-            test_frame, fit_result.meta, market_specific_point_params
+            test_frame,
+            fit_result.meta,
+            market_specific_point_params,
+            named_event_fit_inputs=resolved_named_event_replay_inputs,
         )
         point_values = _flatten_market_specific_params(market_specific_point_params)
     else:
         shared_point_params = extract_posterior_params(trace, fit_result.meta)
-        mu_test = predict_mu(test_frame, fit_result.meta, shared_point_params)
+        mu_test = predict_mu(
+            test_frame,
+            fit_result.meta,
+            shared_point_params,
+            named_event_fit_inputs=resolved_named_event_replay_inputs,
+        )
         point_values = _flatten_shared_params(shared_point_params)
 
     r2_by_outcome, mape_by_outcome = _fold_metrics(
@@ -574,6 +601,15 @@ def run_leakage_safe_fold_refit(
     posterior_draw_subsample: int = 100,
     random_seed: int = 42,
     on_progress_line: Optional[Callable[[str], None]] = None,
+    named_event_fit_inputs_factory: Optional[
+        Callable[[Mapping[str, Any]], Optional[NamedEventFitInputs]]
+    ] = None,
+    named_event_replay_inputs_factory: Optional[
+        Callable[
+            [Mapping[str, Any], Sequence[Tuple[str, int]]],
+            Optional[NamedEventFitInputs],
+        ]
+    ] = None,
 ) -> LeakageSafeFoldRefitResult:
     """Leakage-safe, real-PyMC-refit counterpart to `core.validation_
     folds.leakage_safe_expanding_window_backtest`: builds the same typed
@@ -633,6 +669,12 @@ def run_leakage_safe_fold_refit(
             continue
 
         train_df = df[dates <= pd.Timestamp(fold.train_end)]
+        named_event_fit_inputs = None
+        if named_event_fit_inputs_factory is not None:
+            train_frame_for_named_events = prepare_fh_modeling_frame(train_df, spec)
+            named_event_fit_inputs = named_event_fit_inputs_factory(
+                train_frame_for_named_events
+            )
         outcome = fit_fold_with_real_model(
             train_df,
             test_df,
@@ -656,6 +698,8 @@ def run_leakage_safe_fold_refit(
             posterior_draw_subsample=posterior_draw_subsample,
             random_seed=random_seed,
             on_progress_line=on_progress_line,
+            named_event_fit_inputs=named_event_fit_inputs,
+            named_event_replay_inputs_factory=named_event_replay_inputs_factory,
         )
         snapshots.append(outcome.snapshot)
         for oid in outcome.r2_by_outcome:
@@ -708,6 +752,15 @@ def run_leakage_safe_fold_refit_from_sources(
     posterior_draw_subsample: int = 100,
     random_seed: int = 42,
     on_progress_line: Optional[Callable[[str], None]] = None,
+    named_event_fit_inputs_factory: Optional[
+        Callable[[Mapping[str, Any]], Optional[NamedEventFitInputs]]
+    ] = None,
+    named_event_replay_inputs_factory: Optional[
+        Callable[
+            [Mapping[str, Any], Sequence[Tuple[str, int]]],
+            Optional[NamedEventFitInputs],
+        ]
+    ] = None,
 ) -> LeakageSafeFoldRefitResult:
     """Point-in-time source reconstruction (REQ-LEAK-001 §"rebuilding the
     full model-ready frame ... per fold", Work Package 1 part 2): unlike
@@ -936,6 +989,14 @@ def run_leakage_safe_fold_refit_from_sources(
             posterior_draw_subsample=posterior_draw_subsample,
             random_seed=random_seed,
             on_progress_line=on_progress_line,
+            named_event_fit_inputs=(
+                named_event_fit_inputs_factory(
+                    prepare_fh_modeling_frame(train_prepared.frame, spec)
+                )
+                if named_event_fit_inputs_factory is not None
+                else None
+            ),
+            named_event_replay_inputs_factory=named_event_replay_inputs_factory,
         )
         snapshots.append(outcome.snapshot)
         for oid in outcome.r2_by_outcome:

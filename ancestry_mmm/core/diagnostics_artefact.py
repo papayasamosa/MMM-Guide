@@ -53,6 +53,7 @@ from ancestry_mmm.core.causal_graph import CausalGraph
 from ancestry_mmm.core.coverage import VariableCoverageMatrix
 from ancestry_mmm.core.experiments import ExperimentProvenanceReport
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
+from ancestry_mmm.core.named_event_fit_inputs import NamedEventFitInputs
 from ancestry_mmm.core.latent_state_identification import (
     LatentStateIdentificationDeclaration,
 )
@@ -947,6 +948,11 @@ class DiagnosticsInput:
     calibration_comparison_artefact: Optional[
         CalibratedVsUncalibratedComparisonArtefact
     ] = None
+    # Decision 12: replay inputs are caller-built from the governed named-
+    # event registry and the exact fit-time response-definition versions.
+    # They are required whenever the fit consumed named events; ``None``
+    # intentionally preserves predict_mu's fail-closed guard.
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None
 
 
 @dataclass

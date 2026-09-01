@@ -66,6 +66,8 @@ scope should not have their event silently excluded from every outcome).
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -144,6 +146,36 @@ class NamedEventFitInputs:
             if pair not in seen:
                 seen.append(pair)
         return tuple(seen)
+
+    def fingerprint(self) -> str:
+        """Fingerprint the exact event design consumed by a model fit.
+
+        Event occurrences and response-definition windows determine the
+        design matrix, so both the matrix and its governed provenance are
+        included.  This is intentionally separate from replay inputs: a
+        future occurrence may change a replay basis without changing the
+        historical fit identity.
+        """
+        payload = {
+            "version": self.version,
+            "shrinkage_prior_scale_by_family": dict(
+                sorted(self.shrinkage_prior_scale_by_family.items())
+            ),
+            "blocks": [
+                {
+                    "family_id": block.family_id,
+                    "market": block.market,
+                    "design": block.design.tolist(),
+                    "response_definition_id": block.response_definition_id,
+                    "response_definition_version": block.response_definition_version,
+                    "outcome_scope": list(block.outcome_scope),
+                }
+                for block in self.blocks
+            ],
+        }
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
 
 
 def build_named_event_fit_inputs_for_replay(

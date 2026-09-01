@@ -61,6 +61,12 @@ from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
 from ancestry_mmm.core.activities import activity_fit_fingerprint
 from ancestry_mmm.core.search_objects import search_object_fit_fingerprint
 from ancestry_mmm.core.coverage import VariableCoverageMatrix
+from ancestry_mmm.core.named_event_fit_inputs import build_named_event_fit_inputs
+from ancestry_mmm.core.named_events import (
+    EventResponseDefinition,
+    NamedEventFamily,
+    NamedEventOccurrence,
+)
 
 MODEL_TYPE_LABELS = {
     "shared": "Shared response across markets (Model A)",
@@ -215,6 +221,7 @@ def _build_proposed_model(build_model_type: str):
     direct_dna_outcome_ids = get_state("direct_dna_outcome_ids") or None
     causal_graph = _resolve_causal_graph()
     search_objects = get_state("search_objects") or []
+    named_event_fit_inputs = _named_event_fit_inputs_for_current_frame()
     result = build_model_for_spec(
         frame=frame,
         model_spec=spec,
@@ -225,8 +232,37 @@ def _build_proposed_model(build_model_type: str):
         direct_dna_outcome_ids=direct_dna_outcome_ids,
         causal_graph=causal_graph,
         search_objects=search_objects,
+        named_event_fit_inputs=named_event_fit_inputs,
     )
     return result.model, result.meta
+
+
+def _named_event_fit_inputs_for_current_frame():
+    """Resolve the current governed event registry for the actual fit frame.
+
+    The model-training page owns the fit-time boundary: event definitions are
+    read from the project snapshot and converted into the same deterministic
+    basis used by the model builder.  An opted-out or empty registry returns
+    ``None``, preserving the ordinary model graph exactly.
+    """
+    families = [
+        NamedEventFamily.from_dict(item)
+        for item in (get_state("named_event_families") or [])
+    ]
+    occurrences = [
+        NamedEventOccurrence.from_dict(item)
+        for item in (get_state("named_event_occurrences") or [])
+    ]
+    definitions = [
+        EventResponseDefinition.from_dict(item)
+        for item in (get_state("named_event_response_definitions") or [])
+    ]
+    return build_named_event_fit_inputs(
+        frame,
+        families=families,
+        occurrences=occurrences,
+        response_definitions=definitions,
+    )
 
 
 def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
@@ -252,6 +288,7 @@ def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
     activity_definitions = get_state("activity_definitions") or []
     search_objects = get_state("search_objects") or []
     coverage_matrix_dict = get_state("variable_coverage_matrix")
+    named_event_fit_inputs = _named_event_fit_inputs_for_current_frame()
     model_spec_fingerprint = fingerprint_model_spec(
         spec_dict,
         get_state("prior_config") or {},
@@ -288,6 +325,11 @@ def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
             else None
         ),
         official_preparation_evidence=get_state("official_preparation_result"),
+        named_event_fit_fingerprint=(
+            named_event_fit_inputs.fingerprint()
+            if named_event_fit_inputs is not None
+            else None
+        ),
     )
     return f"{fingerprint_dataframe(frame['df'])}:{model_spec_fingerprint}"
 
