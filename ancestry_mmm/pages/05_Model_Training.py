@@ -15,6 +15,7 @@ from ancestry_mmm.utils import (
     init_session_state,
     get_state,
     set_state,
+    clear_model_state,
     format_number,
     dataframe_column_config,
     readable_label,
@@ -62,6 +63,12 @@ from ancestry_mmm.core.activities import activity_fit_fingerprint
 from ancestry_mmm.core.search_objects import search_object_fit_fingerprint
 from ancestry_mmm.core.search_capacity import (
     CandidateASearchFitInputs,
+    SearchCandidateASpec,
+    SearchCapacityValidationError,
+)
+from ancestry_mmm.application.candidate_a_input_service import (
+    CANDIDATE_A_UPLOAD_COLUMNS,
+    build_candidate_a_fit_inputs_from_frame,
 )
 from ancestry_mmm.core.google_trends_anchor import (
     GoogleTrendsAnchorFitInputs,
@@ -75,6 +82,10 @@ from ancestry_mmm.core.seo_visibility import (
     compute_weekly_positional_visibility_series,
 )
 from ancestry_mmm.core.coverage import VariableCoverageMatrix
+from ancestry_mmm.data import (
+    TEMPLATE_MIME_TYPE,
+    build_candidate_a_template,
+)
 from ancestry_mmm.core.named_event_fit_inputs import build_named_event_fit_inputs
 from ancestry_mmm.core.named_events import (
     EventResponseDefinition,
@@ -443,6 +454,121 @@ def _render_google_trends_candidate_a_boundary() -> None:
 
 
 _render_google_trends_candidate_a_boundary()
+
+
+def _render_candidate_a_observation_boundary() -> None:
+    """Attach the governed, row-aligned Candidate A Search observations.
+
+    The approved Search object/spec identity is deliberately not inferred
+    from column names.  An analyst can upload observations once that identity
+    has been approved and restored in the project; otherwise this screen
+    explains the missing prerequisite and keeps the engine fail-closed.
+    """
+    with st.expander("Candidate A Search observations", expanded=False):
+        st.caption(
+            "Upload one exact weekly row per prepared model row. Required fields: "
+            + ", ".join(f"`{column}`" for column in CANDIDATE_A_UPLOAD_COLUMNS)
+            + ". Cap values stay in their governed cap unit and are translated only "
+            "by the approved cap-to-delivery mapping. Missing rows, cap derivation, "
+            "and zero-filling are rejected."
+        )
+        st.download_button(
+            "Download Candidate A observation template",
+            data=build_candidate_a_template(),
+            file_name="ancestry-mmm-candidate-a-observations-template.xlsx",
+            mime=TEMPLATE_MIME_TYPE,
+            key="download_candidate_a_observations_template",
+        )
+        payload = get_state("candidate_a_fit_inputs")
+        if payload:
+            try:
+                current = (
+                    payload
+                    if isinstance(payload, CandidateASearchFitInputs)
+                    else CandidateASearchFitInputs.from_dict(payload)
+                )
+            except (TypeError, ValueError) as exc:
+                current = None
+                st.error(f"Stored Candidate A observations are invalid: {exc}")
+        else:
+            current = None
+
+        if current is not None:
+            st.success(
+                f"Candidate A observations loaded: {len(current.paid_search_delivery):,} "
+                f"aligned rows; cap unit `{current.spec.cap_unit}`; "
+                f"scale `{current.spec.cap_to_delivery_scale:g}`."
+            )
+            spec = current.spec
+            demand_channels = list(current.demand_channel_names)
+            search_objects = list(current.search_objects)
+        else:
+            spec_payload = get_state("search_candidate_a_spec")
+            spec = (
+                SearchCandidateASpec.from_dict(spec_payload) if spec_payload else None
+            )
+            demand_channels = []
+            search_objects = list(get_state("search_objects") or [])
+            if spec is None:
+                st.info(
+                    "No approved Candidate A specification is attached to this "
+                    "project. Restore the governed Search spec and object mapping "
+                    "first; the observation upload will not invent object IDs, "
+                    "cap provenance, or upstream demand channels."
+                )
+        upload = st.file_uploader(
+            "Candidate A observations CSV",
+            type=["csv"],
+            key="candidate_a_observations_upload",
+        )
+        if spec is not None and current is None:
+            demand_text = st.text_input(
+                "Approved upstream demand channel IDs (comma-separated)",
+                key="candidate_a_demand_channels",
+                help="Use the exact model-input channel IDs approved by the causal graph.",
+            )
+            demand_channels = [
+                item.strip() for item in demand_text.split(",") if item.strip()
+            ]
+        if st.button(
+            "Validate and load Candidate A observations",
+            key="load_candidate_a_observations",
+            disabled=upload is None or spec is None or not demand_channels,
+        ):
+            try:
+                uploaded = pd.read_csv(upload.getvalue())
+                fit_inputs = build_candidate_a_fit_inputs_from_frame(
+                    uploaded,
+                    model_frame=frame,
+                    spec=spec,
+                    demand_channel_names=demand_channels,
+                    search_objects=search_objects,
+                    google_trends_anchor=(
+                        GoogleTrendsAnchorFitInputs.from_dict(
+                            get_state("google_trends_anchor")
+                        )
+                        if get_state("google_trends_anchor")
+                        else None
+                    ),
+                )
+                set_state("candidate_a_fit_inputs", fit_inputs.to_dict())
+                set_state("search_candidate_a_spec", fit_inputs.spec.to_dict())
+                clear_model_state()
+                st.success(
+                    f"Loaded {len(fit_inputs.paid_search_delivery):,} governed "
+                    "Candidate A rows. No model fit was started."
+                )
+                st.rerun()
+            except (
+                ValueError,
+                TypeError,
+                KeyError,
+                SearchCapacityValidationError,
+            ) as exc:
+                st.error(f"Candidate A observation validation failed: {exc}")
+
+
+_render_candidate_a_observation_boundary()
 
 
 def _render_seo_visibility_boundary() -> None:

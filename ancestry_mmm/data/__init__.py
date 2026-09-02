@@ -47,8 +47,14 @@ from .source_inventory import (
     summarise_source_inventory,
 )
 from .template_downloads import (
+    OUTCOME_VALUATION_COLUMNS,
+    CANDIDATE_A_UPLOAD_COLUMNS,
+    OUTCOME_VALUATION_TEMPLATE_FILENAME,
     TEMPLATE_MIME_TYPE,
+    build_outcome_valuation_template,
+    build_candidate_a_template,
     build_standard_template,
+    outcome_valuation_template_filename,
     standard_template_filename,
 )
 from .source_pack_adoption import (
@@ -99,7 +105,13 @@ __all__ = [
     "source_table_role",
     "summarise_source_inventory",
     "TEMPLATE_MIME_TYPE",
+    "OUTCOME_VALUATION_COLUMNS",
+    "CANDIDATE_A_UPLOAD_COLUMNS",
+    "OUTCOME_VALUATION_TEMPLATE_FILENAME",
+    "build_outcome_valuation_template",
+    "build_candidate_a_template",
     "build_standard_template",
+    "outcome_valuation_template_filename",
     "standard_template_filename",
     "SourceDomainSemanticStatus",
     "SourcePackAdoption",

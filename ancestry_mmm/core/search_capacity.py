@@ -13,10 +13,11 @@ optimisation are intentionally not enabled by this module.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import numpy as np
+import pandas as pd
 
 if TYPE_CHECKING:
     import pymc as pm
@@ -357,6 +358,7 @@ def identify_candidate_a_search(
     cap_provenance: str = "",
     cap_mapping_resolved: bool = True,
     capture_mappings_resolved: bool = True,
+    cap_to_delivery_scale: float = 1.0,
     min_nonbinding_periods: int = 4,
     min_binding_periods: int = 2,
     min_periods_per_market: int = 8,
@@ -374,7 +376,12 @@ def identify_candidate_a_search(
     _same_shape(cap, delivery)
     if np.any(cap < 0) or np.any(delivery < 0):
         raise SearchCapacityValidationError("cap and delivery cannot be negative")
-    if np.any(delivery > cap + 1e-8):
+    if not np.isfinite(cap_to_delivery_scale) or cap_to_delivery_scale <= 0:
+        raise SearchCapacityValidationError(
+            "cap_to_delivery_scale must be finite and strictly positive"
+        )
+    scaled_cap = cap * float(cap_to_delivery_scale)
+    if np.any(delivery > scaled_cap + 1e-8):
         raise SearchCapacityValidationError(
             "observed Paid Search delivery exceeds its cap"
         )
@@ -383,7 +390,7 @@ def identify_candidate_a_search(
     )
     if labels.shape != cap.shape:
         raise SearchCapacityValidationError("market_labels must match cap periods")
-    binding = np.isclose(delivery, cap, rtol=1e-8, atol=1e-8)
+    binding = np.isclose(delivery, scaled_cap, rtol=1e-8, atol=1e-8)
     nonbinding = ~binding
     mean_cap = float(np.mean(cap)) if cap.size else 0.0
     cv = float(np.std(cap) / mean_cap) if mean_cap > 0 else float("inf")
@@ -674,9 +681,9 @@ class CandidateASearchFitInputs:
     so each demand-driving channel keeps its own identity, adstock, and Hill
     saturation exactly like every other channel (AGENTS.md: "Do not create a
     second incompatible adstock or Hill implementation"). `paid_search_cap`
-    must already be translated into delivery units by the governed cap
-    mapping (`application.model_fit_service`/`core.media_costs`) - this
-    dataclass never performs that translation itself.
+    is supplied in its governed ``spec.cap_unit``. The model translates it
+    with ``spec.cap_to_delivery_scale``; this dataclass never derives a cap
+    from spend.
     """
 
     spec: SearchCandidateASpec
@@ -689,6 +696,12 @@ class CandidateASearchFitInputs:
         default_factory=list
     )
     google_trends_anchor: Optional[GoogleTrendsAnchorFitInputs] = None
+    # Optional on the historical programmatic boundary for backwards
+    # compatibility.  Governed uploads and leakage-safe fold refits must
+    # provide these exact row keys; arrays without row identity cannot be
+    # safely sliced into a train/test fold.
+    periods: tuple[str, ...] = ()
+    markets: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.demand_channel_names:
@@ -710,10 +723,43 @@ class CandidateASearchFitInputs:
                 "observed Candidate A capture/delivery/cap values cannot be negative"
             )
         delivery, cap = arrays[0], arrays[1]
-        if np.any(delivery > cap + 1e-8):
+        if np.any(delivery > cap * float(self.spec.cap_to_delivery_scale) + 1e-8):
             raise SearchCapacityValidationError(
-                "observed Paid Search delivery exceeds its cap"
+                "observed Paid Search delivery exceeds its cap after the governed "
+                "cap-to-delivery scale"
             )
+        if bool(self.periods) != bool(self.markets):
+            raise SearchCapacityValidationError(
+                "Candidate A periods and markets must be supplied together"
+            )
+        if self.periods:
+            if len(self.periods) != delivery.size or len(self.markets) != delivery.size:
+                raise SearchCapacityValidationError(
+                    "Candidate A periods/markets must match the observed array length"
+                )
+            keys = [
+                (str(period), str(market))
+                for period, market in zip(self.periods, self.markets)
+            ]
+            if any(not period or not market for period, market in keys):
+                raise SearchCapacityValidationError(
+                    "Candidate A period and market row keys cannot be blank"
+                )
+            try:
+                parsed_periods = [
+                    str(pd.Timestamp(period).date()) for period, _ in keys
+                ]
+            except (TypeError, ValueError) as exc:
+                raise SearchCapacityValidationError(
+                    "Candidate A periods must be valid ISO dates"
+                ) from exc
+            normalized_markets = [market for _, market in keys]
+            if len(set(zip(parsed_periods, normalized_markets))) != len(keys):
+                raise SearchCapacityValidationError(
+                    "Candidate A period/market row keys must be unique"
+                )
+            object.__setattr__(self, "periods", tuple(parsed_periods))
+            object.__setattr__(self, "markets", tuple(market for _, market in keys))
         if (
             self.google_trends_anchor is not None
             and len(self.google_trends_anchor.model_weeks) != delivery.size
@@ -740,6 +786,8 @@ class CandidateASearchFitInputs:
                 if self.google_trends_anchor is not None
                 else None
             ),
+            "periods": list(self.periods),
+            "markets": list(self.markets),
         }
 
     @classmethod
@@ -763,7 +811,64 @@ class CandidateASearchFitInputs:
                 if values.get("google_trends_anchor")
                 else None
             ),
+            periods=tuple(str(item) for item in values.get("periods") or ()),
+            markets=tuple(str(item) for item in values.get("markets") or ()),
         )
+
+
+def slice_candidate_a_fit_inputs(
+    fit_inputs: CandidateASearchFitInputs,
+    *,
+    periods: Sequence[str],
+    markets: Sequence[str],
+) -> CandidateASearchFitInputs:
+    """Return an exact row-key slice for a leakage-safe fold or replay.
+
+    A Candidate A fold must use the observations pinned to the original fit
+    and only the requested ``(period, market)`` rows.  This helper refuses
+    the legacy array-only shape instead of guessing an ordering or filling a
+    missing Search observation.
+    """
+
+    if not fit_inputs.periods or not fit_inputs.markets:
+        raise SearchCapacityValidationError(
+            "Candidate A fold slicing requires period and market row identity"
+        )
+    if len(periods) != len(markets):
+        raise SearchCapacityValidationError("slice periods and markets must align")
+    requested = [
+        (str(pd.Timestamp(period).date()), str(market))
+        for period, market in zip(periods, markets)
+    ]
+    source_keys = list(zip(fit_inputs.periods, fit_inputs.markets))
+    positions = {key: index for index, key in enumerate(source_keys)}
+    missing = [key for key in requested if key not in positions]
+    if missing:
+        raise SearchCapacityValidationError(
+            "Candidate A fold requests observations absent from the fit-pinned "
+            f"payload: {missing[:5]}"
+        )
+    indices = np.asarray([positions[key] for key in requested], dtype=int)
+    anchor = fit_inputs.google_trends_anchor
+    if anchor is not None:
+        requested_weeks = tuple(period for period, _ in requested)
+        observed_weeks = set(requested_weeks)
+        sliced_observations = tuple(
+            item for item in anchor.observations if item.week in observed_weeks
+        )
+        anchor = replace(
+            anchor, observations=sliced_observations, model_weeks=requested_weeks
+        )
+    return replace(
+        fit_inputs,
+        paid_search_delivery=fit_inputs.paid_search_delivery[indices],
+        paid_search_cap=fit_inputs.paid_search_cap[indices],
+        organic_search_capture=fit_inputs.organic_search_capture[indices],
+        direct_navigation_capture=fit_inputs.direct_navigation_capture[indices],
+        periods=tuple(period for period, _ in requested),
+        markets=tuple(market for _, market in requested),
+        google_trends_anchor=anchor,
+    )
 
 
 def attach_candidate_a_demand_capture_chain(
@@ -1725,5 +1830,6 @@ __all__ = [
     "extract_candidate_a_replay_params",
     "identify_candidate_a_search",
     "posterior_outputs_from_forward_draws",
+    "slice_candidate_a_fit_inputs",
     "validate_candidate_a_spec",
 ]

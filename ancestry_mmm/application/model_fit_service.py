@@ -135,6 +135,7 @@ def check_candidate_a_fit_readiness(
         fit_inputs.paid_search_cap,
         fit_inputs.paid_search_delivery,
         market_labels=market_labels,
+        cap_to_delivery_scale=spec.cap_to_delivery_scale,
         cap_provenance=spec.cap_provenance,
         cap_mapping_resolved=spec.cap_provenance_status == "resolved",
         capture_mappings_resolved=not spec_issues,

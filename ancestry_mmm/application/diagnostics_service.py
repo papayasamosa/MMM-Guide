@@ -649,6 +649,7 @@ class DiagnosticsService:
                         diag_input.candidate_a_paid_search_delivery
                         if diag_input.candidate_a_paid_search_delivery is not None
                         else np.array([]),
+                        cap_to_delivery_scale=diag_input.candidate_a_spec.cap_to_delivery_scale,
                         cap_provenance=diag_input.candidate_a_spec.cap_provenance,
                         cap_mapping_resolved=not spec_issues,
                         capture_mappings_resolved=not spec_issues,
