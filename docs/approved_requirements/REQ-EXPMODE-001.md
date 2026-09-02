@@ -262,3 +262,86 @@ Modelling
 ## Approval date
 
 2026-08-17
+
+## Addendum, 2026-08-30 (Phase C): calibration mechanism resolved for likelihood_calibration (Decision 11)
+
+This record's own "Explicitly excluded"/"Unresolved decisions" sections
+named "any specific likelihood-calibration formula or statistical
+mechanism" as requiring "a decision-support package using Context7/
+official PyMC/PyMC-Marketing sources before any production default is
+chosen." Decision 11 of the business-decision brief ("experiments
+should inform priors/calibration, not just post-hoc comparison") is
+that trigger. This addendum records the resulting resolution: full
+decision record in
+`docs/experiment_calibration_mechanism_decision_record.md`;
+implementation in `ancestry_mmm/core/experiment_lift_test_mapping.py`.
+
+**Resolved, for `likelihood_calibration` only:** PyMC-Marketing's own
+official, documented `MMM.add_lift_test_measurements(df_lift_test)` API
+is the approved calibration mechanism — confirmed via Context7 against
+PyMC-Marketing's own documentation repository to calibrate a
+saturation-curve likelihood/observation-model term specifically,
+matching this record's own `likelihood_calibration` evidence-mode
+definition exactly. `ExperimentRecord` gained one new field
+(`baseline_exposure_level`, `EXPERIMENT_REGISTRY_SCHEMA_VERSION` 1 -> 2)
+to carry the "x" (baseline exposure level) PyMC-Marketing's official row
+shape requires alongside `treatment_quantity` (-> `delta_x`),
+`observed_effect_estimate` (-> `delta_y`), and `effect_uncertainty`
+(-> `sigma`, now required strictly positive for a lift-test row
+specifically). `build_lift_test_calibration_row`/`build_lift_test_
+calibration_rows` map a fully compatible, likelihood-calibration-mode
+experiment into this exact row shape, fail-closed (never silently
+substituting a default, and independently re-verifying compatibility
+rather than trusting a supplied `ExperimentToModelUse` blindly, since
+that type can be constructed directly without going through
+`build_calibrating_use`'s own gate).
+
+The same schema bump additionally adds three governance fields the
+prior Phase B handoff flagged as missing:
+`strategy_or_tactic_tested`, `post_adoption_outcome_tracked`, and
+`applicability_period_start`/`applicability_period_end` — all optional,
+backward-compatible, not required by the lift-test mapping itself but
+relevant to Decision 11's broader governance intent.
+
+**Still not resolved:**
+
+- `prior_calibration`'s mechanism — no equally well-established,
+  officially-documented PyMC-Marketing mechanism for directly informing
+  a named prior from an experiment was found in the queried
+  documentation; a future session may need to search further or treat
+  this as a still-open, separate decision;
+- the actual `add_lift_test_measurements(...)` call inside any real
+  model-fitting code — `core.search_capacity`, `core.pathways`, and
+  every other model-building module remain untouched by this addendum,
+  preserving this record's own "registering an experiment must never
+  silently calibrate a model" invariant; wiring this in for real is a
+  separate, materially statistical follow-up requiring its own
+  validation;
+- `config/experiments.json` — still does not exist anywhere in this
+  repository, so the schema bump required no live registry migration.
+
+No `application`/`pages` code changes accompany this addendum beyond
+the additive `ExperimentRecord` fields; no model-fitting module is
+touched.
+
+## Implementation addendum, 2026-09-01
+
+The production fitting architecture remains raw PyMC rather than a
+`pymc_marketing.MMM` object. The approved mechanism is therefore composed
+through a narrow compatibility adapter in
+`ancestry_mmm/core/experiment_lift_test_mapping.py`: a compatible,
+positive lift-test row targets an explicit `direct:<channel>:<outcome_id>`
+primary pathway, uses the existing Hill transform and log link, and adds a
+Gamma observation term on the outcome scale before the count likelihood.
+The adapter records the deliberate divergence from the PyMC-Marketing API;
+it does not claim to provide general temporal/adstock experiment
+translation, signed-effect calibration, or prior calibration. Invalid
+targets, missing compatibility evidence, missing baseline/treatment, and
+non-positive effects fail closed.
+
+Model A and Model C accept these rows through their framework-independent
+builders, and Model Training resolves them from the governed experiment
+registry for the next fit. A valid compatible experiment record is still
+required before this path can produce a calibrated model. The uncalibrated
+versus calibrated comparison artefact remains a separate follow-up under
+`REQ-CALIB-001`.

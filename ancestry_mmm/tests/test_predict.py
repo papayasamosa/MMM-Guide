@@ -29,6 +29,7 @@ from dataclasses import replace
 
 import arviz as az
 import numpy as np
+import pandas as pd
 import pytest
 
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
@@ -557,3 +558,368 @@ class TestPredictMuFailsClosedForCandidateA:
         }
         with pytest.raises(CandidateAReplayNotSupportedError):
             predict_mu(frame, candidate_a_meta, params)
+
+
+class TestPredictMuFailsClosedForNamedEvents:
+    """Production integration (Decision 12, `core.named_event_fit_inputs`):
+    `predict_mu` has no term for a fit's `event_coefs_<family>_<market>`
+    contribution - silently running it on a fit that consumed a named-event
+    response definition would produce a `mu` missing that pathway's
+    contribution, biased specifically in the planted event weeks. Must
+    raise instead, mirroring the identical Candidate A guard above."""
+
+    def test_raises_for_a_meta_with_a_consumed_response_definition(self, meta, params):
+        import dataclasses
+
+        from ancestry_mmm.core.predict import NamedEventReplayNotSupportedError
+
+        named_event_meta = dataclasses.replace(
+            meta,
+            named_event_response_definitions_at_fit=[("mothers-day-def", 1)],
+        )
+        frame = {
+            "X_media": np.zeros((3, len(CHANNELS))),
+            "market_bounds": [(0, 3)],
+            "market_idx": np.zeros(3, dtype=int),
+            "promo": np.zeros((3, len(OUTCOME_IDS))),
+            "trend": np.zeros(3),
+            "fourier": np.zeros((3, 2)),
+        }
+        with pytest.raises(NamedEventReplayNotSupportedError):
+            predict_mu(frame, named_event_meta, params)
+
+    def test_ordinary_fit_with_no_named_events_is_unaffected(self, meta, params):
+        """Backward compatibility: a meta with the field left at its
+        default empty list must not trigger the guard - every fit before
+        this field existed keeps working exactly as before."""
+        assert meta.named_event_response_definitions_at_fit == []
+        n_fourier = len(params.gamma_fourier["New"])
+        frame = {
+            "X_media": np.zeros((3, len(CHANNELS))),
+            "market_bounds": [(0, 3)],
+            "market_idx": np.zeros(3, dtype=int),
+            "promo": np.zeros((3, len(OUTCOME_IDS))),
+            "trend": np.zeros(3),
+            "fourier": np.zeros((3, n_fourier)),
+        }
+        # Must not raise.
+        predict_mu(frame, meta, params)
+
+
+def _named_event_registry():
+    """A minimal governed named-event registry (family, occurrence,
+    response definition) for the predict/scenario-replay gap-closure
+    tests below - mirrors test_named_event_fit_inputs.py's own fixtures."""
+    from ancestry_mmm.core.named_event_response import NAMED_EVENT_RESPONSE_STRUCTURE
+    from ancestry_mmm.core.named_events import (
+        EventResponseDefinition,
+        NamedEventFamily,
+        NamedEventOccurrence,
+    )
+
+    family = NamedEventFamily(
+        family_id="mothers_day",
+        family_version=1,
+        display_name="Mother's Day",
+        classification="gifting",
+    )
+    occurrence = NamedEventOccurrence(
+        event_id="md-2026",
+        event_version=1,
+        display_name="Mother's Day 2026",
+        start_date="2026-01-25",
+        end_date="2026-01-25",
+        market_scope=("UK",),
+        source_id="events",
+        family_id="mothers_day",
+    )
+    definition = EventResponseDefinition(
+        response_definition_id="md-def",
+        response_definition_version=1,
+        family_id="mothers_day",
+        treatment="anticipatory",
+        max_lead=3,
+        max_lag=0,
+        transformation_method_reference=NAMED_EVENT_RESPONSE_STRUCTURE,
+    )
+    return family, occurrence, definition
+
+
+class TestPredictMuNamedEventReplay:
+    """Production integration: predict/scenario-replay gap closure
+    (Decision 12) - `predict_mu`, given a `named_event_fit_inputs` built
+    for this replay frame, must replay the already-fitted `event_coefs_
+    <family>_<market>` posterior coefficients EXACTLY - a deterministic
+    check (not a statistical recovery test), since replaying an
+    already-fitted coefficient vector through a known design matrix has
+    exactly one correct numeric answer."""
+
+    @pytest.fixture
+    def frame(self, params):
+        n = 8
+        n_fourier = len(params.gamma_fourier["New"])
+        return {
+            "X_media": np.zeros((n, len(CHANNELS))),
+            "market_bounds": [(0, n)],
+            "market_idx": np.zeros(n, dtype=int),
+            "promo": np.zeros((n, len(OUTCOME_IDS))),
+            "trend": np.zeros(n),
+            "fourier": np.zeros((n, n_fourier)),
+            "markets": ["UK"],
+            "dates": pd.date_range("2026-01-05", periods=n, freq="W").values,
+        }
+
+    def test_replay_matches_manual_design_times_coefficients(self, meta, params, frame):
+        from ancestry_mmm.core.named_event_fit_inputs import (
+            build_named_event_fit_inputs_for_replay,
+        )
+
+        family, occurrence, definition = _named_event_registry()
+        named_event_meta = replace(
+            meta,
+            named_event_response_definitions_at_fit=[("md-def", 1)],
+            named_event_fit_blocks=[("mothers_day", "UK")],
+        )
+        event_coefs_vector = np.array([0.4, -0.2, 0.15, 0.05, 0.02, 0.01])
+        named_params = replace(
+            params, event_coefs={"mothers_day": {"UK": event_coefs_vector}}
+        )
+        fit_inputs = build_named_event_fit_inputs_for_replay(
+            frame,
+            families=[family],
+            occurrences=[occurrence],
+            response_definitions=[definition],
+            fitted_response_definitions=(
+                named_event_meta.named_event_response_definitions_at_fit
+            ),
+        )
+        assert len(fit_inputs.blocks) == 1
+        block = fit_inputs.blocks[0]
+        assert block.design.shape[1] == len(event_coefs_vector)
+
+        baseline_mu = predict_mu(frame, meta, params)
+        mu_with_event = predict_mu(
+            frame, named_event_meta, named_params, named_event_fit_inputs=fit_inputs
+        )
+        contrib = block.design @ event_coefs_vector
+        assert np.any(contrib != 0.0)  # the window actually has support here
+        expected = baseline_mu * np.exp(contrib)[:, None]
+        np.testing.assert_allclose(mu_with_event, expected, rtol=1e-10)
+
+    def test_outcome_scope_restricts_the_contribution_to_named_outcomes(
+        self, meta, params, frame
+    ):
+        from ancestry_mmm.core.named_event_fit_inputs import (
+            build_named_event_fit_inputs_for_replay,
+        )
+
+        family, occurrence, definition = _named_event_registry()
+        scoped_definition = replace(definition, outcome_scope=("New",))
+        named_event_meta = replace(
+            meta,
+            named_event_response_definitions_at_fit=[("md-def", 1)],
+            named_event_fit_blocks=[("mothers_day", "UK")],
+        )
+        event_coefs_vector = np.array([0.4, -0.2, 0.15, 0.05, 0.02, 0.01])
+        named_params = replace(
+            params, event_coefs={"mothers_day": {"UK": event_coefs_vector}}
+        )
+        fit_inputs = build_named_event_fit_inputs_for_replay(
+            frame,
+            families=[family],
+            occurrences=[occurrence],
+            response_definitions=[scoped_definition],
+            fitted_response_definitions=(
+                named_event_meta.named_event_response_definitions_at_fit
+            ),
+        )
+        baseline_mu = predict_mu(frame, meta, params)
+        mu_with_event = predict_mu(
+            frame, named_event_meta, named_params, named_event_fit_inputs=fit_inputs
+        )
+        new_idx = OUTCOME_IDS.index("New")
+        other_idx = OUTCOME_IDS.index("DNA_CrossSell")
+        contrib = fit_inputs.blocks[0].design @ event_coefs_vector
+        assert np.any(contrib != 0.0)
+        np.testing.assert_allclose(
+            mu_with_event[:, new_idx],
+            baseline_mu[:, new_idx] * np.exp(contrib),
+            rtol=1e-10,
+        )
+        # The unscoped outcome must be completely untouched.
+        np.testing.assert_allclose(
+            mu_with_event[:, other_idx], baseline_mu[:, other_idx]
+        )
+
+    def test_a_block_that_was_never_actually_fit_contributes_zero(
+        self, meta, params, frame
+    ):
+        """Decision 12's own unpooled-by-default choice means a (family,
+        market) pair the replay frame implies an event for, but that was
+        never actually fit (absent from meta.named_event_fit_blocks), has
+        no coefficients to borrow - contributes zero rather than
+        fabricating or pooling from elsewhere."""
+        from ancestry_mmm.core.named_event_fit_inputs import (
+            build_named_event_fit_inputs_for_replay,
+        )
+
+        family, occurrence, definition = _named_event_registry()
+        # named_event_fit_blocks deliberately left empty: this (family,
+        # market) pair was never fit, even though the registry/frame
+        # combination below produces a real design block for it.
+        named_event_meta = replace(
+            meta,
+            named_event_response_definitions_at_fit=[("md-def", 1)],
+            named_event_fit_blocks=[],
+        )
+        fit_inputs = build_named_event_fit_inputs_for_replay(
+            frame,
+            families=[family],
+            occurrences=[occurrence],
+            response_definitions=[definition],
+            fitted_response_definitions=(
+                named_event_meta.named_event_response_definitions_at_fit
+            ),
+        )
+        assert len(fit_inputs.blocks) == 1  # a real block exists...
+        baseline_mu = predict_mu(frame, meta, params)
+        mu_with_event = predict_mu(
+            frame, named_event_meta, params, named_event_fit_inputs=fit_inputs
+        )
+        # ...but it was never fit, so it must contribute nothing.
+        np.testing.assert_allclose(mu_with_event, baseline_mu)
+
+    def test_supplying_an_explicitly_empty_fit_inputs_does_not_raise(
+        self, meta, params, frame
+    ):
+        """None (not supplied) means "caller did not attempt replay
+        support" and still raises; an actual (possibly block-empty)
+        NamedEventFitInputs instance means "replay support was attempted"
+        and must not raise, even when it legitimately has nothing to add
+        for this particular frame."""
+        from ancestry_mmm.core.named_event_fit_inputs import NamedEventFitInputs
+
+        named_event_meta = replace(
+            meta, named_event_response_definitions_at_fit=[("md-def", 1)]
+        )
+        empty_inputs = NamedEventFitInputs(
+            blocks=(), shrinkage_prior_scale_by_family={}
+        )
+        mu = predict_mu(
+            frame, named_event_meta, params, named_event_fit_inputs=empty_inputs
+        )
+        baseline_mu = predict_mu(frame, meta, params)
+        np.testing.assert_allclose(mu, baseline_mu)
+
+    def test_still_raises_when_fit_inputs_not_supplied_at_all(
+        self, meta, params, frame
+    ):
+        """Regression guard: the original fail-closed contract must
+        survive this change for any caller that has not been updated yet."""
+        from ancestry_mmm.core.predict import NamedEventReplayNotSupportedError
+
+        named_event_meta = replace(
+            meta, named_event_response_definitions_at_fit=[("md-def", 1)]
+        )
+        with pytest.raises(NamedEventReplayNotSupportedError):
+            predict_mu(frame, named_event_meta, params)
+
+
+class TestExtractEventCoefs:
+    """`core.predict.extract_event_coefs` / `extract_posterior_params`'s
+    new `event_coefs` field - reads `event_coefs_<family_id>_<market>`
+    posterior variables named exactly as `core.hierarchical_model.
+    build_fh_hierarchical_model` fits them, keyed by
+    `meta.named_event_fit_blocks` (never by parsing the variable name back
+    apart, which would be ambiguous for a family_id/market containing an
+    underscore)."""
+
+    @pytest.fixture
+    def trace_with_event_coefs(self) -> az.InferenceData:
+        n_chain, n_draw = 2, 5
+        coords = {
+            "channel": CHANNELS,
+            "outcome": OUTCOME_IDS,
+            "fourier": list(range(6)),
+            "event_basis_mothers_day_UK": list(range(3)),
+        }
+        rng = np.random.default_rng(2)
+
+        def const(value):
+            arr = np.asarray(value, dtype=float)
+            return np.broadcast_to(arr, (n_chain, n_draw) + arr.shape).copy()
+
+        posterior = {
+            "decay_rate": const([0.7, 0.5]),
+            "hill_K": const([1000.0, 500.0]),
+            "hill_S": const([1.2, 1.0]),
+            "beta": const([[0.10, 0.05], [0.02, 0.20]]),
+            "promo_coef": const([0.2, 0.3]),
+            "market_offset": const([[0.0, 0.0]]),
+            "intercept": const([3.0, 2.0]),
+            "trend_coef": const([0.1, 0.05]),
+            "gamma_fourier": const(np.zeros((6, 2))),
+            "alpha": const([5.0, 5.0]),
+            "event_coefs_mothers_day_UK": const([0.4, -0.2, 0.1])
+            + rng.normal(0, 1e-6, size=(n_chain, n_draw, 3)),
+        }
+        dims = {
+            "decay_rate": ["channel"],
+            "hill_K": ["channel"],
+            "hill_S": ["channel"],
+            "beta": ["outcome", "channel"],
+            "promo_coef": ["outcome"],
+            "market_offset": ["market", "outcome"],
+            "intercept": ["outcome"],
+            "trend_coef": ["outcome"],
+            "gamma_fourier": ["fourier", "outcome"],
+            "alpha": ["outcome"],
+            "event_coefs_mothers_day_UK": ["event_basis_mothers_day_UK"],
+        }
+        coords["market"] = ["UK"]
+        return az.from_dict(posterior=posterior, coords=coords, dims=dims)
+
+    def test_extracts_the_named_variable_keyed_by_family_then_market(
+        self, meta, trace_with_event_coefs
+    ):
+        from ancestry_mmm.core.predict import extract_event_coefs
+
+        named_event_meta = replace(meta, named_event_fit_blocks=[("mothers_day", "UK")])
+        event_coefs = extract_event_coefs(trace_with_event_coefs, named_event_meta)
+        np.testing.assert_allclose(
+            event_coefs["mothers_day"]["UK"], [0.4, -0.2, 0.1], atol=1e-3
+        )
+
+    def test_empty_fit_blocks_returns_empty_dict(self, meta, trace_with_event_coefs):
+        """Backward compatibility: a meta with no named_event_fit_blocks
+        (every fit before this field existed, or any fit that never
+        consumed a named event) must never try to read a variable that
+        does not exist for it."""
+        from ancestry_mmm.core.predict import extract_event_coefs
+
+        assert meta.named_event_fit_blocks == []
+        event_coefs = extract_event_coefs(trace_with_event_coefs, meta)
+        assert event_coefs == {}
+
+    def test_extract_posterior_params_populates_event_coefs(
+        self, meta, trace_with_event_coefs
+    ):
+        named_event_meta = replace(meta, named_event_fit_blocks=[("mothers_day", "UK")])
+        params = extract_posterior_params(trace_with_event_coefs, named_event_meta)
+        np.testing.assert_allclose(
+            params.event_coefs["mothers_day"]["UK"], [0.4, -0.2, 0.1], atol=1e-3
+        )
+
+    def test_at_selects_one_draw_instead_of_averaging(
+        self, meta, trace_with_event_coefs
+    ):
+        named_event_meta = replace(meta, named_event_fit_blocks=[("mothers_day", "UK")])
+        from ancestry_mmm.core.predict import extract_event_coefs
+
+        draw_a = extract_event_coefs(
+            trace_with_event_coefs, named_event_meta, at=(0, 0)
+        )
+        draw_b = extract_event_coefs(
+            trace_with_event_coefs, named_event_meta, at=(1, 3)
+        )
+        assert not np.allclose(draw_a["mothers_day"]["UK"], draw_b["mothers_day"]["UK"])

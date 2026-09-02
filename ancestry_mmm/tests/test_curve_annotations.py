@@ -20,6 +20,7 @@ from ancestry_mmm.application.curve_annotations import (
     annotation_from_legacy_curve,
     annotation_from_official_support,
 )
+from ancestry_mmm.core.canonical_curves import SUPPORT_AVAILABLE, SUPPORT_MISSING
 
 
 def _curve_df() -> pd.DataFrame:
@@ -186,6 +187,75 @@ class TestAnnotationFromOfficialSupport:
         )
         assert annotation.average_economics_label is None
         assert annotation.marginal_economics_label is None
+
+
+class TestAnnotationFromOfficialSupportStatusLabel:
+    """Production-integration follow-up (Results/exports disclosure
+    labels): `observed_support_status` was read off the support row for
+    `is_extrapolated` but its own value was silently dropped before
+    reaching the chart annotation - `status_label` stayed None for every
+    official artifact curve. This fixes that by deriving `status_label`
+    from `observed_support_status` when the caller does not supply one."""
+
+    _SUPPORT_ROWS = TestAnnotationFromOfficialSupport._SUPPORT_ROWS
+
+    def test_support_available_derives_a_status_label(self):
+        rows = [
+            {
+                "market": "UK",
+                "channel": "TV_Brand",
+                "current": 120.0,
+                "observed_min": 10.0,
+                "observed_max": 300.0,
+                "is_extrapolated": False,
+                "observed_support_status": SUPPORT_AVAILABLE,
+            }
+        ]
+        annotation = annotation_from_official_support(
+            rows, "UK", "TV_Brand", curve_type="model_input"
+        )
+        assert annotation.status_label is not None
+        assert "historical data observed" in annotation.status_label
+        assert annotation.status_label in annotation.annotation_lines()
+
+    def test_support_missing_derives_a_support_limited_label(self):
+        rows = [
+            {
+                "market": "UK",
+                "channel": "OOH",
+                "observed_support_status": SUPPORT_MISSING,
+            }
+        ]
+        annotation = annotation_from_official_support(
+            rows, "UK", "OOH", curve_type="model_input"
+        )
+        assert annotation.status_label is not None
+        assert "support-limited" in annotation.status_label
+
+    def test_caller_supplied_status_label_still_overrides_the_derived_default(self):
+        rows = [
+            {
+                "market": "UK",
+                "channel": "TV_Brand",
+                "observed_support_status": SUPPORT_AVAILABLE,
+            }
+        ]
+        annotation = annotation_from_official_support(
+            rows,
+            "UK",
+            "TV_Brand",
+            curve_type="model_input",
+            status_label="A different evidence tier label",
+        )
+        assert annotation.status_label == "A different evidence tier label"
+
+    def test_no_observed_support_status_on_the_row_yields_no_label(self):
+        """Matches the module's existing rows (no `observed_support_status`
+        key at all) - must stay exactly as before: no fabricated label."""
+        annotation = annotation_from_official_support(
+            self._SUPPORT_ROWS, "UK", "TV_Brand", curve_type="model_input"
+        )
+        assert annotation.status_label is None
 
 
 class TestCurveAnnotationLineOrdering:

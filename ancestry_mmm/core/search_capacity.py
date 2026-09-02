@@ -34,6 +34,8 @@ from .search_objects import (
     SearchObjectDefinition,
     current_search_object_versions,
 )
+from .capacity import CapHitClassification, classify_cap_hit_status_series
+from .google_trends_anchor import GoogleTrendsAnchorFitInputs
 
 
 SEARCH_CANDIDATE_A_ENGINE = "pymc_search_candidate_a"
@@ -542,6 +544,75 @@ def posterior_outputs_from_forward_draws(
     )
 
 
+def candidate_a_cap_hit_status(
+    cap: Sequence[float] | np.ndarray,
+    *,
+    probability_cap_binding: Optional[Sequence[float] | np.ndarray] = None,
+    point_binding: Optional[Sequence[bool] | np.ndarray] = None,
+) -> List[CapHitClassification]:
+    """The governed four-value cap-hit status series for Candidate A
+    (`core.capacity`'s Decision 10/18 vocabulary), computed from
+    Candidate A's own existing cap value and binding evidence - either
+    `probability_cap_binding` (posterior evidence,
+    `CandidateAPosteriorOutputs.probability_cap_binding`) or
+    `point_binding` (a single evaluation,
+    `CandidateAForwardState.cap_binding`), never both.
+
+    This is purely additive: it does not change, replace, or reinterpret
+    `CandidateAForwardState.cap_binding`/`CandidateAPosteriorOutputs.
+    probability_cap_binding` themselves - both remain exactly as before.
+    A cap value of `np.nan` at a given period is treated as "no governed
+    cap value for this period" (`unavailable`), distinct from a supplied,
+    finite cap of `0.0`.
+    """
+    cap_arr = np.asarray(cap, dtype=float)
+    if cap_arr.ndim != 1:
+        raise SearchCapacityValidationError("cap must be one-dimensional.")
+    # NaN is the explicit "no governed cap value for this period" signal
+    # (unavailable) - not rejected as non-finite the way other Candidate A
+    # arrays are, since this function's whole purpose is to represent that
+    # absence, distinct from a supplied, finite cap of zero.
+    if np.any(np.isneginf(cap_arr)) or np.any(np.isposinf(cap_arr)):
+        raise SearchCapacityValidationError(
+            "cap must not contain +/-inf; use NaN for 'no governed cap "
+            "value', or a large finite number for an effectively unbounded "
+            "cap."
+        )
+    cap_values: List[Optional[float]] = [
+        None if np.isnan(value) else float(value) for value in cap_arr
+    ]
+    if probability_cap_binding is not None and point_binding is not None:
+        raise SearchCapacityValidationError(
+            "candidate_a_cap_hit_status: supply exactly one of "
+            "probability_cap_binding or point_binding, not both."
+        )
+    if probability_cap_binding is not None:
+        prob_arr = np.asarray(probability_cap_binding, dtype=float)
+        if not np.all(np.isfinite(prob_arr)):
+            raise SearchCapacityValidationError(
+                "probability_cap_binding contains non-finite values."
+            )
+        _same_shape(cap_arr, prob_arr)
+        return classify_cap_hit_status_series(
+            cap_values=cap_values,
+            probability_binding=[float(value) for value in prob_arr],
+        )
+    if point_binding is not None:
+        binding_arr = np.asarray(point_binding, dtype=bool)
+        if binding_arr.shape != cap_arr.shape:
+            raise SearchCapacityValidationError(
+                "candidate_a_cap_hit_status: point_binding must match cap shape"
+            )
+        return classify_cap_hit_status_series(
+            cap_values=cap_values,
+            point_binding=[bool(value) for value in binding_arr],
+        )
+    raise SearchCapacityValidationError(
+        "candidate_a_cap_hit_status: exactly one of probability_cap_binding "
+        "or point_binding is required."
+    )
+
+
 @dataclass(frozen=True)
 class SearchUseGate:
     """Separate implementation availability from official-use eligibility."""
@@ -617,6 +688,7 @@ class CandidateASearchFitInputs:
     search_objects: List[SearchObjectDefinition | Mapping[str, Any]] = field(
         default_factory=list
     )
+    google_trends_anchor: Optional[GoogleTrendsAnchorFitInputs] = None
 
     def __post_init__(self) -> None:
         if not self.demand_channel_names:
@@ -642,6 +714,56 @@ class CandidateASearchFitInputs:
             raise SearchCapacityValidationError(
                 "observed Paid Search delivery exceeds its cap"
             )
+        if (
+            self.google_trends_anchor is not None
+            and len(self.google_trends_anchor.model_weeks) != delivery.size
+        ):
+            raise SearchCapacityValidationError(
+                "Google Trends anchor model_weeks must match Candidate A periods"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the complete fit boundary for project persistence."""
+        return {
+            "spec": self.spec.to_dict(),
+            "demand_channel_names": list(self.demand_channel_names),
+            "paid_search_delivery": self.paid_search_delivery.tolist(),
+            "paid_search_cap": self.paid_search_cap.tolist(),
+            "organic_search_capture": self.organic_search_capture.tolist(),
+            "direct_navigation_capture": self.direct_navigation_capture.tolist(),
+            "search_objects": [
+                item.to_dict() if isinstance(item, SearchObjectDefinition) else item
+                for item in self.search_objects
+            ],
+            "google_trends_anchor": (
+                self.google_trends_anchor.to_dict()
+                if self.google_trends_anchor is not None
+                else None
+            ),
+        }
+
+    @classmethod
+    def from_dict(cls, values: Mapping[str, Any]) -> "CandidateASearchFitInputs":
+        return cls(
+            spec=SearchCandidateASpec.from_dict(values["spec"]),
+            demand_channel_names=list(values["demand_channel_names"]),
+            paid_search_delivery=np.asarray(
+                values["paid_search_delivery"], dtype=float
+            ),
+            paid_search_cap=np.asarray(values["paid_search_cap"], dtype=float),
+            organic_search_capture=np.asarray(
+                values["organic_search_capture"], dtype=float
+            ),
+            direct_navigation_capture=np.asarray(
+                values["direct_navigation_capture"], dtype=float
+            ),
+            search_objects=list(values.get("search_objects") or []),
+            google_trends_anchor=(
+                GoogleTrendsAnchorFitInputs.from_dict(values["google_trends_anchor"])
+                if values.get("google_trends_anchor")
+                else None
+            ),
+        )
 
 
 def attach_candidate_a_demand_capture_chain(
@@ -715,6 +837,11 @@ def attach_candidate_a_demand_capture_chain(
     default_demand_intercept_mu = float(
         np.log(max(float(np.mean(fit_inputs.paid_search_cap)), 1.0))
     )
+    default_demand_intercept_mu = (
+        float(np.log(0.5))
+        if fit_inputs.google_trends_anchor is not None
+        else float(np.log(max(float(np.mean(fit_inputs.paid_search_cap)), 1.0)))
+    )
     demand_intercept = pm.Normal(
         "search_demand_intercept",
         mu=float(prior.get("demand_intercept_mu", default_demand_intercept_mu)),
@@ -726,11 +853,43 @@ def attach_candidate_a_demand_capture_chain(
         dims="search_demand_channel",
     )
     demand_media_term = pm.math.dot(sat_media[:, demand_channel_idx], demand_media_beta)
-    demand = pm.Deterministic(
-        "search_latent_branded_demand",
-        pt.exp(demand_intercept + demand_market_offset[market_idx] + demand_media_term),
-        dims="obs",
+    demand_index = pt.exp(
+        demand_intercept + demand_market_offset[market_idx] + demand_media_term
     )
+    if fit_inputs.google_trends_anchor is not None:
+        anchor_values = fit_inputs.google_trends_anchor.values_for_model_weeks()
+        pm.Normal(
+            "google_trends_anchor_obs",
+            mu=demand_index,
+            sigma=float(fit_inputs.google_trends_anchor.measurement_sigma),
+            observed=anchor_values,
+            dims="obs",
+        )
+        pm.Deterministic(
+            "google_trends_anchor_value",
+            pt.as_tensor_variable(anchor_values),
+            dims="obs",
+        )
+        demand_to_capture_scale = pm.HalfNormal(
+            "search_demand_to_capture_scale",
+            sigma=float(
+                prior.get(
+                    "demand_to_capture_scale_sigma",
+                    max(capture_scale, 1.0),
+                )
+            ),
+        )
+        demand = pm.Deterministic(
+            "search_latent_branded_demand",
+            demand_index * demand_to_capture_scale,
+            dims="obs",
+        )
+    else:
+        demand = pm.Deterministic(
+            "search_latent_branded_demand",
+            demand_index,
+            dims="obs",
+        )
 
     share_alpha = np.asarray(
         prior.get("capture_share_alpha", [2.0, 1.5, 1.5, 2.0]), dtype=float
@@ -1020,9 +1179,137 @@ class CandidateASequentialDrawParams:
     demand_market_offset: Dict[str, float]
     demand_media_beta: Dict[str, float]
     capture_share: Dict[str, float]  # {"paid", "organic", "direct", "unmet"}
+    # When the approved Google Trends anchor is present, the fitted demand
+    # index is translated into capture units by this posterior draw.  Keep
+    # the scale in the replay contract so the diagnostic sequential path
+    # cannot silently replay an anchored fit as if it were unanchored.
+    demand_to_capture_scale: float = 1.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class CandidateAReplayParams:
+    """Posterior parameters required to replay Candidate A's final outcome.
+
+    This is deliberately separate from :class:`CandidateASequentialDrawParams`
+    because final-outcome replay also needs the three fitted capture-to-
+    outcome coefficients.  Every field is a single posterior draw (or the
+    posterior mean), so the cap's ``min`` non-linearity is evaluated before
+    posterior aggregation by callers.
+    """
+
+    demand_channel_names: List[str]
+    demand_intercept: float
+    demand_market_offset: Dict[str, float]
+    demand_media_beta: Dict[str, float]
+    demand_to_capture_scale: float
+    capture_scale: float
+    capture_share: Dict[str, float]
+    paid_capture_outcome_beta: Dict[str, float]
+    organic_capture_outcome_beta: Dict[str, float]
+    direct_navigation_capture_outcome_beta: Dict[str, float]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def extract_candidate_a_replay_params(
+    trace: Any,
+    meta: Any,
+    at: Optional[tuple[int, int]] = None,
+) -> CandidateAReplayParams:
+    """Extract one Candidate A posterior draw for final-outcome replay.
+
+    The function is intentionally strict about the fitted variables.  A
+    caller cannot obtain a plausible-looking replay from a trace that lacks
+    one of the demand, capture-share, or outcome-link coefficients.
+    """
+
+    post = trace.posterior
+    required = (
+        "search_demand_intercept",
+        "search_demand_market_offset",
+        "search_demand_media_beta",
+        "search_capture_shares",
+        "search_paid_capture_outcome_beta",
+        "search_organic_capture_outcome_beta",
+        "search_direct_navigation_capture_outcome_beta",
+    )
+    missing = [name for name in required if name not in post]
+    if missing:
+        raise SearchCapacityValidationError(
+            "Trace is missing Candidate A replay variables: " + ", ".join(missing)
+        )
+
+    def _reduce(da: Any) -> Any:
+        if at is not None:
+            return da.isel(chain=at[0], draw=at[1])
+        return da.mean(dim=[d for d in da.dims if d in ("chain", "draw")])
+
+    demand_channel_names = [str(v) for v in post.coords["search_demand_channel"].values]
+    outcome_ids = list(getattr(meta, "outcome_ids", ()))
+    if not outcome_ids:
+        outcome_ids = [str(v) for v in post.coords["outcome"].values]
+    market_names = [str(v) for v in post.coords["market"].values]
+
+    demand_media_beta_reduced = _reduce(post["search_demand_media_beta"])
+    demand_media_beta = {
+        name: float(demand_media_beta_reduced.sel(search_demand_channel=name).values)
+        for name in demand_channel_names
+    }
+    demand_market_offset_reduced = _reduce(post["search_demand_market_offset"])
+    demand_market_offset = {
+        market: float(demand_market_offset_reduced.sel(market=market).values)
+        for market in market_names
+    }
+    capture_shares_reduced = _reduce(post["search_capture_shares"])
+    capture_share = {
+        component: float(
+            capture_shares_reduced.sel(search_capture_share_component=component).values
+        )
+        for component in CANDIDATE_A_CAPTURE_SHARE_COMPONENTS
+    }
+
+    def _outcome_values(var_name: str) -> Dict[str, float]:
+        reduced = _reduce(post[var_name])
+        return {
+            outcome_id: float(reduced.sel(outcome=outcome_id).values)
+            for outcome_id in outcome_ids
+        }
+
+    demand_to_capture_scale = 1.0
+    if "search_demand_to_capture_scale" in post:
+        demand_to_capture_scale = float(
+            _reduce(post["search_demand_to_capture_scale"]).values
+        )
+    capture_scale = float(getattr(meta, "candidate_a_capture_scale", 1.0))
+    if not np.isfinite(capture_scale) or capture_scale <= 0:
+        raise SearchCapacityValidationError(
+            "Candidate A fit metadata has an invalid capture scale."
+        )
+    if not np.isfinite(demand_to_capture_scale) or demand_to_capture_scale <= 0:
+        raise SearchCapacityValidationError(
+            "Candidate A demand_to_capture_scale must be finite and positive."
+        )
+
+    return CandidateAReplayParams(
+        demand_channel_names=demand_channel_names,
+        demand_intercept=float(_reduce(post["search_demand_intercept"]).values),
+        demand_market_offset=demand_market_offset,
+        demand_media_beta=demand_media_beta,
+        demand_to_capture_scale=demand_to_capture_scale,
+        capture_scale=capture_scale,
+        capture_share=capture_share,
+        paid_capture_outcome_beta=_outcome_values("search_paid_capture_outcome_beta"),
+        organic_capture_outcome_beta=_outcome_values(
+            "search_organic_capture_outcome_beta"
+        ),
+        direct_navigation_capture_outcome_beta=_outcome_values(
+            "search_direct_navigation_capture_outcome_beta"
+        ),
+    )
 
 
 def extract_candidate_a_sequential_params(
@@ -1078,6 +1365,11 @@ def extract_candidate_a_sequential_params(
         )
         for component in CANDIDATE_A_CAPTURE_SHARE_COMPONENTS
     }
+    demand_to_capture_scale = 1.0
+    if "search_demand_to_capture_scale" in post:
+        demand_to_capture_scale = float(
+            _reduce(post["search_demand_to_capture_scale"]).values
+        )
 
     return CandidateASequentialDrawParams(
         demand_channel_names=demand_channel_names,
@@ -1085,6 +1377,7 @@ def extract_candidate_a_sequential_params(
         demand_market_offset=demand_market_offset,
         demand_media_beta=demand_media_beta,
         capture_share=capture_share,
+        demand_to_capture_scale=demand_to_capture_scale,
     )
 
 
@@ -1413,6 +1706,7 @@ def build_candidate_a_search_model(
 __all__ = [
     "CandidateAForwardState",
     "CandidateAPosteriorOutputs",
+    "CandidateAReplayParams",
     "CandidateASearchFitInputs",
     "CandidateASequentialDrawParams",
     "SEARCH_CANDIDATE_A_ENGINE",
@@ -1428,6 +1722,7 @@ __all__ = [
     "candidate_a_use_gate",
     "counterfactual_search_effects",
     "extract_candidate_a_sequential_params",
+    "extract_candidate_a_replay_params",
     "identify_candidate_a_search",
     "posterior_outputs_from_forward_draws",
     "validate_candidate_a_spec",

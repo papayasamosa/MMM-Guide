@@ -15,8 +15,9 @@ are kept from the original single-KPI implementation for reuse.
 
 from __future__ import annotations
 
+import math
 from itertools import combinations
-from typing import Dict, List, Optional, Sequence, Tuple, cast
+from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 
 import numpy as np
 import pandas as pd
@@ -26,8 +27,11 @@ from .control_scaling import apply_control_scaling
 from .predict import (
     FHPosteriorParams,
     _cross_product_strength_matrix,
+    _candidate_a_eta_contribution,
+    _seo_eta_contribution,
     adstock_saturate_frame,
     lag_frame,
+    predict_mu,
 )
 from .outcome_group_totals import (
     aggregate_attribution_group_rows,
@@ -38,22 +42,14 @@ from .search_capacity import SEARCH_CANDIDATE_A_ENGINE
 
 
 class CandidateAAttributionNotSupportedError(ValueError):
-    """Raised by `compute_shapley_contributions` for a Candidate A fit.
+    """Raised when Candidate A attribution lacks fit-time replay evidence.
 
-    WP3 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`): the ordinary
-    Shapley decomposition reconstructs `mu` from `_baseline_eta` plus each
-    channel's `_channel_log_terms` only - neither reads
-    `search_eta_contribution` (the Candidate A demand/capture/cap chain's
-    outcome contribution, see `core.search_capacity.
-    attach_candidate_a_demand_capture_chain`). Before this guard existed,
-    calling this on a Candidate A fit silently produced a `mu_total` missing
-    the entire search-mediated pathway's share of outcome volume - no
-    exception, no warning. AGENTS.md: "model correctness takes priority
-    over interface breadth" - an explicit failure here is safer than a
-    plausible-looking but wrong decomposition. A Candidate A-specific
-    decomposition contract (direct vs realised-mediated vs total, using
-    `core.search_capacity.counterfactual_search_effects`) is future work,
-    not yet implemented.
+    Candidate A is now supported by the ordinary analyst-facing attribution
+    path when the posterior contains its complete demand/capture/outcome-link
+    parameters and the fit-time historical cap.  This exception remains the
+    fail-closed boundary for an incomplete or malformed Candidate A fit; it
+    prevents a plausible-looking decomposition that silently omits the
+    search-mediated outcome contribution.
     """
 
 
@@ -112,7 +108,7 @@ def _baseline_eta(
         )
         eta += (scaled_controls @ coefs)[:, None]
 
-    return eta
+    return np.asarray(eta, dtype=float)
 
 
 def _channel_log_terms(
@@ -197,6 +193,129 @@ def _channel_log_terms(
     return terms
 
 
+def _candidate_a_mu_from_eta(
+    base_mu: np.ndarray, candidate_eta: np.ndarray
+) -> np.ndarray:
+    """Apply one Candidate A replay contribution on the outcome scale."""
+
+    return np.clip(base_mu * np.exp(np.clip(candidate_eta, -50, 50)), 1e-6, 1e9)
+
+
+def _candidate_a_mediated_shapley(
+    frame: Dict,
+    meta: FHModelMeta,
+    params: FHPosteriorParams,
+    *,
+    base_mu: np.ndarray,
+    sat_media: np.ndarray,
+    historical_cap: np.ndarray,
+    n_permutations: int,
+    rng: np.random.Generator,
+) -> Dict[str, Any]:
+    """Attribute Candidate A's upstream-media effect by posterior draw.
+
+    The value function replays the complete demand -> cap -> capture ->
+    outcome chain for each coalition of demand-driving media channels.  This
+    is deliberately a second Shapley decomposition: an upstream channel's
+    mediated effect is its marginal effect on the *final outcome*, not a
+    spend/click-share allocation of a Search residual.  In particular, the
+    no-upstream coalition retains the fitted Search demand intercept and
+    therefore separates non-media Search demand from media-mediated Search.
+    """
+
+    replay = params.candidate_a_replay_params
+    if replay is None:
+        raise CandidateAAttributionNotSupportedError(
+            "Candidate A attribution requires complete posterior replay "
+            "parameters for the demand/capture/outcome chain."
+        )
+    demand_channels = list(replay.demand_channel_names)
+    if not demand_channels:
+        raise CandidateAAttributionNotSupportedError(
+            "Candidate A attribution requires at least one demand-driving "
+            "upstream channel."
+        )
+    unknown = [channel for channel in demand_channels if channel not in meta.channels]
+    if unknown:
+        raise CandidateAAttributionNotSupportedError(
+            "Candidate A replay demand channel(s) are not in the fitted "
+            f"channel set: {unknown}."
+        )
+    channel_indices = {
+        channel: meta.channels.index(channel) for channel in demand_channels
+    }
+
+    def coalition_mu(active_channels: set[str]) -> np.ndarray:
+        coalition_media = sat_media.copy()
+        inactive_indices = [
+            channel_indices[channel]
+            for channel in demand_channels
+            if channel not in active_channels
+        ]
+        if inactive_indices:
+            coalition_media[:, inactive_indices] = 0.0
+        candidate_eta = _candidate_a_eta_contribution(
+            frame=frame,
+            meta=meta,
+            params=params,
+            sat_media=coalition_media,
+            n_obs=base_mu.shape[0],
+            explicit_cap=historical_cap,
+        )
+        return _candidate_a_mu_from_eta(base_mu, candidate_eta)
+
+    if n_permutations < 1:
+        raise ValueError("n_permutations must be at least 1.")
+    coalition_values: Dict[frozenset[str], np.ndarray] = {}
+
+    def coalition_value(active_channels: set[str]) -> np.ndarray:
+        key = frozenset(active_channels)
+        if key not in coalition_values:
+            coalition_values[key] = coalition_mu(active_channels)
+        return coalition_values[key]
+
+    mu_without_upstream_media = coalition_value(set())
+    mediated = {channel: np.zeros_like(base_mu) for channel in demand_channels}
+    # Exact coalition-weighted Shapley values keep identical/correlated
+    # upstream channels symmetric while retaining the full nonlinear cap
+    # replay.  Sampling remains the bounded fallback for unusually large
+    # demand-channel sets.
+    if len(demand_channels) <= 8:
+        factorial_n = math.factorial(len(demand_channels))
+        for channel in demand_channels:
+            others = [item for item in demand_channels if item != channel]
+            for size in range(len(others) + 1):
+                for subset in combinations(others, size):
+                    active = set(subset)
+                    weight = (
+                        math.factorial(size)
+                        * math.factorial(len(demand_channels) - size - 1)
+                        / factorial_n
+                    )
+                    mediated[channel] += weight * (
+                        coalition_value(active | {channel}) - coalition_value(active)
+                    )
+    else:
+        for _ in range(n_permutations):
+            active = set()
+            current = mu_without_upstream_media
+            for channel_value in rng.permutation(demand_channels):
+                channel = str(channel_value)
+                active.add(channel)
+                updated = coalition_mu(active)
+                mediated[channel] += updated - current
+                current = updated
+        for channel in demand_channels:
+            mediated[channel] /= n_permutations
+
+    mu_with_upstream_media = coalition_value(set(demand_channels))
+    return {
+        "mu_without_upstream_media": mu_without_upstream_media,
+        "mu_with_upstream_media": mu_with_upstream_media,
+        "mediated_by_channel": mediated,
+    }
+
+
 def compute_shapley_contributions(
     frame: Dict,
     meta: FHModelMeta,
@@ -211,18 +330,11 @@ def compute_shapley_contributions(
     `n_permutations` random channel removal orders. Contributions sum
     exactly to (mu_total - mu_baseline) for every row/outcome_id.
 
-    Raises `CandidateAAttributionNotSupportedError` for a Candidate A fit
-    (`meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE`) - see that
-    exception's docstring.
+    Candidate A adds a posterior-draw Shapley decomposition of the upstream
+    media effect realised through Search.  Direct, mediated-via-Search, and
+    total channel effects are kept separate; the Search pathway row is a
+    non-additive reporting view and is never counted again in channel totals.
     """
-    if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
-        raise CandidateAAttributionNotSupportedError(
-            "compute_shapley_contributions does not yet represent Candidate "
-            "A's search-mediated pathway (search_eta_contribution) - calling "
-            "it on a Candidate A fit would silently omit that pathway's "
-            "share of outcome volume from mu_total. A Candidate A-specific "
-            "decomposition is not yet implemented."
-        )
     rng = np.random.default_rng(seed)
     channels = meta.channels
     n_obs = frame["X_media"].shape[0]
@@ -245,17 +357,89 @@ def compute_shapley_contributions(
     for c in channels:
         contributions[c] /= n_permutations
 
-    mu_total = mu_baseline.copy()
+    mu_direct = mu_baseline.copy()
     for c in channels:
-        mu_total = mu_total + contributions[c]
+        mu_direct = mu_direct + contributions[c]
 
-    return {
+    mu_total = mu_direct.copy()
+    result = {
         "baseline": mu_baseline,
         "channel_contributions": contributions,
         "mu_total": mu_total,
         "outcome_ids": meta.outcome_ids,
         "channels": channels,
     }
+    if getattr(meta, "seo_fit_inputs_at_fit", None):
+        seo_eta = _seo_eta_contribution(
+            frame=frame,
+            meta=meta,
+            params=params,
+            n_obs=n_obs,
+            explicit_values=None,
+            explicit_active_mask=None,
+        )
+        mu_with_seo = np.clip(mu_total * np.exp(np.clip(seo_eta, -50, 50)), 1e-6, 1e9)
+        result["seo_visibility_contribution"] = mu_with_seo - mu_total
+        mu_total = mu_with_seo
+    if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
+        historical_cap = np.asarray(
+            getattr(meta, "candidate_a_historical_paid_search_cap", ()),
+            dtype=float,
+        )
+        if historical_cap.shape != (n_obs,):
+            raise CandidateAAttributionNotSupportedError(
+                "Candidate A attribution requires the fit-time historical "
+                "paid-search cap recorded with the posterior."
+            )
+        mu_before_candidate_a = mu_total.copy()
+        sat_media = adstock_saturate_frame(
+            frame["X_media"], frame["market_bounds"], meta, params
+        )
+        candidate_a_attribution = _candidate_a_mediated_shapley(
+            frame,
+            meta,
+            params,
+            base_mu=mu_total,
+            sat_media=sat_media,
+            historical_cap=historical_cap,
+            n_permutations=n_permutations,
+            rng=rng,
+        )
+        mu_total = predict_mu(
+            frame,
+            meta,
+            params,
+            candidate_a_paid_search_cap=historical_cap,
+        )
+        replay_mu = candidate_a_attribution["mu_with_upstream_media"]
+        if not np.allclose(mu_total, replay_mu, rtol=1e-7, atol=1e-8):
+            raise CandidateAAttributionNotSupportedError(
+                "Candidate A attribution replay does not reconcile with the "
+                "full model prediction; refusing an incomplete decomposition."
+            )
+        result["search_without_upstream_media_mu"] = candidate_a_attribution[
+            "mu_without_upstream_media"
+        ]
+        result["search_non_media_contribution"] = (
+            candidate_a_attribution["mu_without_upstream_media"] - mu_before_candidate_a
+        )
+        result["search_mediated_channel_contributions"] = candidate_a_attribution[
+            "mediated_by_channel"
+        ]
+        result["channel_total_contributions"] = {
+            channel: contributions[channel]
+            + candidate_a_attribution["mediated_by_channel"].get(
+                channel, np.zeros_like(contributions[channel])
+            )
+            for channel in channels
+        }
+        result["search_mediated_contribution"] = (
+            mu_total - candidate_a_attribution["mu_without_upstream_media"]
+        )
+
+    result["mu_total"] = mu_total
+
+    return result
 
 
 def outcome_channel_summary(
@@ -285,11 +469,21 @@ def outcome_channel_summary(
         frame, meta, params, n_permutations
     )
     ltv = ltv or {}
+    mediated_by_channel = cast(
+        Dict[str, np.ndarray],
+        contributions.get("search_mediated_channel_contributions", {}),
+    )
     rows = []
     for ci, ch in enumerate(meta.channels):
         total_spend = float(frame["X_media"][:, ci].sum())
         for si, oid in enumerate(meta.outcome_ids):
-            vol = float(contributions["channel_contributions"][ch][:, si].sum())
+            direct = float(contributions["channel_contributions"][ch][:, si].sum())
+            mediated = float(
+                mediated_by_channel.get(
+                    ch, np.zeros_like(contributions["channel_contributions"][ch])
+                )[:, si].sum()
+            )
+            vol = direct + mediated
             weight = ltv[oid] if oid in ltv else np.nan
             value = vol * weight
             rows.append(
@@ -297,12 +491,83 @@ def outcome_channel_summary(
                     "channel": ch,
                     "outcome_id": oid,
                     "spend": total_spend,
+                    "component_type": "channel_total",
+                    "additive_to_media_total": True,
+                    "direct_effect": direct,
+                    "mediated_via_search_effect": mediated,
+                    "total_effect": vol,
                     "volume_contribution": vol,
                     "roas": vol / total_spend if total_spend > 0 else np.nan,
                     "cpa": total_spend / vol if vol > 0 else np.nan,
                     "ltv": ltv.get(oid),
                     "value_contribution": value,
                     "value_roas": value / total_spend if total_spend > 0 else np.nan,
+                }
+            )
+    if "search_mediated_contribution" in contributions:
+        for si, oid in enumerate(meta.outcome_ids):
+            volume = float(contributions["search_mediated_contribution"][:, si].sum())
+            weight = ltv[oid] if oid in ltv else np.nan
+            rows.append(
+                {
+                    "channel": "Search-mediated Candidate A",
+                    "outcome_id": oid,
+                    "spend": np.nan,
+                    "component_type": "search_pathway_view",
+                    "additive_to_media_total": False,
+                    "direct_effect": np.nan,
+                    "mediated_via_search_effect": volume,
+                    "total_effect": np.nan,
+                    "volume_contribution": volume,
+                    "roas": np.nan,
+                    "cpa": np.nan,
+                    "ltv": ltv.get(oid),
+                    "value_contribution": volume * weight,
+                    "value_roas": np.nan,
+                }
+            )
+    if "search_non_media_contribution" in contributions:
+        for si, oid in enumerate(meta.outcome_ids):
+            volume = float(contributions["search_non_media_contribution"][:, si].sum())
+            weight = ltv[oid] if oid in ltv else np.nan
+            rows.append(
+                {
+                    "channel": "Search baseline (non-media)",
+                    "outcome_id": oid,
+                    "spend": np.nan,
+                    "component_type": "non_media_pathway_view",
+                    "additive_to_media_total": False,
+                    "direct_effect": np.nan,
+                    "mediated_via_search_effect": np.nan,
+                    "total_effect": np.nan,
+                    "volume_contribution": volume,
+                    "roas": np.nan,
+                    "cpa": np.nan,
+                    "ltv": ltv.get(oid),
+                    "value_contribution": volume * weight,
+                    "value_roas": np.nan,
+                }
+            )
+    if "seo_visibility_contribution" in contributions:
+        for si, oid in enumerate(meta.outcome_ids):
+            volume = float(contributions["seo_visibility_contribution"][:, si].sum())
+            weight = ltv[oid] if oid in ltv else np.nan
+            rows.append(
+                {
+                    "channel": "SEO visibility (windowed)",
+                    "outcome_id": oid,
+                    "spend": np.nan,
+                    "component_type": "seo_pathway_view",
+                    "additive_to_media_total": False,
+                    "direct_effect": np.nan,
+                    "mediated_via_search_effect": np.nan,
+                    "total_effect": np.nan,
+                    "volume_contribution": volume,
+                    "roas": np.nan,
+                    "cpa": np.nan,
+                    "ltv": ltv.get(oid),
+                    "value_contribution": volume * weight,
+                    "value_roas": np.nan,
                 }
             )
     result = pd.DataFrame(rows)
@@ -382,6 +647,8 @@ def total_fh_contribution(
                 selected_reporting_ids(outcome_ids, fit_groups, fit_treatments)
             )
         ]
+    if "component_type" in summary.columns:
+        summary = summary[summary["component_type"] == "channel_total"]
     total = (
         summary.groupby("channel")
         .agg(
@@ -463,7 +730,34 @@ def contribution_waterfall(
     rows = [{"category": "Baseline", "value": total(contributions["baseline"])}]
     for ch in meta.channels:
         rows.append(
-            {"category": ch, "value": total(contributions["channel_contributions"][ch])}
+            {
+                "category": ch,
+                # Candidate A's separate Search row carries the mediated
+                # increment in this bridge.  Using channel totals here would
+                # count that same mediated draw effect twice.
+                "value": total(contributions["channel_contributions"][ch]),
+            }
+        )
+    if "seo_visibility_contribution" in contributions:
+        rows.append(
+            {
+                "category": "SEO visibility (windowed)",
+                "value": total(contributions["seo_visibility_contribution"]),
+            }
+        )
+    if "search_non_media_contribution" in contributions:
+        rows.append(
+            {
+                "category": "Search baseline (non-media)",
+                "value": total(contributions["search_non_media_contribution"]),
+            }
+        )
+    if "search_mediated_contribution" in contributions:
+        rows.append(
+            {
+                "category": "Search-mediated Candidate A",
+                "value": total(contributions["search_mediated_contribution"]),
+            }
         )
     rows.append({"category": "Total", "value": total(contributions["mu_total"])})
     return pd.DataFrame(rows)
@@ -528,9 +822,9 @@ def compute_shapley_values(
                 with_channel = subset_set | {channel}
                 marginal = value_function(with_channel) - value_function(subset_set)
                 weight = (
-                    np.math.factorial(len(subset_set))
-                    * np.math.factorial(n - len(subset_set) - 1)
-                    / np.math.factorial(n)
+                    math.factorial(len(subset_set))
+                    * math.factorial(n - len(subset_set) - 1)
+                    / math.factorial(n)
                 )
                 marginal_sum += weight * marginal
 

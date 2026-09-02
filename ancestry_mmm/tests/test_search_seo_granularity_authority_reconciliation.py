@@ -144,17 +144,21 @@ class TestSearchSeoGranularityOverlayReconciled:
                 f"decision package does not cite PRD decision-register item {decision_item}"
             )
 
-    def test_req_seo_001_defers_causal_role(self):
-        """REQ-SEO-001 must reserve, not populate, the causal-role field -
-        guards against a future edit silently defaulting SEO visibility to
-        one of Part 6 §15.8's four candidate roles without an actual
-        decision."""
+    def test_req_seo_001_records_approved_fit_role_and_open_estimand_direction(
+        self,
+    ):
+        """The dated Decision 6 addendum approves the fit-time
+        mediator/capture-efficiency role while retaining an explicit
+        estimand-specific direction sentinel."""
         text = (
             REPO_ROOT / "docs" / "approved_requirements" / "REQ-SEO-001.md"
         ).read_text()
         normalised = " ".join(text.split())
         assert "not_yet_approved" in normalised
-        assert "never defaulted to any of the four candidates" in normalised
+        assert (
+            "Decision 6: causal role approved as `mediator_or_capture_efficiency_state`"
+            in normalised
+        )
 
     def test_req_search_005_defines_six_independent_eligibility_axes(self):
         text = (

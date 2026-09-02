@@ -408,6 +408,29 @@ def test_residual_explorer_renders_with_one_outcome_and_matches_sign_convention(
     assert "residual = actual - predicted" in _all_captions(at)
 
 
+def test_residual_explorer_offers_the_level_shift_diagnostic(monkeypatch):
+    """Production integration (Decision 15, REQ-BASELINE-001): the
+    diagnostic-only residual level-shift check reads this exact page's own
+    already-computed residual series - never a separately recomputed one -
+    and is genuinely reachable by an analyst, not just present in code."""
+    trace, frame, meta = _single_outcome_trace_frame_meta()
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    _seed(at, trace, frame, meta, {"New": "fh_new_gsa"})
+    _compute_scorecard(at)
+
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any(
+        e.label == "Residual level-shift diagnostic (Decision 15)" for e in at.expander
+    )
+    assert any(m.label == "Shift detected" for m in at.metric)
+    disclaimer_present = any(
+        "never automatically-modelled" in (c.value or "")
+        or "never an automatically-modelled" in (c.value or "")
+        for c in at.caption
+    )
+    assert disclaimer_present, "expected the module's own disclaimer text to render"
+
+
 def test_residual_explorer_table_matches_the_canonical_artefact_exactly():
     """7.7: no recomputation mismatch between the artefact and the UI - the
     Biggest misses table's residual values must be a subset of the

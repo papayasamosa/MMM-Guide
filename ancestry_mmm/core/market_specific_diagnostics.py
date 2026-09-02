@@ -30,6 +30,7 @@ from .diagnostics import (
     posterior_predictive_coverage,
 )
 from .hierarchical_model import FHModelMeta
+from .named_event_fit_inputs import NamedEventFitInputs
 from .market_specific_predict import (
     FHMarketSpecificPosteriorParams,
     extract_market_specific_posterior_params,
@@ -42,9 +43,13 @@ def in_sample_fit_market_specific(
     frame: Dict,
     meta: FHModelMeta,
     params: FHMarketSpecificPosteriorParams,
+    *,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> pd.DataFrame:
     """R-squared and MAPE per outcome_id - Model C equivalent of core.diagnostics.in_sample_fit."""
-    mu = predict_mu_market_specific(frame, meta, params)
+    mu = predict_mu_market_specific(
+        frame, meta, params, named_event_fit_inputs=named_event_fit_inputs
+    )
     Y = frame["Y"]
     rows = []
     for i, oid in enumerate(meta.outcome_ids):
@@ -64,10 +69,14 @@ def error_metrics_by_outcome_market_specific(
     frame: Dict,
     meta: FHModelMeta,
     params: FHMarketSpecificPosteriorParams,
+    *,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> pd.DataFrame:
     """MAE/RMSE/sMAPE/WAPE/bias per outcome_id - Model C equivalent of
     core.diagnostics.error_metrics_by_outcome."""
-    mu = predict_mu_market_specific(frame, meta, params)
+    mu = predict_mu_market_specific(
+        frame, meta, params, named_event_fit_inputs=named_event_fit_inputs
+    )
     Y = frame["Y"]
     rows = []
     for i, oid in enumerate(meta.outcome_ids):
@@ -92,6 +101,7 @@ def posterior_predictive_metric_distributions_market_specific(
     params: FHMarketSpecificPosteriorParams,
     *,
     credible_mass: float = 0.9,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> pd.DataFrame:
     """REQ-PPD-001 (Model C / market-specific model) - Model C equivalent
     of `core.diagnostics.posterior_predictive_metric_distributions`. The
@@ -100,7 +110,9 @@ def posterior_predictive_metric_distributions_market_specific(
     does not depend on whether `hill_K`/`beta` are market-specific); only
     the point-metric column, reused unchanged from `error_metrics_by_
     outcome_market_specific`, differs."""
-    point_metrics = error_metrics_by_outcome_market_specific(frame, meta, params)
+    point_metrics = error_metrics_by_outcome_market_specific(
+        frame, meta, params, named_event_fit_inputs=named_event_fit_inputs
+    )
     return _posterior_predictive_metric_distributions_core(
         trace, frame, meta, point_metrics, credible_mass=credible_mass
     )
@@ -110,6 +122,8 @@ def residual_temporal_diagnostics_market_specific(
     frame: Dict,
     meta: FHModelMeta,
     params: FHMarketSpecificPosteriorParams,
+    *,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> pd.DataFrame:
     """Lag-1 autocorrelation/Durbin-Watson per market x outcome_id - Model C
     equivalent of core.diagnostics.residual_temporal_diagnostics. Computed
@@ -120,7 +134,9 @@ def residual_temporal_diagnostics_market_specific(
     own per-market slicing. Market-specific curve parameters (hill_K/beta)
     already vary by market; residual temporal evidence must be market-safe
     for exactly the same reason."""
-    mu = predict_mu_market_specific(frame, meta, params)
+    mu = predict_mu_market_specific(
+        frame, meta, params, named_event_fit_inputs=named_event_fit_inputs
+    )
     Y = frame["Y"]
     markets = frame["markets"]
     market_bounds = frame["market_bounds"]
@@ -148,13 +164,17 @@ def residual_series_market_specific(
     params: FHMarketSpecificPosteriorParams,
     trace: Optional[az.InferenceData] = None,
     credible_mass: float = 0.9,
+    *,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> pd.DataFrame:
     """Model C equivalent of `core.diagnostics.residual_series` - identical
     per-`market x date x outcome_id` row shape and column names (same
     `residual = actual - predicted` convention, same `expected_mean_*`
     interval labelling), only using `predict_mu_market_specific` since
     Model C's `hill_K`/`beta` are market-indexed."""
-    mu = predict_mu_market_specific(frame, meta, params)
+    mu = predict_mu_market_specific(
+        frame, meta, params, named_event_fit_inputs=named_event_fit_inputs
+    )
     Y = frame["Y"]
     markets = frame["markets"]
     market_bounds = frame["market_bounds"]

@@ -21,9 +21,10 @@ of scope here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Sequence, cast
 
 import numpy as np
+import pandas as pd
 import pymc as pm
 import pytensor.tensor as pt
 
@@ -57,6 +58,17 @@ from .pathways import (
     resolve_pathway_masks,
 )
 from .net_billthrough import assert_model_frame_net_billthrough_complete
+from .named_event_fit_inputs import NamedEventFitInputs
+from .experiment_lift_test_mapping import (
+    ModelLiftTestCalibrationInput,
+    attach_lift_test_calibration_terms,
+    calibration_inputs_fingerprint,
+)
+from .named_event_response import (
+    EVENT_RESPONSE_SHRINKAGE_PRIOR_DEFAULT_SCALE,
+    NAMED_EVENT_RESPONSE_STRUCTURE,
+)
+from .seo_visibility import SeoModelFitInputs
 
 
 @dataclass
@@ -194,6 +206,45 @@ class FHModelMeta:
     # remain loadable and replay identically.
     media_input_scale_method: str = ""
     media_input_scales: Dict[str, float] = field(default_factory=dict)
+    # Production integration (Decision 12, `core.named_event_fit_inputs`):
+    # which governed `EventResponseDefinition` records (by
+    # `(response_definition_id, response_definition_version)`) were
+    # actually consumed to build this fit's additive event-response `eta`
+    # term, and which statistical method structure was used - durable
+    # fit-time provenance, mirroring `causal_graph_id`/`_version`'s own
+    # "which governed identity was authoritative for this fit" pattern.
+    # Empty list / "" (never None) when no named event was consumed - every
+    # fit before this field existed, and every fit today with no named
+    # event opted in, round-trips through FHModelMeta(**meta_dict)
+    # unchanged.
+    named_event_response_definitions_at_fit: List[Any] = field(default_factory=list)
+    named_event_response_method_version: str = ""
+    # Production integration (predict/scenario-replay gap closure): exactly
+    # which `(family_id, market)` pairs actually got their own
+    # `event_coefs_<family_id>_<market>` posterior variable at fit time -
+    # i.e. `[(b.family_id, b.market) for b in named_event_fit_inputs.blocks]`.
+    # `core.predict.predict_mu`/`core.market_specific_predict.
+    # predict_mu_market_specific` consult this (never string-parsing a
+    # variable name back apart) to know which replay-time design blocks
+    # have a real posterior coefficient to dot against versus which ones
+    # (e.g. a market's first-ever occurrence of a family, present in a
+    # replay frame but never fit) must contribute zero. Empty list (never
+    # None) when no named event was consumed - identical backward-
+    # compatibility contract as the two fields above.
+    named_event_fit_blocks: List[Any] = field(default_factory=list)
+    # Production calibration provenance (Decision 11): exact positive lift
+    # rows and target outcomes consumed by the fit, plus their identity
+    # component. Empty/"" preserves old bundles and means no calibration term.
+    calibration_inputs_at_fit: List[Any] = field(default_factory=list)
+    calibration_fit_fingerprint: str = ""
+    # Candidate A replay provenance.  The capture scale is a fixed fit-time
+    # unit translation, not a posterior parameter; the historical cap and
+    # period labels let diagnostics replay the fitted frame without making
+    # those values the default for a future plan.
+    candidate_a_capture_scale: float = 1.0
+    candidate_a_historical_paid_search_cap: List[float] = field(default_factory=list)
+    candidate_a_fit_period_labels: List[str] = field(default_factory=list)
+    seo_fit_inputs_at_fit: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.direct_dna_outcome_ids:
@@ -573,6 +624,9 @@ def build_fh_hierarchical_model(
     direct_dna_outcome_ids: Optional[List[str]] = None,
     causal_graph: Optional[CausalGraph] = None,
     search_candidate_a: Optional[CandidateASearchFitInputs] = None,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
+    calibration_inputs: Optional[Sequence[ModelLiftTestCalibrationInput]] = None,
+    seo_fit_inputs: Optional[SeoModelFitInputs] = None,
 ) -> "tuple[pm.Model, FHModelMeta]":
     """
     Build the joint hierarchical FH model.
@@ -618,6 +672,19 @@ def build_fh_hierarchical_model(
             alongside the ordinary direct/cross-product terms. None (the
             default) reproduces exactly today's behaviour and never touches
             `FHModelMeta.causal_graph_engine`.
+        named_event_fit_inputs: Decision 12 / `core.named_event_fit_inputs.
+            build_named_event_fit_inputs` - the additive event-response
+            `eta` term for every `(market, family)` that has opted in to
+            production fitting (an `EventResponseDefinition` whose
+            `transformation_method_reference` matches `core.
+            named_event_response.NAMED_EVENT_RESPONSE_STRUCTURE`). Each
+            `(market, family)` block gets its own independent spline-basis
+            coefficient vector (unpooled per market/family by default,
+            Decision 12 dimension 4), regularised by one shared per-family
+            `HalfNormal` shrinkage scale. None (the default, and every
+            project with no named event opted in) reproduces exactly
+            today's behaviour - no event term exists in the model graph at
+            all, byte-for-byte identical to before this parameter existed.
 
     Returns:
         (unfit PyMC Model, FHModelMeta). Fit the model with core.models.fit_model;
@@ -1241,6 +1308,32 @@ def build_fh_hierarchical_model(
                 prior_config=prior_config,
             )
 
+        if seo_fit_inputs is not None:
+            seo_fit_inputs.validate_frame(
+                markets=[markets[int(index)] for index in market_idx],
+                weeks=[str(pd.Timestamp(value).date()) for value in frame["dates"]],
+            )
+            seo_feature = pt.constant(
+                np.asarray(seo_fit_inputs.standardized_visibility, dtype=float)
+            )
+            seo_active = pt.constant(
+                np.asarray(seo_fit_inputs.active_mask, dtype=float)
+            )
+            seo_visibility_beta = pm.Normal(
+                "seo_visibility_beta",
+                mu=0,
+                sigma=prior_config.get("seo_visibility_sigma", 0.5),
+                dims="outcome",
+            )
+            eta_seo = pm.Deterministic(
+                "eta_seo_visibility",
+                seo_feature[:, None]
+                * seo_active[:, None]
+                * seo_visibility_beta[None, :],
+                dims=("obs", "outcome"),
+            )
+            eta = eta + eta_seo
+
         # -----------------------------------------------------------------
         # Outcome-level controls, e.g. DNA kit price acting only on the DNA
         # cross-sell outcome's equation. Keyed by outcome_id (frame["outcome_controls"] -
@@ -1304,6 +1397,81 @@ def build_fh_hierarchical_model(
         eta_controls = pm.Deterministic(
             "eta_controls", eta_controls, dims=("obs", "outcome")
         )
+
+        # -----------------------------------------------------------------
+        # Named-event response (Decision 12, `core.named_event_fit_inputs`):
+        # additive, per-(market, family) regularised spline-basis
+        # contribution - unpooled per market/family by default (each block
+        # gets its own independent coefficient vector; a single per-family
+        # HalfNormal shrinkage scale is shared across that family's markets,
+        # a disclosed default - see `core.named_event_fit_inputs`'s own
+        # docstring). None (the default) adds nothing to `eta` at all - no
+        # `event_*` variable exists in the model graph, so a project with no
+        # named event opted in fits byte-for-byte identically to before this
+        # parameter existed.
+        # -----------------------------------------------------------------
+        consumed_response_definitions: List[Any] = []
+        named_event_response_method_version = ""
+        named_event_fit_blocks: List[Any] = []
+        if named_event_fit_inputs is not None:
+            named_event_response_method_version = NAMED_EVENT_RESPONSE_STRUCTURE
+            consumed_response_definitions = list(
+                named_event_fit_inputs.consumed_response_definitions()
+            )
+            named_event_fit_blocks = [
+                (b.family_id, b.market) for b in named_event_fit_inputs.blocks
+            ]
+            eta_events = pt.zeros((n_obs, n_outcomes))
+            for family_id in named_event_fit_inputs.family_ids:
+                family_tau = pm.HalfNormal(
+                    f"event_tau_{family_id}",
+                    sigma=named_event_fit_inputs.shrinkage_prior_scale_by_family.get(
+                        family_id, EVENT_RESPONSE_SHRINKAGE_PRIOR_DEFAULT_SCALE
+                    ),
+                )
+                for event_block in named_event_fit_inputs.blocks_for_family(family_id):
+                    n_basis = event_block.design.shape[1]
+                    coord_name = f"event_basis_{family_id}_{event_block.market}"
+                    model.add_coord(coord_name, np.arange(n_basis))
+                    event_coefs = pm.Normal(
+                        f"event_coefs_{family_id}_{event_block.market}",
+                        mu=0,
+                        sigma=family_tau,
+                        dims=coord_name,
+                    )
+                    contrib = pm.math.dot(
+                        pt.as_tensor_variable(event_block.design), event_coefs
+                    )
+                    if event_block.outcome_scope:
+                        for scoped_outcome in event_block.outcome_scope:
+                            if scoped_outcome not in outcome_ids:
+                                continue
+                            o_idx = outcome_ids.index(scoped_outcome)
+                            eta_events = pt.set_subtensor(
+                                eta_events[:, o_idx],
+                                eta_events[:, o_idx] + contrib,
+                            )
+                    else:
+                        eta_events = eta_events + contrib[:, None]
+            eta_events = pm.Deterministic(
+                "eta_events", eta_events, dims=("obs", "outcome")
+            )
+            eta = eta + eta_events
+
+        if calibration_inputs:
+            attach_lift_test_calibration_terms(
+                model=model,
+                sat_media=sat_media,
+                hill_K=hill_K,
+                hill_S=hill_S,
+                beta=beta,
+                eta=eta,
+                channels=channels,
+                outcome_ids=outcome_ids,
+                primary_mask=pathway_masks.primary_matrix(outcome_ids, channels),
+                market_idx=market_idx,
+                inputs=calibration_inputs,
+            )
 
         # Clip is a numerical safety net (not a modelling assumption): eta is
         # a sum of several additive terms before this exp(), so pathological
@@ -1376,5 +1544,38 @@ def build_fh_hierarchical_model(
         ),
         media_input_scale_method=media_input_scale_method,
         media_input_scales=media_input_scales,
+        named_event_response_definitions_at_fit=consumed_response_definitions,
+        named_event_response_method_version=named_event_response_method_version,
+        named_event_fit_blocks=named_event_fit_blocks,
+        calibration_inputs_at_fit=[
+            item.to_dict() for item in (calibration_inputs or ())
+        ],
+        calibration_fit_fingerprint=calibration_inputs_fingerprint(calibration_inputs)
+        or "",
+        candidate_a_capture_scale=(
+            max(
+                float(
+                    np.mean(
+                        search_candidate_a.paid_search_delivery
+                        + search_candidate_a.organic_search_capture
+                        + search_candidate_a.direct_navigation_capture
+                    )
+                ),
+                1.0,
+            )
+            if search_candidate_a is not None
+            else 1.0
+        ),
+        candidate_a_historical_paid_search_cap=(
+            search_candidate_a.paid_search_cap.tolist()
+            if search_candidate_a is not None
+            else []
+        ),
+        candidate_a_fit_period_labels=[
+            str(pd.Timestamp(value).date()) for value in frame.get("dates", [])
+        ]
+        if search_candidate_a is not None
+        else [],
+        seo_fit_inputs_at_fit=(seo_fit_inputs.to_dict() if seo_fit_inputs else {}),
     )
     return model, meta

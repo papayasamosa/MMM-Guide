@@ -5,16 +5,20 @@ no PyMC/MCMC involved, matching test_market_specific_predict.py's
 convention - this file does not attempt full existing-behaviour coverage of
 compute_shapley_contributions (no test file existed for it before this PR)."""
 
+import arviz as az
 import numpy as np
 import pytest
 
 from ancestry_mmm.core.attribution import (
+    contribution_waterfall,
     compute_shapley_contributions,
+    outcome_channel_summary,
     segment_channel_summary,
     total_fh_contribution,
 )
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
-from ancestry_mmm.core.predict import FHPosteriorParams
+from ancestry_mmm.core.predict import FHPosteriorParams, extract_posterior_params
+from ancestry_mmm.core.search_capacity import SEARCH_CANDIDATE_A_ENGINE
 from ancestry_mmm.tests.conftest import pathway_strength_from_flat
 
 OUTCOME_IDS = ["New", "DNA_CrossSell", "Winback", "New Customer"]
@@ -360,13 +364,11 @@ class TestShapleyDirectHaloSeparation:
 
 
 class TestComputeShapleyContributionsFailsClosedForCandidateA:
-    """WP3 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`):
-    `compute_shapley_contributions` has no term for Candidate A's
-    `search_eta_contribution` - silently running it on a Candidate A fit
-    would produce a `mu_total` missing that whole pathway's contribution.
-    Must raise instead."""
+    """Candidate A attribution must still fail closed when replay evidence
+    is absent; a Candidate A engine label alone must never produce an
+    incomplete decomposition."""
 
-    def test_raises_for_a_candidate_a_engine_meta(self, meta, params):
+    def test_raises_without_fit_time_cap_or_replay_evidence(self, meta, params, frame):
         import dataclasses
 
         from ancestry_mmm.core.attribution import (
@@ -377,6 +379,267 @@ class TestComputeShapleyContributionsFailsClosedForCandidateA:
         candidate_a_meta = dataclasses.replace(
             meta, causal_graph_engine=SEARCH_CANDIDATE_A_ENGINE
         )
-        frame = {"X_media": np.zeros((3, len(CHANNELS))), "market_bounds": [(0, 3)]}
         with pytest.raises(CandidateAAttributionNotSupportedError):
             compute_shapley_contributions(frame, candidate_a_meta, params)
+
+
+def _candidate_a_attribution_meta_and_trace():
+    """Build two deterministic posterior draws for attribution regression tests."""
+
+    channels = ["TV", "Social", "YouTube"]
+    outcomes = ["New"]
+    n_draws = 2
+    posterior = {
+        "decay_rate": np.zeros((1, n_draws, len(channels))),
+        "hill_K": np.full((1, n_draws, len(channels)), 10.0),
+        "hill_S": np.ones((1, n_draws, len(channels))),
+        "intercept": np.full((1, n_draws, 1), 1.0),
+        "trend_coef": np.zeros((1, n_draws, 1)),
+        "promo_coef": np.zeros((1, n_draws, 1)),
+        "alpha": np.full((1, n_draws, 1), 5.0),
+        "beta": np.full((1, n_draws, 1, len(channels)), 0.01),
+        "market_offset": np.zeros((1, n_draws, 1, 1)),
+        "gamma_fourier": np.zeros((1, n_draws, 4, 1)),
+        "search_demand_intercept": np.full((1, n_draws), 1.0),
+        "search_demand_market_offset": np.zeros((1, n_draws, 1)),
+        "search_demand_media_beta": np.array(
+            [[[0.30, 0.30, 0.00], [0.30, 0.30, 0.30]]]
+        ),
+        "search_capture_shares": np.tile(
+            np.array([0.60, 0.20, 0.10, 0.10]), (1, n_draws, 1)
+        ),
+        "search_paid_capture_outcome_beta": np.full((1, n_draws, 1), 0.08),
+        "search_organic_capture_outcome_beta": np.full((1, n_draws, 1), 0.03),
+        "search_direct_navigation_capture_outcome_beta": np.full((1, n_draws, 1), 0.02),
+    }
+    coords = {
+        "channel": channels,
+        "outcome": outcomes,
+        "market": ["UK"],
+        "fourier": list(range(4)),
+        "search_demand_channel": channels,
+        "search_capture_share_component": ["paid", "organic", "direct", "unmet"],
+    }
+    dims = {
+        "decay_rate": ["channel"],
+        "hill_K": ["channel"],
+        "hill_S": ["channel"],
+        "intercept": ["outcome"],
+        "trend_coef": ["outcome"],
+        "promo_coef": ["outcome"],
+        "alpha": ["outcome"],
+        "beta": ["outcome", "channel"],
+        "market_offset": ["market", "outcome"],
+        "gamma_fourier": ["fourier", "outcome"],
+        "search_demand_market_offset": ["market"],
+        "search_demand_media_beta": ["search_demand_channel"],
+        "search_capture_shares": ["search_capture_share_component"],
+        "search_paid_capture_outcome_beta": ["outcome"],
+        "search_organic_capture_outcome_beta": ["outcome"],
+        "search_direct_navigation_capture_outcome_beta": ["outcome"],
+    }
+    trace = az.from_dict(posterior=posterior, coords=coords, dims=dims)
+    meta = FHModelMeta(
+        markets=["UK"],
+        outcome_ids=outcomes,
+        channels=channels,
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=list(range(len(channels))),
+        dna_outcome_id="New",
+        dna_lag_weeks=1,
+        unpooled_markets=[],
+        control_names=[],
+        causal_graph_engine=SEARCH_CANDIDATE_A_ENGINE,
+        candidate_a_historical_paid_search_cap=[0.5, 0.5, 100.0, 100.0],
+    )
+    frame = {
+        "markets": ["UK"],
+        "market_idx": np.zeros(4, dtype=int),
+        "market_bounds": [(0, 4)],
+        # Identical upstream media makes the equal-beta Shapley allocations
+        # directly testable without a spend/click-share allocation rule.
+        "X_media": np.array(
+            [
+                [10.0, 10.0, 10.0],
+                [20.0, 20.0, 20.0],
+                [30.0, 30.0, 30.0],
+                [40.0, 40.0, 40.0],
+            ]
+        ),
+        "promo": np.zeros((4, 1)),
+        "trend": np.zeros(4),
+        "fourier": np.zeros((4, 4)),
+        "control_names": [],
+        "X_controls": np.zeros((4, 0)),
+        "outcome_controls": {},
+        "outcome_control_names": {},
+    }
+    return meta, trace, frame
+
+
+class TestCandidateAPosteriorDrawAttribution:
+    """Candidate A attribution must reconcile at each posterior draw."""
+
+    def test_direct_mediated_total_and_search_path_reconcile_without_double_counting(
+        self,
+    ):
+        meta, trace, frame = _candidate_a_attribution_meta_and_trace()
+
+        for draw in range(2):
+            params = extract_posterior_params(trace, meta, at=(0, draw))
+            contributions = compute_shapley_contributions(
+                frame, meta, params, n_permutations=120, seed=draw
+            )
+            mediated = contributions["search_mediated_channel_contributions"]
+
+            np.testing.assert_allclose(
+                sum(mediated.values()),
+                contributions["search_mediated_contribution"],
+                rtol=1e-7,
+                atol=1e-8,
+            )
+            np.testing.assert_allclose(
+                contributions["baseline"]
+                + sum(contributions["channel_total_contributions"].values())
+                + contributions["search_non_media_contribution"],
+                contributions["mu_total"],
+                rtol=1e-7,
+                atol=1e-8,
+            )
+            for channel in meta.channels:
+                np.testing.assert_allclose(
+                    contributions["channel_total_contributions"][channel],
+                    contributions["channel_contributions"][channel]
+                    + mediated.get(channel, 0.0),
+                    rtol=1e-7,
+                    atol=1e-8,
+                )
+
+            summary = outcome_channel_summary(
+                frame, meta, params, contributions=contributions, ltv={"New": 1.0}
+            )
+            for channel in meta.channels:
+                row = summary[summary["channel"] == channel].iloc[0]
+                assert row["total_effect"] == pytest.approx(
+                    row["direct_effect"] + row["mediated_via_search_effect"]
+                )
+                assert row["volume_contribution"] == pytest.approx(row["total_effect"])
+            search_row = summary[
+                summary["channel"] == "Search-mediated Candidate A"
+            ].iloc[0]
+            assert search_row["component_type"] == "search_pathway_view"
+            assert not bool(search_row["additive_to_media_total"])
+
+            total = total_fh_contribution(
+                frame, meta, params, contributions=contributions, ltv={"New": 1.0}
+            )
+            assert set(total["channel"]) == set(meta.channels)
+            for channel in meta.channels:
+                expected = float(
+                    contributions["channel_total_contributions"][channel].sum()
+                )
+                assert total.set_index("channel").loc[
+                    channel, "volume_contribution"
+                ] == pytest.approx(expected)
+
+            waterfall = contribution_waterfall(
+                frame, meta, params, contributions=contributions
+            )
+            assert waterfall.iloc[-1]["category"] == "Total"
+            assert waterfall.iloc[:-1]["value"].sum() == pytest.approx(
+                waterfall.iloc[-1]["value"]
+            )
+
+        # Draw 0 has no YouTube demand coefficient, so its mediated effect is
+        # exactly zero even though YouTube has direct media response.
+        draw_zero = extract_posterior_params(trace, meta, at=(0, 0))
+        zero_effect = compute_shapley_contributions(
+            frame, meta, draw_zero, n_permutations=120
+        )
+        np.testing.assert_allclose(
+            zero_effect["search_mediated_channel_contributions"]["YouTube"],
+            0.0,
+            atol=1e-10,
+        )
+        assert np.any(zero_effect["search_mediated_channel_contributions"]["TV"] > 0)
+
+        # Draw 1 has identical media and equal demand coefficients, so the
+        # posterior-draw Shapley value is symmetric across all three players.
+        draw_equal = extract_posterior_params(trace, meta, at=(0, 1))
+        equal_effect = compute_shapley_contributions(
+            frame, meta, draw_equal, n_permutations=120
+        )
+        np.testing.assert_allclose(
+            equal_effect["search_mediated_channel_contributions"]["TV"],
+            equal_effect["search_mediated_channel_contributions"]["Social"],
+            rtol=1e-7,
+            atol=1e-8,
+        )
+        np.testing.assert_allclose(
+            equal_effect["search_mediated_channel_contributions"]["Social"],
+            equal_effect["search_mediated_channel_contributions"]["YouTube"],
+            rtol=1e-7,
+            atol=1e-8,
+        )
+
+    def test_binding_cap_changes_mediated_final_outcome_effect(self):
+        import dataclasses
+
+        meta, trace, frame = _candidate_a_attribution_meta_and_trace()
+        params = extract_posterior_params(trace, meta, at=(0, 1))
+        binding_meta = dataclasses.replace(
+            meta, candidate_a_historical_paid_search_cap=[0.5] * 4
+        )
+        nonbinding_meta = dataclasses.replace(
+            meta, candidate_a_historical_paid_search_cap=[100.0] * 4
+        )
+        binding = compute_shapley_contributions(
+            frame, binding_meta, params, n_permutations=120
+        )
+        nonbinding = compute_shapley_contributions(
+            frame, nonbinding_meta, params, n_permutations=120
+        )
+
+        assert np.all(
+            binding["search_mediated_contribution"]
+            <= nonbinding["search_mediated_contribution"] + 1e-9
+        )
+        assert np.any(
+            nonbinding["search_mediated_contribution"]
+            > binding["search_mediated_contribution"] + 1e-8
+        )
+
+    def test_single_identified_upstream_channel_does_not_receive_other_channels_credit(
+        self,
+    ):
+        import dataclasses
+
+        meta, trace, frame = _candidate_a_attribution_meta_and_trace()
+        params = extract_posterior_params(trace, meta, at=(0, 1))
+        assert params.candidate_a_replay_params is not None
+        single_replay = dataclasses.replace(
+            params.candidate_a_replay_params,
+            demand_channel_names=["TV"],
+            demand_media_beta={
+                "TV": params.candidate_a_replay_params.demand_media_beta["TV"]
+            },
+        )
+        single_params = dataclasses.replace(
+            params, candidate_a_replay_params=single_replay
+        )
+        contributions = compute_shapley_contributions(
+            frame, meta, single_params, n_permutations=20
+        )
+
+        assert np.any(contributions["search_mediated_channel_contributions"]["TV"] > 0)
+        np.testing.assert_allclose(
+            contributions["search_mediated_channel_contributions"].get("Social", 0.0),
+            0.0,
+            atol=1e-10,
+        )
+        np.testing.assert_allclose(
+            contributions["search_mediated_channel_contributions"].get("YouTube", 0.0),
+            0.0,
+            atol=1e-10,
+        )

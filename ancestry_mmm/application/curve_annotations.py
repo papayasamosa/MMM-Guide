@@ -47,6 +47,18 @@ from typing import Mapping, Optional, Sequence
 
 import pandas as pd
 
+from ancestry_mmm.core.canonical_curves import SUPPORT_AVAILABLE, SUPPORT_MISSING
+
+# Production-integration follow-up (Results/exports disclosure labels): the
+# one governed vocabulary `observed_support_status` actually uses today
+# (core.canonical_curves) - a plain, human-readable label per value, read
+# directly off the artifact's own creation-time support snapshot row, never
+# invented here.
+_SUPPORT_STATUS_LABELS = {
+    SUPPORT_AVAILABLE: "Support: historical data observed for this channel",
+    SUPPORT_MISSING: "Support: no historical data observed (support-limited)",
+}
+
 
 @dataclass(frozen=True)
 class CurveAnnotation:
@@ -173,6 +185,16 @@ def annotation_from_official_support(
     artifact reports ``monetary_blocked=True`` with an explicit reason
     instead (pages/AGENTS.md Curve UI rule: never display monetary CPA/ROI
     without a valid monetary mapping).
+
+    ``status_label``, when the caller leaves it unset, is derived from this
+    row's own ``observed_support_status`` (production-integration follow-up,
+    Results/exports disclosure labels) - previously this row's status was
+    read for ``current``/``observed_min``/``observed_max``/
+    ``is_extrapolated`` but the status value itself was silently dropped
+    before reaching the chart annotation, even though ``CurveAnnotation``
+    already had a ``status_label`` slot for exactly this. A caller that
+    supplies its own ``status_label`` (e.g. a different evidence tier)
+    still overrides this default, unchanged from before.
     """
     if curve_type not in {"model_input", "monetary"}:
         raise ValueError("curve_type must be 'model_input' or 'monetary'")
@@ -196,6 +218,10 @@ def annotation_from_official_support(
         is_extrapolated = (
             bool(raw_extrapolated) if raw_extrapolated is not None else None
         )
+        if status_label is None:
+            raw_support_status = row.get("observed_support_status")
+            if raw_support_status is not None:
+                status_label = _SUPPORT_STATUS_LABELS.get(str(raw_support_status))
 
     avg_label = marginal_label = None
     monetary_blocked = False

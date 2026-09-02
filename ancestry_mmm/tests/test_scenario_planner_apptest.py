@@ -31,7 +31,12 @@ from ancestry_mmm.core.fingerprint import (
 )
 from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.media_costs import CostMappingRegistry, IdentitySpendMapping
+from ancestry_mmm.core.capacity import CapacityLimitDefinition
 from ancestry_mmm.core.model_identity import ModelIdentity
+from ancestry_mmm.core.optimization import SpendConstraint
+from ancestry_mmm.core.optimization_constraint_vocabulary import (
+    GovernedSpendConstraint,
+)
 from ancestry_mmm.core.outcome_approval import (
     OutcomeApproval,
     fingerprint_outcome_definition,
@@ -425,6 +430,10 @@ class TestScenarioValueAssumptionsEditor:
     def test_provenance_disclosure_shown_after_evaluation(self):
         at = AppTest.from_file(str(PAGE), default_timeout=60)
         _seed_consistent_session_state(at, value_currency="GBP")
+        # This assertion exercises the legacy monthly result disclosure; the
+        # production default is covered by the explicit sequential-method
+        # tests below.
+        at.session_state["scenario_evaluation_method"] = "steady_state_monthly"
         at.session_state["scenario_value_assumptions"] = ScenarioValueAssumptions(
             fh_value_by_outcome_id={"New": 88.0},
             dna_value_by_outcome_id={},
@@ -629,6 +638,7 @@ def test_saving_a_manual_scenario_persists_cost_mapping_governance_dependency():
         ]
     )
     at.session_state["media_cost_mappings"] = registry.to_dict()
+    at.session_state["scenario_evaluation_method"] = "steady_state_monthly"
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
 
@@ -1201,54 +1211,46 @@ def test_evaluation_method_selection_shows_method_specific_detail():
     visible while sequential weekly is selected, or vice versa."""
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_consistent_session_state(at, value_currency="GBP")
+    at.session_state["scenario_evaluation_method"] = "sequential_weekly"
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
 
     info_texts = [i.value or "" for i in at.info]
-    assert any(
-        "Steady-state monthly approximation** is selected" in text
-        for text in info_texts
-    )
-    steady_detail = next(
-        text
-        for text in info_texts
-        if "Steady-state monthly approximation** is selected" in text
-    )
-    assert "does not reproduce starting carryover" in steady_detail
-    assert "Sequential weekly** is selected" not in " ".join(info_texts)
-
-    method_radio = next(
-        r for r in at.radio if r.label == "Manual plan evaluation method"
-    )
-    method_radio.set_value("sequential_weekly").run()
-    assert not at.exception, f"selecting sequential_weekly raised: {at.exception}"
-
-    info_texts = [i.value or "" for i in at.info]
-    assert not any(
-        "Steady-state monthly approximation** is selected" in text
-        for text in info_texts
-    )
+    assert any("Sequential weekly** is selected" in text for text in info_texts)
     sequential_detail = next(
         text for text in info_texts if "Sequential weekly** is selected" in text
     )
     assert "week-by-week media carryover" in sequential_detail
     assert "terminal carryover" in sequential_detail
-    assert "steady-state-monthly only" in sequential_detail
+
+    method_radio = next(
+        r for r in at.radio if r.label == "Manual plan evaluation method"
+    )
+    method_radio.set_value("steady_state_monthly").run()
+    assert not at.exception, f"selecting steady_state_monthly raised: {at.exception}"
+
+    info_texts = [i.value or "" for i in at.info]
+    steady_detail = next(
+        text
+        for text in info_texts
+        if "Steady-state monthly diagnostic/legacy mode** is selected" in text
+    )
+    assert "does not reproduce starting carryover" in steady_detail
+    assert "Sequential weekly** is selected" not in " ".join(info_texts)
 
 
 def test_optimiser_tabs_state_their_evaluation_method():
-    """UI-WP2: the constrained and unconstrained optimiser tabs must state
-    they use steady-state monthly evaluation, since neither supports
-    sequential weekly."""
+    """The optimiser tabs disclose the selected production evaluation method."""
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_consistent_session_state(at, value_currency="GBP")
+    at.session_state["scenario_evaluation_method"] = "sequential_weekly"
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
     caption_texts = [c.value or "" for c in at.caption]
     matching = [
         text
         for text in caption_texts
-        if "Evaluation method" in text and "steady-state monthly" in text
+        if "Evaluation method" in text and "sequential weekly" in text
     ]
     assert len(matching) >= 2, caption_texts
 
@@ -1256,6 +1258,7 @@ def test_optimiser_tabs_state_their_evaluation_method():
 def test_spend_plan_grid_is_labelled_as_the_editable_decision():
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_consistent_session_state(at, value_currency="GBP")
+    at.session_state["scenario_evaluation_method"] = "steady_state_monthly"
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
     assert any("Spend plan - editable decision" in (m.value or "") for m in at.markdown)
@@ -1265,6 +1268,7 @@ def test_spend_plan_grid_is_labelled_as_the_editable_decision():
 def test_constraints_are_visually_distinct_from_assumptions():
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_consistent_session_state(at, value_currency="GBP")
+    at.session_state["scenario_evaluation_method"] = "steady_state_monthly"
     at.run()
     assert not at.exception, f"page raised: {at.exception}"
     assert any("Planning assumptions & use" in (m.value or "") for m in at.markdown)
@@ -1337,6 +1341,7 @@ def test_sequential_weekly_manual_tab_blocks_until_assumptions_acknowledged():
     automatic page default standing in for analyst consent."""
     at = AppTest.from_file(str(PAGE), default_timeout=60)
     _seed_official_governance_state(at)
+    at.session_state["scenario_evaluation_method"] = "sequential_weekly"
     at.run()
 
     method_radio = next(
@@ -1366,7 +1371,7 @@ def test_sequential_weekly_manual_tab_renders_without_exception():
     method_radio = next(
         r for r in at.radio if r.label == "Manual plan evaluation method"
     )
-    assert method_radio.value == "steady_state_monthly"
+    assert method_radio.value == "sequential_weekly"
     method_radio.set_value("sequential_weekly").run()
     assert not at.exception, f"selecting sequential_weekly raised: {at.exception}"
 
@@ -1467,6 +1472,118 @@ def test_sequential_weekly_manual_tab_can_save_a_scenario():
     assert any("Long-horizon incremental" in label for label in metric_labels)
 
 
+class TestPromotionPeriodIntegration:
+    """REQ-PLANACT-001 (Decision 14): a real `PromotionPeriod`, built
+    through the real Scenario Planner page's own "+ Add a promotion
+    period" widgets, must reach `materialize_promo_future` ->
+    `build_future_context`'s real `promo_future` - not sit beside the page
+    unused. Production-integration phase, 2026-08-31."""
+
+    def _select_sequential_weekly(self, at: AppTest) -> None:
+        method_radio = next(
+            r for r in at.radio if r.label == "Manual plan evaluation method"
+        )
+        method_radio.set_value("sequential_weekly").run()
+        assert not at.exception, f"selecting sequential_weekly raised: {at.exception}"
+
+    def test_no_promotion_declared_keeps_the_existing_confirmation_gate(self):
+        """Backward compatibility: with nothing declared, the page must
+        behave exactly as before - same warning, same checkbox label/key -
+        so the existing browser lifecycle test's locator keeps working."""
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_official_governance_state(at)
+        at.run()
+        self._select_sequential_weekly(at)
+
+        checkboxes = {c.label: c for c in at.checkbox if c.label}
+        assert any(
+            label.startswith("I explicitly confirm no promotion is planned")
+            for label in checkboxes
+        )
+        warnings_text = [w.value or "" for w in at.warning]
+        assert any("No promotion schedule" in w for w in warnings_text)
+
+    def test_adding_a_promotion_period_through_the_real_widgets_removes_the_gate(self):
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_official_governance_state(at)
+        at.run()
+        self._select_sequential_weekly(at)
+
+        plan_key_prefix = "_promo_outcome"
+        outcome_selectbox = next(
+            s for s in at.selectbox if s.key and s.key.endswith(plan_key_prefix)
+        )
+        assert outcome_selectbox.options == ["New"]
+        add_button = next(b for b in at.button if b.label == "Add promotion period")
+        add_button.click().run()
+        assert not at.exception, f"adding a promotion period raised: {at.exception}"
+
+        promotion_periods = at.session_state["promotion_periods"]
+        assert len(promotion_periods) == 1
+        added = promotion_periods[0]
+        assert added.outcome_id == "New"
+
+        # The unstated-default gate is gone - a declared period is itself
+        # the disclosure - but the tab must still compute and render.
+        checkboxes = {c.label: c for c in at.checkbox if c.label}
+        assert not any(
+            label.startswith("I explicitly confirm no promotion is planned")
+            for label in checkboxes
+        )
+        captions = [c.value or "" for c in at.caption]
+        assert any("1 promotion period(s) declared" in c for c in captions)
+
+        _check_sequential_acknowledgment_gates(at)
+        at.run()
+        assert not at.exception, (
+            f"recomputing after declaring a promotion raised: {at.exception}"
+        )
+        markdown_text = [m.value or "" for m in at.markdown]
+        assert any("Weekly incremental outcome" in text for text in markdown_text), (
+            "the sequential tab must still compute and render with a real "
+            "declared promotion period, not just with none declared"
+        )
+
+    def test_declared_promotion_period_reaches_the_real_future_context(
+        self, monkeypatch
+    ):
+        """Direct proof the page's declared PromotionPeriod is not merely
+        stored in session state but actually passed to the real
+        materialize_promo_future call inside _evaluate_sequential_manual_
+        plan - spies on the real function (never a stub standing in for
+        it) and asserts it was called with the exact period the UI added."""
+        import ancestry_mmm.core.planning.planned_activity as planned_activity_module
+
+        calls = []
+        real_materialize = planned_activity_module.materialize_promo_future
+
+        def _spy(promotion_periods, **kwargs):
+            calls.append(list(promotion_periods))
+            return real_materialize(promotion_periods, **kwargs)
+
+        monkeypatch.setattr(planned_activity_module, "materialize_promo_future", _spy)
+
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_official_governance_state(at)
+        at.run()
+        self._select_sequential_weekly(at)
+
+        add_button = next(b for b in at.button if b.label == "Add promotion period")
+        add_button.click().run()
+        assert not at.exception
+
+        _check_sequential_acknowledgment_gates(at)
+        at.run()
+        assert not at.exception
+
+        assert calls, (
+            "materialize_promo_future was never called - the declared "
+            "promotion period never reached the real wiring"
+        )
+        assert len(calls[-1]) == 1
+        assert calls[-1][0].outcome_id == "New"
+
+
 def test_steady_state_manual_tab_still_renders_by_default():
     """The default evaluation method stays steady-state monthly - switching
     the radio to sequential and back (or simply never touching it) must
@@ -1506,3 +1623,381 @@ def test_allocation_desk_separates_editable_proposed_and_saved_state():
         "Evaluation method",
         "Saved scenarios",
     } <= metric_labels
+
+
+class TestObjectiveVocabularyIntegration:
+    """REQ-OPT-001 (Decision 16): the closed objective-kind vocabulary
+    (`core.optimization_objective_vocabulary`) must actually gate what the
+    real Scenario Planner page offers, not sit beside it unused -
+    production-integration phase, 2026-08-31."""
+
+    def test_maximise_profit_is_selectable_but_blocked_with_reason(self):
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_consistent_session_state(at, value_currency="GBP")
+        at.run()
+        assert not at.exception, f"initial load raised: {at.exception}"
+
+        objective_radio = [r for r in at.radio if r.label == "Optimisation objective"]
+        assert objective_radio, "objective radio not found"
+        assert "Maximise profit" in objective_radio[0].options, (
+            "maximise_profit must remain visible in the selector, never "
+            "silently hidden or removed"
+        )
+        objective_radio[0].set_value("maximise_profit").run()
+        assert not at.exception, f"selecting maximise_profit raised: {at.exception}"
+
+        errors = [e.value or "" for e in at.error]
+        assert any("no governed profit/margin/COGS definition" in e for e in errors), (
+            f"expected the real PROFIT_DEFINITION_MISSING_REASON disclosed on the page, got: {errors}"
+        )
+
+    def test_minimise_cpa_blocked_without_activity_taxonomy(self):
+        """`_seed_consistent_session_state` sets `activity_definitions=[]` -
+        an empty (not None) list once decoded on the page, which must be
+        treated as "no activity taxonomy supplied" for cost-bearing
+        verification, not as "zero non-cost-bearing channels found"."""
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_consistent_session_state(at, value_currency="GBP")
+        at.run()
+        assert not at.exception, f"initial load raised: {at.exception}"
+
+        objective_radio = [r for r in at.radio if r.label == "Optimisation objective"]
+        objective_radio[0].set_value("minimise_cpa").run()
+        assert not at.exception, f"selecting minimise_cpa raised: {at.exception}"
+
+        errors = [e.value or "" for e in at.error]
+        assert any("activity taxonomy" in e for e in errors), (
+            f"expected a cost-bearing-verification block, got: {errors}"
+        )
+
+    def test_maximise_revenue_alias_still_evaluates_via_expected_value_path(self):
+        """maximise_revenue (offered today as "Maximise LTV-weighted
+        expected value") must remain fully functional - the vocabulary
+        wiring must never regress the one value-based objective that
+        already worked."""
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_consistent_session_state(at, value_currency="GBP")
+        at.run()
+        assert not at.exception
+
+        objective_radio = [r for r in at.radio if r.label == "Optimisation objective"]
+        objective_radio[0].set_value("expected_value").run()
+        assert not at.exception
+
+        errors = [e.value or "" for e in at.error]
+        assert not any("not available for this optimisation" in e for e in errors), (
+            errors
+        )
+
+
+def _seed_two_channel_session_state(at: AppTest) -> None:
+    """A minimal, self-contained two-channel variant of
+    `_seed_consistent_session_state` - needed to prove a governed spend
+    constraint on one channel actually redistributes budget to another
+    real channel through the real `optimize_scenario` SLSQP call, which a
+    single-channel fixture cannot demonstrate."""
+    outcome_def = OutcomeDefinition(
+        outcome_id="New",
+        product=FAMILY_HISTORY,
+        segment="New",
+        metric="GSA",
+        metric_key=METRIC_KEY_FH_GSA,
+        source_column="fh_new_gsa",
+        unit="GSA",
+        aggregation_type="count",
+        event_definition="A new subscriber",
+        date_basis="event_date",
+        cohort_or_attribution_basis="signup_cohort",
+        completeness_or_maturity_policy="Mature after 12 weeks",
+        exclusions="Excludes internal test accounts",
+        reconciliation_source="Finance report",
+        business_owner="Analytics",
+        definition_version="1.0",
+        include_in_value=False,
+        include_in_optimisation=True,
+    )
+    outcome_defs = [outcome_def]
+    meta = FHModelMeta(
+        markets=["UK"],
+        outcome_ids=["New"],
+        channels=["TV_Brand", "Digital"],
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0],
+        dna_outcome_id="New",
+        dna_lag_weeks=4,
+        unpooled_markets=[],
+        control_names=[],
+        outcome_catalogue_at_fit=outcome_defs,
+        outcome_id_to_eligibility={
+            o.outcome_id: outcome_eligibility(o) for o in outcome_defs
+        },
+    )
+    trace = _trace(meta)
+    transformed_data = pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01", periods=16, freq="W"),
+            "market": ["UK"] * 16,
+            "TV_Brand": np.linspace(500.0, 500.0, 16),
+            "Digital": np.linspace(500.0, 500.0, 16),
+            "fh_new_gsa": np.linspace(10.0, 16.0, 16),
+        }
+    )
+    model_spec_dict = ModelSpec(
+        date_col="date",
+        market_col="market",
+        markets=["UK"],
+        segment_outcomes={"New": "fh_new_gsa"},
+        channels=["TV_Brand", "Digital"],
+    ).to_dict()
+    prior_config = {"decay_mu": 0.5}
+    dna_lag_weeks = 4
+    spec = ModelSpec.from_dict(model_spec_dict)
+    frame = prepare_fh_modeling_frame(transformed_data, spec)
+    posterior_params = extract_posterior_params(trace, meta)
+
+    model_run_id = "run-scenario-planner-governed-constraints"
+    approval = ModelApproval(
+        approved_by="Jane Analyst",
+        model_run_id=model_run_id,
+        data_fingerprint=fingerprint_dataframe(frame["df"]),
+        model_spec_fingerprint=fingerprint_model_spec(
+            model_spec_dict,
+            prior_config,
+            dna_lag_weeks,
+            model_type="shared",
+            pipeline_steps=[],
+            market_spec_config=None,
+            direct_dna_outcome_ids=meta.direct_dna_outcome_ids,
+            outcome_catalogue=outcome_catalogue_fingerprint_payload(
+                meta.outcome_catalogue_at_fit
+            ),
+            funnel_links=None,
+            media_outcome_pathways=pathway_catalogue_fingerprint_payload(
+                meta.pathway_catalogue_at_fit
+            ),
+            activity_fit_fingerprint=None,
+        ),
+        posterior_fingerprint=fingerprint_posterior(posterior_params),
+    )
+
+    at.session_state["frame"] = frame
+    at.session_state["model_meta"] = meta
+    at.session_state["posterior_params"] = posterior_params
+    at.session_state["model_spec"] = model_spec_dict
+    at.session_state["trace"] = trace
+    at.session_state["model_type"] = "shared"
+    at.session_state["model_run_id"] = model_run_id
+    at.session_state["prior_config"] = prior_config
+    at.session_state["dna_lag_weeks"] = dna_lag_weeks
+    at.session_state["model_approval"] = approval.to_dict()
+    at.session_state["outcome_definitions"] = [o.to_dict() for o in outcome_defs]
+    outcome_approvals = [
+        OutcomeApproval(
+            approval_id=f"apr-{o.outcome_id}",
+            outcome_id=o.outcome_id,
+            definition_fingerprint=fingerprint_outcome_definition(o),
+            status="approved",
+            allowed_uses=("planning", "optimisation"),
+            approved_by="Jane Analyst",
+            approved_at="2026-01-01",
+        )
+        for o in outcome_defs
+    ]
+    at.session_state["outcome_approvals"] = [a.to_dict() for a in outcome_approvals]
+    at.session_state["activity_definitions"] = []
+    at.session_state["media_cost_mappings"] = None
+    # These tests exercise the legacy SLSQP constraint plumbing. Select it
+    # explicitly now that sequential weekly is the application default.
+    at.session_state["scenario_evaluation_method"] = "steady_state_monthly"
+
+
+class TestGovernedConstraintVocabularyReachableFromTheRealPage:
+    """REQ-OPT-001 (Decision 16): a governed constraint added through the
+    real Scenario Planner page's session state must actually reach
+    `optimize_scenario`'s real SLSQP call and change the displayed
+    optimised spend plan - not sit beside the page unused. Production-
+    integration phase, 2026-08-31."""
+
+    def _run_constrained(self, at: AppTest):
+        run_buttons = [
+            b for b in at.button if b.label == "Run constrained optimisation"
+        ]
+        assert run_buttons, "Run constrained optimisation button not found"
+        run_buttons[0].click().run()
+        assert not at.exception, f"running the optimiser raised: {at.exception}"
+
+    def test_governed_maximum_spend_constraint_changes_displayed_allocation(self):
+        # Random (seeded) posterior beta per channel (`_trace`) means the
+        # two channels are not perfectly symmetric - the unconstrained
+        # optimum concentrates budget onto whichever channel the fit
+        # happens to favour, not necessarily "TV_Brand". This test caps
+        # whichever (month, channel) cell the baseline actually favours,
+        # rather than assuming which one that is.
+        baseline_at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_two_channel_session_state(baseline_at)
+        baseline_at.run()
+        objective_radio = [
+            r for r in baseline_at.radio if r.label == "Optimisation objective"
+        ]
+        objective_radio[0].set_value("fh_gsa").run()
+        baseline_at.session_state["scenario_constraints"] = []
+        baseline_at.session_state["governed_scenario_constraints"] = []
+        self._run_constrained(baseline_at)
+        baseline_plan = baseline_at.session_state["constrained_result"]["spend_plan"]
+        first_month = next(iter(baseline_plan))
+        dominant_channel = max(
+            ("TV_Brand", "Digital"), key=lambda c: baseline_plan[first_month][c]
+        )
+        baseline_dominant_value = baseline_plan[first_month][dominant_channel]
+        baseline_total = sum(
+            v for month in baseline_plan.values() for v in month.values()
+        )
+        assert baseline_dominant_value > 200.0, (
+            f"fixture needs a clearly dominant channel to cap meaningfully, got: {baseline_plan}"
+        )
+
+        capped_at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_two_channel_session_state(capped_at)
+        capped_at.run()
+        objective_radio = [
+            r for r in capped_at.radio if r.label == "Optimisation objective"
+        ]
+        objective_radio[0].set_value("fh_gsa").run()
+        # A deep cut (not just "a bit below baseline") - with 24 free cells
+        # and one whole-plan budget-conservation constraint, a shallow cap
+        # is not guaranteed to actually bind at the true SLSQP optimum (the
+        # freed budget can be absorbed elsewhere without needing to reach
+        # the cap) - verified empirically before choosing this factor.
+        cap_value = baseline_dominant_value * 0.1
+        capped_at.session_state["scenario_constraints"] = []
+        capped_at.session_state["governed_scenario_constraints"] = [
+            GovernedSpendConstraint(
+                kind="maximum_spend",
+                channel=dominant_channel,
+                month=first_month,
+                value=cap_value,
+                label="apptest cap",
+            )
+        ]
+        self._run_constrained(capped_at)
+        capped_result = capped_at.session_state["constrained_result"]
+        capped_plan = capped_result["spend_plan"]
+        capped_dominant_value = capped_plan[first_month][dominant_channel]
+        capped_total = sum(v for month in capped_plan.values() for v in month.values())
+
+        assert capped_dominant_value <= cap_value + 1e-6
+        assert capped_dominant_value < baseline_dominant_value, (
+            "a governed constraint added to the real page's session state "
+            "must actually reach optimize_scenario's real SLSQP call and "
+            "change the displayed allocation"
+        )
+        # Total budget conserved (conserve_total_budget=True) - the capped
+        # spend reappeared elsewhere in the plan, not vanished.
+        assert capped_total == pytest.approx(baseline_total, rel=1e-6)
+
+        disclosures = capped_result["governed_constraint_disclosures"]
+        assert disclosures, (
+            "binding-constraint disclosure must be populated on the real page's result"
+        )
+        cap_disclosure = [d for d in disclosures if d["kind"] == "maximum_spend"]
+        assert cap_disclosure and cap_disclosure[0]["binding"] is True
+
+    def test_combining_both_constraint_vocabularies_is_blocked_not_silently_dropped(
+        self,
+    ):
+        at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_two_channel_session_state(at)
+        at.run()
+        objective_radio = [r for r in at.radio if r.label == "Optimisation objective"]
+        objective_radio[0].set_value("fh_gsa").run()
+
+        at.session_state["scenario_constraints"] = [
+            SpendConstraint(kind="min_spend_floor", channel="TV_Brand", value=100.0)
+        ]
+        at.session_state["governed_scenario_constraints"] = [
+            GovernedSpendConstraint(
+                kind="maximum_spend", channel="TV_Brand", month="2024-01", value=100.0
+            )
+        ]
+        self._run_constrained(at)
+        errors = [e.value or "" for e in at.error]
+        assert any(
+            "never combined in a single optimisation run" in e for e in errors
+        ), errors
+
+
+class TestCapacityLimitVocabularyReachableFromTheRealPage:
+    """REQ-CAP-001/REQ-OPT-001 (Decision 18): a capacity limit added
+    through the real Scenario Planner page's session state must actually
+    reach `optimize_scenario`'s real SLSQP call and change the displayed
+    optimised spend plan - not sit beside the page unused. Production-
+    integration phase, 2026-08-31."""
+
+    def _run_constrained(self, at: AppTest):
+        run_buttons = [
+            b for b in at.button if b.label == "Run constrained optimisation"
+        ]
+        assert run_buttons, "Run constrained optimisation button not found"
+        run_buttons[0].click().run()
+        assert not at.exception, f"running the optimiser raised: {at.exception}"
+
+    def test_capacity_spend_limit_changes_displayed_allocation(self):
+        baseline_at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_two_channel_session_state(baseline_at)
+        baseline_at.run()
+        objective_radio = [
+            r for r in baseline_at.radio if r.label == "Optimisation objective"
+        ]
+        objective_radio[0].set_value("fh_gsa").run()
+        baseline_at.session_state["scenario_constraints"] = []
+        baseline_at.session_state["governed_scenario_constraints"] = []
+        baseline_at.session_state["capacity_limits"] = []
+        self._run_constrained(baseline_at)
+        baseline_plan = baseline_at.session_state["constrained_result"]["spend_plan"]
+        first_month = next(iter(baseline_plan))
+        dominant_channel = max(
+            ("TV_Brand", "Digital"), key=lambda c: baseline_plan[first_month][c]
+        )
+        baseline_dominant_value = baseline_plan[first_month][dominant_channel]
+        baseline_total = sum(
+            v for month in baseline_plan.values() for v in month.values()
+        )
+        assert baseline_dominant_value > 200.0
+
+        capped_at = AppTest.from_file(str(PAGE), default_timeout=60)
+        _seed_two_channel_session_state(capped_at)
+        capped_at.run()
+        objective_radio = [
+            r for r in capped_at.radio if r.label == "Optimisation objective"
+        ]
+        objective_radio[0].set_value("fh_gsa").run()
+        cap_value = baseline_dominant_value * 0.1
+        capped_at.session_state["scenario_constraints"] = []
+        capped_at.session_state["governed_scenario_constraints"] = []
+        capped_at.session_state["capacity_limits"] = [
+            CapacityLimitDefinition(
+                limit_id="apptest-cap",
+                limit_version=1,
+                kind="spend_limit",
+                unit="GBP",
+                applies_to=dominant_channel,
+                value_by_period={first_month: cap_value},
+            )
+        ]
+        self._run_constrained(capped_at)
+        capped_result = capped_at.session_state["constrained_result"]
+        capped_plan = capped_result["spend_plan"]
+        capped_dominant_value = capped_plan[first_month][dominant_channel]
+        capped_total = sum(v for month in capped_plan.values() for v in month.values())
+
+        assert capped_dominant_value <= cap_value + 1e-6
+        assert capped_dominant_value < baseline_dominant_value, (
+            "a capacity limit added to the real page's session state must "
+            "actually reach optimize_scenario's real SLSQP call and change "
+            "the displayed allocation"
+        )
+        assert capped_total == pytest.approx(baseline_total, rel=1e-6)
+        assert capped_result["capacity_disclosures"], (
+            "capacity_disclosures must be populated on the real page's result"
+        )

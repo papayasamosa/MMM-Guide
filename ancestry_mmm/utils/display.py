@@ -458,6 +458,20 @@ CONSTRAINT_KIND_LABELS = {
     "month_total": "Month total",
     "bounded_movement": "Bounded movement",
     "min_spend_floor": "Minimum spend floor",
+    # REQ-OPT-001 (Decision 16): the extended, closed governed constraint-
+    # kind vocabulary (`core.optimization_constraint_vocabulary`) - a
+    # parallel structure to the five legacy kinds above, not a rename of
+    # them (internal `kind` values are never renamed either way).
+    "no_constraint": "No constraint",
+    "fixed_absolute_spend": "Fixed absolute spend",
+    "minimum_spend": "Minimum spend",
+    "maximum_spend": "Maximum spend",
+    "spend_range": "Spend range",
+    "percentage_change_from_reference": "% change from reference plan",
+    "absolute_change_from_reference": "Absolute change from reference plan",
+    "zero_spend": "Zero spend (analyst choice)",
+    "required_minimum_activity": "Required minimum activity (non-monetary)",
+    "unavailable": "Unavailable (no demand/activity this period)",
 }
 
 # Short help text for technical fields, meant for the `help=` kwarg on widgets.

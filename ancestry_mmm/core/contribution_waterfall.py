@@ -63,10 +63,15 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .attribution import CandidateAAttributionNotSupportedError, _channel_log_terms
+from .attribution import _channel_log_terms
 from .hierarchical_model import FHModelMeta
 from .outcome_valuation_reporting import resolve_market_week_row_indices
-from .predict import FHPosteriorParams, extract_posterior_params
+from .predict import (
+    FHPosteriorParams,
+    _seo_eta_contribution,
+    extract_posterior_params,
+    predict_mu,
+)
 from .search_capacity import SEARCH_CANDIDATE_A_ENGINE
 from .uncertainty import (
     DEFAULT_CRED_MASS,
@@ -196,12 +201,9 @@ def compute_generalised_shapley_contributions(
     same telescoping-sum guarantee `compute_shapley_contributions`
     already relies on, applied to this player list.
     """
-    if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
-        raise CandidateAAttributionNotSupportedError(
-            "compute_generalised_shapley_contributions does not yet "
-            "represent Candidate A's search-mediated pathway - see "
-            "docs/wp2f_contribution_waterfall_design_note.md Section 1."
-        )
+    # Candidate A and the windowed SEO treatment are added as explicit
+    # post-Shapley structural components below.  The ordinary components
+    # remain unchanged and still reconcile to the pre-special-pathway mu.
     structural_terms = extract_generalised_eta_terms(trace, meta, params, at=at)
     channel_terms = _channel_log_terms(frame, meta, params, purpose=purpose)
 
@@ -238,6 +240,50 @@ def compute_generalised_shapley_contributions(
         if p == BASELINE_COMPONENT:
             continue
         mu_total = mu_total + contributions[p]
+
+    # Windowed SEO is a fitted structural treatment, not a channel and not
+    # an analyst-entered future control.  Add its outcome-scale effect after
+    # the ordinary Shapley players so the bridge remains exact while the
+    # active-window semantics are preserved.
+    if getattr(meta, "seo_fit_inputs_at_fit", None):
+        seo_eta = _seo_eta_contribution(
+            frame=frame,
+            meta=meta,
+            params=params,
+            n_obs=n_obs,
+            explicit_values=None,
+            explicit_active_mask=None,
+        )
+        mu_with_seo = np.clip(mu_total * np.exp(np.clip(seo_eta, -50, 50)), 1e-6, 1e9)
+        contributions["SEO visibility (windowed)"] = mu_with_seo - mu_total
+        players.append("SEO visibility (windowed)")
+        mu_total = mu_with_seo
+
+    # Candidate A's demand/capture/cap chain is nonlinear and cannot be
+    # represented by the ordinary channel eta terms.  Replay it once per
+    # posterior draw using the fit-pinned historical cap, then expose the
+    # residual as a separately labelled mediated component.  Missing replay
+    # evidence remains a hard error from predict_mu rather than a fabricated
+    # contribution.
+    if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
+        historical_cap = np.asarray(
+            getattr(meta, "candidate_a_historical_paid_search_cap", ()),
+            dtype=float,
+        )
+        if historical_cap.shape != (n_obs,):
+            raise ValueError(
+                "Candidate A contribution waterfall requires the fit-time "
+                "historical paid-search cap recorded with the posterior."
+            )
+        mu_with_candidate_a = predict_mu(
+            frame,
+            meta,
+            params,
+            candidate_a_paid_search_cap=historical_cap,
+        )
+        contributions["Search-mediated Candidate A"] = mu_with_candidate_a - mu_total
+        players.append("Search-mediated Candidate A")
+        mu_total = mu_with_candidate_a
 
     return {
         "contributions": contributions,

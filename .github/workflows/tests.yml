@@ -414,7 +414,7 @@ jobs:
           uv run python -c "import os, pymc_marketing; assert pymc_marketing.__version__ == os.environ['EXPECTED_PYMC_MARKETING'], (pymc_marketing.__version__, os.environ['EXPECTED_PYMC_MARKETING'])" &&
           uv run pytest ancestry_mmm/tests/test_transformations.py -k pymc_marketing -v --no-cov
       - name: Run tests with coverage
-        run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py --ignore=ancestry_mmm/tests/test_official_lifecycle_browser.py --ignore=ancestry_mmm/tests/test_causal_graph_editor_browser.py --ignore=ancestry_mmm/tests/test_search_candidate_a_recovery_posterior.py --ignore=ancestry_mmm/tests/test_fold_refit_service_recovery.py --cov --cov-report=term-missing:skip-covered --cov-fail-under=75
+        run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py --ignore=ancestry_mmm/tests/test_official_lifecycle_browser.py --ignore=ancestry_mmm/tests/test_causal_graph_editor_browser.py --ignore=ancestry_mmm/tests/test_search_candidate_a_recovery_posterior.py --ignore=ancestry_mmm/tests/test_fold_refit_service_recovery.py --ignore=ancestry_mmm/tests/test_named_event_response_recovery_posterior.py --cov --cov-report=term-missing:skip-covered --cov-fail-under=75
 
   # -- Python 3.12 unit/integration ----------------------------------
   py312-tests:
@@ -435,7 +435,7 @@ jobs:
           uv run python -c "import os, pymc_marketing; assert pymc_marketing.__version__ == os.environ['EXPECTED_PYMC_MARKETING'], (pymc_marketing.__version__, os.environ['EXPECTED_PYMC_MARKETING'])" &&
           uv run pytest ancestry_mmm/tests/test_transformations.py -k pymc_marketing -v --no-cov
       - name: Run tests with coverage
-        run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py --ignore=ancestry_mmm/tests/test_official_lifecycle_browser.py --ignore=ancestry_mmm/tests/test_causal_graph_editor_browser.py --ignore=ancestry_mmm/tests/test_search_candidate_a_recovery_posterior.py --ignore=ancestry_mmm/tests/test_fold_refit_service_recovery.py --cov --cov-report=term-missing:skip-covered --cov-fail-under=75
+        run: uv run pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py --ignore=ancestry_mmm/tests/test_official_lifecycle_browser.py --ignore=ancestry_mmm/tests/test_causal_graph_editor_browser.py --ignore=ancestry_mmm/tests/test_search_candidate_a_recovery_posterior.py --ignore=ancestry_mmm/tests/test_fold_refit_service_recovery.py --ignore=ancestry_mmm/tests/test_named_event_response_recovery_posterior.py --cov --cov-report=term-missing:skip-covered --cov-fail-under=75
 
   # -- Ruff lint and format check -------------------------------------
   ruff:
@@ -683,7 +683,7 @@ jobs:
           cache-dependency-glob: "uv.lock"
       - run: uv sync --locked
       - name: Run deterministic attribution recovery tests
-        run: uv run pytest ancestry_mmm/tests/test_simulation_recovery.py -v --tb=short
+        run: uv run pytest ancestry_mmm/tests/test_simulation_recovery.py -v --tb=short --no-cov
         timeout-minutes: 60
 
   # -- Candidate A posterior recovery (schedule/manual only) --
@@ -783,6 +783,81 @@ jobs:
           name: wp2-named-event-evidence
           path: wp2_evidence_out/
           if-no-files-found: error
+
+  # -- Named-event response posterior recovery (schedule/manual only) --
+  # Production integration of Decision 12 (core.named_event_response):
+  # real pm.sample NUTS fits of the *integrated* named-event model
+  # (core.hierarchical_model.build_fh_hierarchical_model(...,
+  # named_event_fit_inputs=...)) against the independent synthetic
+  # generator in core.named_event_response_recovery. This is distinct from
+  # named-event-response-recovery above, which measures the WP2 candidate-
+  # comparison decision support script only and never touches the real
+  # integrated production model. Evidence only - not itself an official-
+  # use or production-readiness approval; the decision record's own
+  # "STARTING default, requires real-data prior-predictive recalibration"
+  # caveats on family windows/shrinkage-prior scale still apply. Kept
+  # schedule/manual-only, mirroring candidate-a-recovery/fold-refit-
+  # recovery above, because real NUTS sampling is too slow for blocking
+  # PR/push CI.
+  named-event-integration-recovery:
+    name: Named-event integration posterior recovery
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --locked
+      - name: Run named-event integration posterior recovery tests
+        run: uv run pytest ancestry_mmm/tests/test_named_event_response_recovery_posterior.py -v --tb=short --no-cov
+        timeout-minutes: 60
+
+  # -- Named-event model-mathematics change detector (pull_request only) --
+  # Mirrors candidate-a-recovery-gate-check above: named-event-integration-
+  # recovery is intentionally schedule/manual-only, so it is not a normal
+  # PR gate on its own. This job is purely informational and never fails
+  # the workflow - it flags, via a workflow annotation, when a PR's diff
+  # touches a module the named-event production-integration wiring
+  # depends on, so a reviewer knows to require a manually-dispatched
+  # successful named-event-integration-recovery run before merging.
+  named-event-recovery-gate-check:
+    name: Named-event recovery gate check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Flag if this PR changes named-event model mathematics
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          echo "Changed files:"
+          echo "$changed"
+          named_event_paths=(
+            "ancestry_mmm/core/named_event_response.py"
+            "ancestry_mmm/core/named_event_fit_inputs.py"
+            "ancestry_mmm/core/named_event_response_recovery.py"
+            "ancestry_mmm/core/hierarchical_model.py"
+          )
+          hit=0
+          for path in "${named_event_paths[@]}"; do
+            if echo "$changed" | grep -qxF "$path"; then
+              echo "  -> matched named-event affected module: $path"
+              hit=1
+            fi
+          done
+          if [ "$hit" -eq 1 ]; then
+            echo "::warning::This PR changes named-event model-mathematics file(s) (Decision 12 affected modules). named-event-integration-recovery is schedule/manual-only and did not run automatically for this PR - dispatch it manually (workflow_dispatch) and require it to succeed before merging."
+          else
+            echo "No named-event model-mathematics files changed in this PR - no manual recovery run required by this check."
+          fi
 
   candidate-a-recovery-gate-check:
     name: Candidate A recovery gate check

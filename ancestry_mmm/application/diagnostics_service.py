@@ -198,14 +198,20 @@ class DiagnosticsService:
                     diag_input.trace, diag_input.meta
                 )
                 fit_df = in_sample_fit_market_specific(
-                    diag_input.frame, diag_input.meta, market_fit_params
+                    diag_input.frame,
+                    diag_input.meta,
+                    market_fit_params,
+                    named_event_fit_inputs=diag_input.named_event_fit_inputs,
                 )
             else:
                 shared_fit_params = extract_posterior_params(
                     diag_input.trace, diag_input.meta
                 )
                 fit_df = in_sample_fit(
-                    diag_input.frame, diag_input.meta, shared_fit_params
+                    diag_input.frame,
+                    diag_input.meta,
+                    shared_fit_params,
+                    named_event_fit_inputs=diag_input.named_event_fit_inputs,
                 )
             fit_records = fit_df.to_dict(orient="records")
             fit_sec = DiagnosticSection(
@@ -230,20 +236,32 @@ class DiagnosticsService:
                     diag_input.trace, diag_input.meta
                 )
                 error_df = error_metrics_by_outcome_market_specific(
-                    diag_input.frame, diag_input.meta, market_em_params
+                    diag_input.frame,
+                    diag_input.meta,
+                    market_em_params,
+                    named_event_fit_inputs=diag_input.named_event_fit_inputs,
                 )
                 residual_df = residual_temporal_diagnostics_market_specific(
-                    diag_input.frame, diag_input.meta, market_em_params
+                    diag_input.frame,
+                    diag_input.meta,
+                    market_em_params,
+                    named_event_fit_inputs=diag_input.named_event_fit_inputs,
                 )
             else:
                 shared_em_params = extract_posterior_params(
                     diag_input.trace, diag_input.meta
                 )
                 error_df = error_metrics_by_outcome(
-                    diag_input.frame, diag_input.meta, shared_em_params
+                    diag_input.frame,
+                    diag_input.meta,
+                    shared_em_params,
+                    named_event_fit_inputs=diag_input.named_event_fit_inputs,
                 )
                 residual_df = residual_temporal_diagnostics(
-                    diag_input.frame, diag_input.meta, shared_em_params
+                    diag_input.frame,
+                    diag_input.meta,
+                    shared_em_params,
+                    named_event_fit_inputs=diag_input.named_event_fit_inputs,
                 )
             error_metrics_sec = DiagnosticSection(
                 status="computed", payload=error_df.to_dict(orient="records")
@@ -278,6 +296,7 @@ class DiagnosticsService:
                     market_em_params,
                     trace=diag_input.trace,
                     credible_mass=diag_input.credible_mass,
+                    named_event_fit_inputs=diag_input.named_event_fit_inputs,
                 )
             else:
                 residual_series_df = residual_series(
@@ -286,6 +305,7 @@ class DiagnosticsService:
                     shared_em_params,
                     trace=diag_input.trace,
                     credible_mass=diag_input.credible_mass,
+                    named_event_fit_inputs=diag_input.named_event_fit_inputs,
                 )
             residual_series_sec = DiagnosticSection(
                 status="computed",
@@ -322,6 +342,7 @@ class DiagnosticsService:
                     diag_input.meta,
                     market_ppd_params,
                     credible_mass=diag_input.credible_mass,
+                    named_event_fit_inputs=diag_input.named_event_fit_inputs,
                 )
             else:
                 shared_ppd_params = extract_posterior_params(
@@ -333,6 +354,7 @@ class DiagnosticsService:
                     diag_input.meta,
                     shared_ppd_params,
                     credible_mass=diag_input.credible_mass,
+                    named_event_fit_inputs=diag_input.named_event_fit_inputs,
                 )
             ppd_sec = DiagnosticSection(
                 status="computed", payload=ppd_df.to_dict(orient="records")

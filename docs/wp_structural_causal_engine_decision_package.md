@@ -222,3 +222,32 @@ methods), Product (planning-eligibility labels, engine-visibility UX).
 `REQ-SCEFFECT-001`, `REQ-CAUSALROBUST-001`, and `REQ-SCCURVE-001` remain
 target-state contracts with zero implementation, pending review of this
 package.
+
+## Update, 2026-08-30: D1 resolved as D1-B (deferred, not rejected)
+
+The business-decision brief "Post-UI/UX Implementation Instructions:
+Approved Business Decisions" (Decision 19, "Defer PathMC") resolves D1.
+Candidate D1-A's capability-matrix evaluation was already performed
+(Work Package 4, `docs/wp4_structural_causal_engine_capability_
+evaluation.md`, 2026-08-19) — PathMC 0.3.0, DoWhy 0.14, and pgmpy 1.1.2
+were classified against the approved six-way capability vocabulary, with
+no engine selected and no dependency added. This decision now resolves
+the *post-evaluation posture* as **D1-B**: defer any engine adoption or
+selection until a concrete Ancestry use case beyond what Candidate A
+already covers is proposed — explicitly not D1-C (PathMC is not declined
+permanently; the brief's own words are "mark it as deferred rather than
+rejected forever"). PyMC/PyMC Marketing remains the sole production
+modelling path, per `REQ-ENGINE-001`, unaffected by this update.
+
+The brief's stated sequence for revisiting this decision: only after (1)
+the core MMM, (2) Scenario Planner, and (3) Optimiser are fully working,
+plus the validation/governance/reporting needed for those, should PathMC
+be reconsidered. This is a business-priority ordering, not a technical
+finding, and is recorded here as the condition under which D1 would be
+reopened.
+
+Confirmed (repository audit, 2026-08-30): no PathMC package appears in
+`pyproject.toml`, any lockfile, or `requirements*.txt` — no new runtime
+dependency has been, or is approved to be, added by this decision. No
+PathMC UI work is approved. D2 (causal robustness policy) and D3 (UX
+labels) remain fully open, unaffected by this update.

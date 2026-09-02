@@ -192,3 +192,18 @@ Modelling / Platform engineering
 ## Approval date
 
 2026-08-18
+
+## Addendum, 2026-08-30: PathMC deferred, not rejected (Decision 19)
+
+The business-decision brief "Post-UI/UX Implementation Instructions:
+Approved Business Decisions" (Decision 19) resolves `docs/wp_structural_
+causal_engine_decision_package.md`'s D1 as **D1-B**: PathMC (and any
+other structural-causal engine) adoption is deferred until a concrete
+Ancestry use case beyond Candidate A's existing coverage is proposed,
+and until the core MMM, Scenario Planner, and Optimiser are fully
+working — not rejected permanently. See that package's own 2026-08-30
+update for the full resolution. No new runtime dependency is added by
+this addendum (confirmed: no PathMC package in `pyproject.toml` or any
+lockfile); no PathMC UI work is approved or performed. This record's own
+target-state contract, capability status, and every other unresolved
+item (D2, D3) are unchanged.

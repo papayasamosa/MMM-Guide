@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+from typing import Mapping, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -75,6 +76,17 @@ from ancestry_mmm.core.planning.value import (
     ScenarioValueAssumptions,
     build_scenario_value_assumptions,
 )
+from ancestry_mmm.core.outcome_valuation import (
+    VALUATION_KIND_DNA_REVENUE,
+    VALUATION_KIND_FH_LTR,
+    WeeklyOutcomeValuationRecord,
+)
+from ancestry_mmm.core.outcome_valuation_rates import derive_weekly_value_rates
+from ancestry_mmm.core.planning.value_prefill import suggest_value_prefill
+from ancestry_mmm.core.planning.planned_activity import (
+    PromotionPeriod,
+    materialize_promo_future,
+)
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.optimization import (
     CurrencyContext,
@@ -91,6 +103,11 @@ from ancestry_mmm.core.optimization import (
     seed_monetary_and_quantity_defaults,
     whole_plan_scope_compatible,
 )
+from ancestry_mmm.core.optimization_objective_vocabulary import resolve_objective_kind
+from ancestry_mmm.core.optimization_constraint_vocabulary import (
+    GovernedSpendConstraint,
+)
+from ancestry_mmm.core.capacity import CapacityLimitDefinition
 from ancestry_mmm.core.uncertainty import evaluate_scenario_with_uncertainty
 from ancestry_mmm.core.outcome_group_totals import aggregate_outcome_groups
 from ancestry_mmm.core.evidence_tiers import classify_market_evidence
@@ -124,16 +141,90 @@ from ancestry_mmm.core.planning.future_context import (
     OFFICIAL_MODE,
     build_future_context,
 )
+from ancestry_mmm.core.planning.future_assumption_bundle import (
+    FutureAssumptionBundle,
+)
 from ancestry_mmm.core.planning.phasing import (
     HorizonConfiguration,
     canonical_weeks,
-    phase_monetary_plan_from_partial_start_calendar_day_overlap_v1,
-    phase_monthly_series_from_partial_start_calendar_day_overlap_v1,
     reseat_ordinal_monthly_plan_to_start_week,
 )
-from ancestry_mmm.core.planning.weekly_plan_builder import build_governed_weekly_plan
+from ancestry_mmm.core.planning.weekly_plan_builder import (
+    build_governed_weekly_plan_from_monthly_plan,
+)
 from ancestry_mmm.core.sequential_evaluation_context import SequentialEvaluationContext
 from ancestry_mmm.core.sequential_scenario_evaluation import sequential_scenario_to_dict
+from ancestry_mmm.core.sequential_optimisation_tractability import (
+    SequentialOptimisationContext,
+)
+from ancestry_mmm.core.sequential_simulation import (
+    build_named_event_fit_inputs_for_sequential_replay,
+    reconstruct_starting_state,
+    reconstruct_starting_state_market_specific,
+)
+from ancestry_mmm.core.search_capacity import SEARCH_CANDIDATE_A_ENGINE
+from ancestry_mmm.core.named_events import (
+    EventResponseDefinition,
+    NamedEventFamily,
+    NamedEventOccurrence,
+)
+from ancestry_mmm.core.planning.terminal_response import (
+    build_zero_decision_terminal_extension_plan,
+)
+
+
+def _persist_future_assumption_bundle(
+    *, market: str, context_by_key: Mapping[str, object]
+) -> FutureAssumptionBundle:
+    """Persist the exact system-generated future context used by a plan.
+
+    Trend, seasonality, promotions and controls are materialised once by the
+    existing future-context builder.  This wrapper gives that result durable
+    lineage without asking analysts to re-enter model-generated assumptions.
+    """
+    contexts = {
+        key: value
+        for key, value in context_by_key.items()
+        if hasattr(value, "fingerprint")
+    }
+    if not contexts:
+        raise ValueError("A future-assumption bundle requires at least one context.")
+    bundle_id = f"scenario-future-context::{market}"
+    existing = [
+        FutureAssumptionBundle.from_dict(item)
+        for item in (get_state("future_assumption_bundles") or [])
+        if isinstance(item, dict) and item.get("bundle_id") == bundle_id
+    ]
+    candidate = FutureAssumptionBundle(
+        bundle_id=bundle_id,
+        bundle_version=(max((item.bundle_version for item in existing), default=0) + 1),
+        context_by_key=contexts,
+        owner="Scenario Planner",
+        notes="System-generated trend/seasonality plus governed future controls and promotions.",
+    )
+    current = max(existing, key=lambda item: item.bundle_version, default=None)
+    if current is not None and current.fingerprint() == candidate.fingerprint():
+        return current
+    retained = [
+        item
+        for item in (get_state("future_assumption_bundles") or [])
+        if not (isinstance(item, dict) and item.get("bundle_id") == bundle_id)
+    ]
+    retained.append(candidate.to_dict())
+    set_state("future_assumption_bundles", retained)
+    return candidate
+
+
+def _candidate_a_cap_for_future_weeks(market: str, weeks) -> Optional[np.ndarray]:
+    """Resolve an explicit Search capacity cap for one planned market."""
+    caps = get_state("candidate_a_future_paid_search_cap_by_market") or {}
+    value = caps.get(market)
+    if value is None:
+        return None
+    value = float(value)
+    if not np.isfinite(value) or value < 0:
+        raise ValueError("Candidate A paid-search cap must be finite and non-negative.")
+    return np.full(len(weeks), value, dtype=float)
 
 
 def _catalogue_value(item, key, default=None):
@@ -322,9 +413,157 @@ def _sequential_plan_start_week(frame, market, spec) -> pd.Timestamp:
     return market_dates.max() + pd.Timedelta(days=7)
 
 
+def _named_event_replay_inputs_for_plan(plan, carry_in, meta):
+    """Resolve current registry records for an already-fitted named-event
+    model and build a replay basis aligned to this plan's exact tail/period
+    layout. Unconfigured fits keep the historical ``None`` fast path."""
+    if not meta.named_event_response_definitions_at_fit:
+        return None
+    families = [
+        NamedEventFamily.from_dict(item)
+        for item in (get_state("named_event_families") or [])
+    ]
+    occurrences = [
+        NamedEventOccurrence.from_dict(item)
+        for item in (get_state("named_event_occurrences") or [])
+    ]
+    definitions = [
+        EventResponseDefinition.from_dict(item)
+        for item in (get_state("named_event_response_definitions") or [])
+    ]
+    return build_named_event_fit_inputs_for_sequential_replay(
+        plan,
+        carry_in,
+        meta,
+        families=families,
+        occurrences=occurrences,
+        response_definitions=definitions,
+    )
+
+
+def _build_sequential_optimisation_context(
+    *,
+    market,
+    model_type,
+    meta,
+    params,
+    frame,
+    spec,
+    spend_plan,
+    activity_definitions,
+    counterfactual_policy,
+    governed_cost_registry,
+    promotion_periods=(),
+):
+    """Build the fixed sequential context used by the optimiser.
+
+    The candidate factory delegates monthly-to-weekly conversion to the
+    governed planning builder, so the optimiser and manual sequential tab
+    share the same calendar, cost mapping, future context, and replay basis.
+    """
+    plan_start_week = _sequential_plan_start_week(frame, market, spec)
+    if not meta.channels:
+        raise ValueError("Sequential optimisation requires at least one channel.")
+    sequential_months = reseat_ordinal_monthly_plan_to_start_week(
+        ordinal_monthly_values=[spend_plan[m][meta.channels[0]] for m in spend_plan],
+        plan_start_week=plan_start_week,
+    )[1]
+    calendar_end = pd.Timestamp(sequential_months[-1] + "-01") + pd.offsets.MonthEnd(0)
+    calendar = CanonicalCalendar(
+        start=plan_start_week.strftime("%Y-%m-%d"),
+        end=calendar_end.strftime("%Y-%m-%d"),
+        frequency="weekly",
+    )
+    weeks = canonical_weeks(calendar)
+    market_mask = np.array(frame["df"][spec.market_col] == market)
+    historical_n_weeks = int(market_mask.sum())
+    control_names = tuple(getattr(meta, "control_names", ()) or ())
+    outcome_control_names = getattr(meta, "outcome_control_names", None) or {}
+    has_exogenous_controls = bool(control_names) or bool(
+        any(names for names in outcome_control_names.values())
+    )
+    future_mode = EXPLORATORY_MODE if has_exogenous_controls else OFFICIAL_MODE
+    last_observed_controls = {}
+    last_observed_outcome_controls = {}
+    if has_exogenous_controls and market_mask.any():
+        for i, name in enumerate(control_names):
+            last_observed_controls[name] = float(
+                frame["X_controls"][market_mask, i][-1]
+            )
+        for oid, names in outcome_control_names.items():
+            for i, name in enumerate(names):
+                last_observed_outcome_controls[f"{oid}.{name}"] = float(
+                    frame["outcome_controls"][oid][market_mask, i][-1]
+                )
+    future_context = build_future_context(
+        market=market,
+        period_labels=weeks,
+        historical_n_weeks=historical_n_weeks,
+        n_fourier_harmonics=spec.fourier_harmonics,
+        outcome_ids=tuple(meta.outcome_ids),
+        control_names=control_names,
+        outcome_control_names=outcome_control_names,
+        mode=future_mode,
+        promo_future=materialize_promo_future(
+            promotion_periods, outcome_ids=meta.outcome_ids, weeks=weeks
+        ),
+        eligible_for_hold_last_observed=frozenset(last_observed_controls)
+        | frozenset(last_observed_outcome_controls),
+        hold_last_observed=frozenset(last_observed_controls)
+        | frozenset(last_observed_outcome_controls),
+        last_observed_controls=last_observed_controls,
+        last_observed_outcome_controls=last_observed_outcome_controls,
+    )
+    _persist_future_assumption_bundle(
+        market=market, context_by_key={"plan": future_context}
+    )
+    candidate_a_cap = _candidate_a_cap_for_future_weeks(market, weeks)
+    build_kwargs = dict(
+        market=market,
+        meta=meta,
+        plan_start_week=plan_start_week,
+        calendar=calendar,
+        future_context=future_context,
+        expected_n_fourier_columns=2 * spec.fourier_harmonics,
+        activity_definitions=activity_definitions or None,
+        cost_registry=governed_cost_registry,
+        candidate_a_paid_search_cap=candidate_a_cap,
+    )
+
+    def build_plan(monthly_plan):
+        return build_governed_weekly_plan_from_monthly_plan(
+            monthly_plan=monthly_plan, **build_kwargs
+        )[0]
+
+    reference_monthly_plan = resolve_counterfactual(
+        spend_plan,
+        market=market,
+        activity_definitions=activity_definitions or None,
+        policy=counterfactual_policy,
+    )
+    reference_plan = build_plan(reference_monthly_plan)
+    if model_type == "market_specific":
+        carry_in = reconstruct_starting_state_market_specific(
+            frame, meta, params, market
+        )
+    else:
+        carry_in = reconstruct_starting_state(frame, meta, params, market)
+    named_event_fit_inputs = _named_event_replay_inputs_for_plan(
+        reference_plan, carry_in, meta
+    )
+    return SequentialOptimisationContext(
+        reference_plan=reference_plan,
+        candidate_plan=build_plan,
+        carry_in=carry_in,
+        model_type=model_type,
+        named_event_fit_inputs=named_event_fit_inputs,
+    )
+
+
 def _evaluate_sequential_manual_plan(
     *,
     market: str,
+    model_type: str,
     meta,
     params,
     frame,
@@ -341,6 +580,7 @@ def _evaluate_sequential_manual_plan(
     currency_context,
     trace=None,
     n_posterior_draws: int = 0,
+    promotion_periods=(),
 ):
     """Build and evaluate a sequential-weekly manual scenario from the same
     monthly spend_plan/governance inputs the steady-state tab uses (WP5,
@@ -348,12 +588,19 @@ def _evaluate_sequential_manual_plan(
     with an analyst-readable message on any failure the caller should
     render via `st.error`; never raises for an ordinary governance/
     validation rejection surfaced instead as `ScenarioServiceResult.errors`.
+
+    `promotion_periods` (`REQ-PLANACT-001`, Decision 14): structured
+    `core.planning.planned_activity.PromotionPeriod` declarations for this
+    plan window, materialised into `build_future_context`'s `promo_future`
+    via the real, unmodified `materialize_promo_future` - an empty
+    sequence (the default) yields the exact same all-zero `promo_future`
+    this function always built before. The terminal continuation window
+    deliberately keeps zero promo regardless (documented, unchanged
+    "residual carryover under continuing seasonality but zero future
+    decision media" assumption) - promotion periods are scoped to the
+    analyst's real plan window only.
     """
     plan_start_week = _sequential_plan_start_week(frame, market, spec)
-    candidate_monthly_by_channel = {
-        c: {m: spend_plan[m][c] for m in spend_plan} for c in meta.channels
-    }
-
     # Reference (counterfactual) uses the SAME resolution the steady-state
     # path uses (core.scenario_governance.resolve_counterfactual is
     # confirmed period-key-agnostic), applied to the original monthly plan
@@ -366,39 +613,13 @@ def _evaluate_sequential_manual_plan(
         activity_definitions=activity_definitions or None,
         policy=counterfactual_policy,
     )
-    reference_monthly_by_channel = {
-        c: {m: reference_monthly_plan[m][c] for m in reference_monthly_plan}
-        for c in meta.channels
-    }
-
-    # Re-keying each channel's ordered monthly values onto the real
-    # calendar months starting at `plan_start_week` (pro-rating a partial
-    # first month) is the governed `core.planning.phasing` contract
-    # (`reseat_ordinal_monthly_plan_to_start_week`), not page-local logic -
-    # WP0 of `Media-Mix-Lab: Coding LLM Next Steps After PR #267` moved
-    # this out of the page (previously `_prorated_sequential_monthly_
-    # values`) to resolve the thin-interface violation flagged there.
-    sequential_months: tuple = ()
-    reseated_candidate: dict = {}
-    for c in meta.channels:
-        ordered_values = [
-            candidate_monthly_by_channel[c][m] for m in candidate_monthly_by_channel[c]
-        ]
-        reseated_candidate[c], sequential_months = (
-            reseat_ordinal_monthly_plan_to_start_week(
-                ordinal_monthly_values=ordered_values,
-                plan_start_week=plan_start_week,
-            )
-        )
-    reseated_reference: dict = {}
-    for c in meta.channels:
-        ordered_values = [
-            reference_monthly_by_channel[c][m] for m in reference_monthly_by_channel[c]
-        ]
-        reseated_reference[c], _ = reseat_ordinal_monthly_plan_to_start_week(
-            ordinal_monthly_values=ordered_values,
-            plan_start_week=plan_start_week,
-        )
+    # The same governed monthly-to-weekly builder is used by manual and
+    # optimisation callers. It owns partial-month re-seating, week-specific
+    # cost mapping, and exact canonical-week validation.
+    sequential_months = reseat_ordinal_monthly_plan_to_start_week(
+        ordinal_monthly_values=[spend_plan[m][meta.channels[0]] for m in spend_plan],
+        plan_start_week=plan_start_week,
+    )[1]
 
     calendar_end = pd.Timestamp(sequential_months[-1] + "-01") + pd.offsets.MonthEnd(0)
     calendar = CanonicalCalendar(
@@ -408,55 +629,7 @@ def _evaluate_sequential_manual_plan(
     )
     weeks = canonical_weeks(calendar)
 
-    activity_map = (
-        activity_by_model_input(activity_definitions, market)
-        if activity_definitions
-        else {}
-    )
     cost_as_of_by_period = {w: w for w in weeks}
-
-    def _phase_channel(reseated_monthly_values: dict, channel: str):
-        # The first sequential month is necessarily partial (the plan
-        # starts mid-month, immediately after history ends - see
-        # `_sequential_plan_start_week`); the governed phasing functions
-        # below (`core.planning.phasing`) phase that already-pro-rated
-        # fragment and every subsequent whole month additively per week,
-        # so a boundary week between month 1 and month 2 legitimately
-        # carries spend from both - this page no longer implements that
-        # arithmetic itself (WP0 of `Media-Mix-Lab: Coding LLM Next Steps
-        # After PR #267`, resolving the thin-interface violation flagged
-        # there; previously `_first_month_fragment_schedule` plus an
-        # inline per-week cost-mapping loop).
-        definition = activity_map.get(channel)
-        is_cost_bearing = definition.is_cost_bearing if definition else True
-
-        if is_cost_bearing and governed_cost_registry is not None:
-            # `channel_allocations` (below) takes `WeeklyAllocationResult`
-            # or `WeeklyModelInputDerivation` directly, never the combined
-            # `MonetaryPhasingResult` wrapper - the derived model-input
-            # quantity is what a fit-time model input expects.
-            return phase_monetary_plan_from_partial_start_calendar_day_overlap_v1(
-                market=market,
-                channel=channel,
-                reseated_monthly_spend=reseated_monthly_values,
-                plan_start_week=plan_start_week,
-                calendar=calendar,
-                cost_registry=governed_cost_registry,
-            ).weekly_model_input
-        return phase_monthly_series_from_partial_start_calendar_day_overlap_v1(
-            market=market,
-            series_id=channel,
-            reseated_monthly_values=reseated_monthly_values,
-            plan_start_week=plan_start_week,
-            calendar=calendar,
-        )
-
-    candidate_allocations = {
-        c: _phase_channel(reseated_candidate[c], c) for c in meta.channels
-    }
-    reference_allocations = {
-        c: _phase_channel(reseated_reference[c], c) for c in meta.channels
-    }
 
     n_fourier_harmonics = spec.fourier_harmonics
     market_mask = np.array(frame["df"][spec.market_col] == market)
@@ -490,7 +663,13 @@ def _evaluate_sequential_manual_plan(
         control_names=control_names,
         outcome_control_names=outcome_control_names,
         mode=future_mode,
-        promo_future={oid: {w: 0.0 for w in weeks} for oid in meta.outcome_ids},
+        # REQ-PLANACT-001 (Decision 14): real, structured promotion-period
+        # input for this plan window - materialize_promo_future returns
+        # the identical all-zero shape when promotion_periods is empty, so
+        # this is a strict superset of the previous unconditional zero.
+        promo_future=materialize_promo_future(
+            promotion_periods, outcome_ids=meta.outcome_ids, weeks=weeks
+        ),
         eligible_for_hold_last_observed=frozenset(last_observed_controls)
         | frozenset(last_observed_outcome_controls),
         hold_last_observed=frozenset(last_observed_controls)
@@ -498,20 +677,45 @@ def _evaluate_sequential_manual_plan(
         last_observed_controls=last_observed_controls,
         last_observed_outcome_controls=last_observed_outcome_controls,
     )
+    candidate_a_cap = _candidate_a_cap_for_future_weeks(market, weeks)
 
-    candidate_plan, candidate_provenance = build_governed_weekly_plan(
+    candidate_plan, candidate_provenance = build_governed_weekly_plan_from_monthly_plan(
         market=market,
         meta=meta,
-        channel_allocations=candidate_allocations,
+        monthly_plan=spend_plan,
+        plan_start_week=plan_start_week,
+        calendar=calendar,
         future_context=future_context,
         expected_n_fourier_columns=2 * n_fourier_harmonics,
+        activity_definitions=activity_definitions or None,
+        cost_registry=governed_cost_registry,
+        candidate_a_paid_search_cap=candidate_a_cap,
     )
-    reference_plan, reference_provenance = build_governed_weekly_plan(
+    reference_plan, reference_provenance = build_governed_weekly_plan_from_monthly_plan(
         market=market,
         meta=meta,
-        channel_allocations=reference_allocations,
+        monthly_plan=reference_monthly_plan,
+        plan_start_week=plan_start_week,
+        calendar=calendar,
         future_context=future_context,
         expected_n_fourier_columns=2 * n_fourier_harmonics,
+        activity_definitions=activity_definitions or None,
+        cost_registry=governed_cost_registry,
+        candidate_a_paid_search_cap=candidate_a_cap,
+    )
+
+    # Decision 12 replay boundary: a fit that consumed named events must
+    # carry an exact, row-aligned basis through candidate/reference and
+    # terminal replay. The current registry supplies factual occurrences;
+    # the fit metadata pins the response-definition versions.
+    if model_type == "market_specific":
+        replay_carry_in = reconstruct_starting_state_market_specific(
+            frame, meta, params, market
+        )
+    else:
+        replay_carry_in = reconstruct_starting_state(frame, meta, params, market)
+    named_event_fit_inputs = _named_event_replay_inputs_for_plan(
+        candidate_plan, replay_carry_in, meta
     )
 
     # Terminal incremental carryover (WP5 of `Media-Mix-Lab: Coding LLM Next
@@ -552,6 +756,29 @@ def _evaluate_sequential_manual_plan(
         last_observed_controls=last_observed_controls,
         last_observed_outcome_controls=last_observed_outcome_controls,
     )
+    future_assumption_bundle = _persist_future_assumption_bundle(
+        market=market,
+        context_by_key={"plan": future_context, "terminal": terminal_future_context},
+    )
+    terminal_named_event_fit_inputs = None
+    if named_event_fit_inputs is not None:
+        terminal_extension_plan = build_zero_decision_terminal_extension_plan(
+            market,
+            list(meta.channels),
+            terminal_future_context,
+            candidate_a_paid_search_cap=(
+                np.full(
+                    len(terminal_weeks),
+                    float(candidate_a_cap[-1]),
+                    dtype=float,
+                )
+                if candidate_a_cap is not None
+                else None
+            ),
+        )
+        terminal_named_event_fit_inputs = _named_event_replay_inputs_for_plan(
+            terminal_extension_plan, replay_carry_in, meta
+        )
 
     evaluation_context = SequentialEvaluationContext(
         model_identity=identity_kwargs.get("model_spec_fingerprint", "") or "unset",
@@ -562,7 +789,7 @@ def _evaluate_sequential_manual_plan(
         or "unset",
         evaluation_semantics_identity="sequential_weekly",
         phasing_policy_identity="calendar_day_overlap_v1",
-        future_assumption_identity=future_context.fingerprint(),
+        future_assumption_identity=future_assumption_bundle.fingerprint(),
         cost_context_identity="default",
         counterfactual_policy_identity=counterfactual_policy.fingerprint() or "unset",
     )
@@ -591,6 +818,8 @@ def _evaluate_sequential_manual_plan(
         currency_context=currency_context,
         trace=trace,
         n_posterior_draws=n_posterior_draws,
+        named_event_fit_inputs=named_event_fit_inputs,
+        terminal_named_event_fit_inputs=terminal_named_event_fit_inputs,
         **identity_kwargs,
         **scenario_governance_kwargs,
     )
@@ -621,8 +850,8 @@ render_workspace_note(
     kind="derived",
 )
 st.info(
-    "**Two evaluation methods are available below: steady-state monthly "
-    "approximation, and sequential weekly.** The spend plan grid and optimiser "
+    "**Two evaluation methods are available below: sequential weekly (the "
+    "production default), and steady-state monthly (diagnostic/legacy).** The spend plan grid and optimiser "
     "tabs are shared; how a plan is calculated depends on the evaluation method "
     "you choose under Planning assumptions. Method-specific detail is shown "
     "once you choose one."
@@ -770,6 +999,9 @@ if model_run_id and spec_dict is not None:
                 else None
             ),
             official_preparation_evidence=get_state("official_preparation_result"),
+            calibration_fit_fingerprint=(
+                getattr(meta, "calibration_fit_fingerprint", "") or None
+            ),
         ),
         "posterior_fingerprint": fingerprint_posterior(params),
     }
@@ -938,6 +1170,35 @@ with SectionCard(
                     "not enough local data to estimate a market-specific curve confidently. Plan "
                     "against these with extra caution until more local evidence is available."
                 )
+
+if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
+    with st.expander("Candidate A Search capacity assumption", expanded=True):
+        st.caption(
+            "Candidate A requires an explicit future Paid Search delivery cap. "
+            "This is a capacity constraint, never realised spend or demand. "
+            "The same weekly cap is used by manual evaluation and optimisation; "
+            "without it, Search-mediated replay fails closed."
+        )
+        cap_by_market = dict(
+            get_state("candidate_a_future_paid_search_cap_by_market") or {}
+        )
+        cap_supplied = st.checkbox(
+            "Use an explicit future Paid Search cap for this market",
+            value=market in cap_by_market,
+            key="candidate_a_cap_supplied",
+        )
+        if cap_supplied:
+            cap_value = st.number_input(
+                "Future Paid Search delivery cap (capture units per week)",
+                min_value=0.0,
+                value=float(cap_by_market.get(market, 0.0)),
+                step=1.0,
+                key="candidate_a_future_cap_value",
+            )
+            cap_by_market[market] = float(cap_value)
+        else:
+            cap_by_market.pop(market, None)
+        set_state("candidate_a_future_paid_search_cap_by_market", cap_by_market)
 
 month_dates = pd.date_range(pd.Timestamp(start_month), periods=n_months, freq="MS")
 months = [d.strftime("%Y-%m") for d in month_dates]
@@ -1460,23 +1721,23 @@ cost_as_of_by_month = {
 }
 
 # WP5 (`Media-Mix-Lab: Coding LLM Next Steps Post PR262`): the manual-plan
-# evaluation method - steady-state (existing, default, every other tab
-# still uses it exclusively) or sequential weekly (new). Never silently
+# evaluation method - sequential weekly is the official production default;
+# steady-state remains an explicit diagnostic/legacy option. Never silently
 # switches: the radio's own return value is the single source of truth for
 # this rerun, exactly like governance_mode above. Sequential weekly only
 # evaluates the "Edited plan and calculated result" tab in this release -
-# the constrained/unconstrained optimiser tabs remain steady-state-only
-# (sequential optimisation is a separate, not-yet-implemented work
-# package).
+# the constrained/unconstrained optimiser tabs use the selected method.
+# Sequential optimisation is wired to the same governed weekly replay
+# kernel as the manual sequential evaluation path.
 st.markdown("#### Evaluation method")
 evaluation_method = st.radio(
     "Manual plan evaluation method",
-    ["steady_state_monthly", "sequential_weekly"],
+    ["sequential_weekly", "steady_state_monthly"],
     horizontal=True,
     key="scenario_evaluation_method",
     format_func=lambda value: {
-        "steady_state_monthly": "Steady-state monthly approximation",
         "sequential_weekly": "Sequential weekly",
+        "steady_state_monthly": "Steady-state monthly (diagnostic/legacy)",
     }[value],
     help=(
         "Sequential weekly simulates real week-by-week media carry-in from "
@@ -1486,13 +1747,14 @@ evaluation_method = st.radio(
         "adstock steady state and cannot answer starting carryover, "
         "month-by-month timing, short/long response horizons, or terminal "
         "carryover. Only the 'Edited plan and calculated result' tab below "
-        "offers sequential weekly in this release - the optimiser tabs "
-        "remain steady-state only."
+        "and both optimiser tabs use the selected method. Sequential "
+        "optimisation is point-estimate search through the same weekly kernel; "
+        "posterior uncertainty remains a separate evaluation."
     ),
 )
 if evaluation_method == "steady_state_monthly":
     st.info(
-        "**Steady-state monthly approximation** is selected.\n"
+        "**Steady-state monthly diagnostic/legacy mode** is selected.\n"
         "- Each month is approximated independently.\n"
         "- It uses the fitted model's steady-state response.\n"
         "- It does not reproduce starting carryover or sequential month-to-month "
@@ -1504,9 +1766,20 @@ else:
         "- It continues from this market's own historical fitted state.\n"
         "- It models real week-by-week media carryover.\n"
         "- It supports short/long response horizons and terminal carryover.\n"
-        "- Constrained and unconstrained optimisation below remain "
-        "steady-state-monthly only in this release - not available for "
-        "sequential weekly."
+        "- The constrained and unconstrained optimisers use the same "
+        "sequential weekly kernel when sequential mode is selected."
+    )
+
+_candidate_a_steady_state_blocked = (
+    meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE
+    and evaluation_method == "steady_state_monthly"
+)
+if _candidate_a_steady_state_blocked:
+    st.warning(
+        "Candidate A Search final-outcome replay is available through the "
+        "sequential weekly production path only. Steady-state monthly is "
+        "diagnostic/legacy for this fit and is blocked here so it cannot "
+        "produce a recommendation that omits the Search-mediated contribution."
     )
 
 # G2A.7a.7: build objective options from fitted outcome catalogue
@@ -1525,19 +1798,52 @@ if _has_fh_signups:
 if _has_fh_nbt:
     _objective_options.append("fh_net_billthrough")
 _objective_options.append("expected_value")  # Always available if value config exists
+# REQ-OPT-001 (Decision 16): the closed objective-kind vocabulary's three
+# value-based kinds beyond "maximise revenue" (which is already the
+# existing "expected_value" objective, per core.optimization_objective_
+# vocabulary's own resolution - not a new, separately-invented value
+# definition). Always offered - never silently hidden - even though
+# maximise_profit is always blocked and maximise_roi/minimise_cpa are
+# gated on every considered channel being cost-bearing; see
+# `_objective_vocab_resolution` below for the disclosed reason in each
+# case.
+_objective_options.extend(["maximise_profit", "maximise_roi", "minimise_cpa"])
 _objective_labels = {
     "fh_net_billthrough": "Maximise incremental Family History net bill-through",
     "fh_gsa": "Maximise Family History GSAs",
     "fh_signups": "Maximise Family History sign-ups",
     "dna_kits": "Maximise DNA kit sales",
     "expected_value": "Maximise LTV-weighted expected value",
+    "maximise_profit": "Maximise profit",
+    "maximise_roi": "Maximise ROI",
+    "minimise_cpa": "Minimise CPA",
 }
-objective = st.radio(
+objective_display_kind = st.radio(
     "Optimisation objective",
     _objective_options,
     horizontal=True,
     format_func=lambda x: _objective_labels[x],
     help=FIELD_HELP["ltv"],
+)
+# REQ-OPT-001 Requirement 1 (Decision 16): maximise_revenue/maximise_profit/
+# maximise_roi/minimise_cpa all resolve to the same governed value/return
+# definition as the existing "expected_value" objective (core.
+# optimization_objective_vocabulary.resolve_objective_kind resolves every
+# one of them via the real resolve_planning_objective(objective_kind=
+# "expected_value", ...)) - so every downstream expected_value computation
+# in this page (value mapping derivation, currency derivation, the value-
+# assumptions editor) already correctly drives all four once aliased here.
+# `objective_display_kind` (what the analyst actually asked for) is kept
+# separately for labelling and for the vocabulary's own gating check below -
+# never overwritten, so a blocked/gated choice is never silently relabelled
+# as something else.
+_OBJECTIVE_VOCAB_LEGACY_ALIAS = {
+    "maximise_profit": "expected_value",
+    "maximise_roi": "expected_value",
+    "minimise_cpa": "expected_value",
+}
+objective = _OBJECTIVE_VOCAB_LEGACY_ALIAS.get(
+    objective_display_kind, objective_display_kind
 )
 # G2A.7a.5: build value weights from outcome catalogue
 value_weights_by_outcome_id: dict[str, float] = {}
@@ -1608,6 +1914,60 @@ def _render_scenario_value_assumptions_editor(
     }
     stored = get_state("scenario_value_assumptions") or {}
 
+    prefill_suggestions: dict[tuple[str, str], object] = {}
+    valuation_payload = get_state("outcome_valuation_records") or []
+    if valuation_payload:
+        try:
+            valuation_records = [
+                WeeklyOutcomeValuationRecord.from_dict(item)
+                for item in valuation_payload
+            ]
+            observed_rows = []
+            for row_index, date_value in enumerate(frame["dates"]):
+                for outcome_index, outcome_id in enumerate(meta.outcome_ids):
+                    observed_rows.append(
+                        {
+                            "market": str(
+                                meta.markets[int(frame["market_idx"][row_index])]
+                            ),
+                            "week": str(pd.Timestamp(date_value).date()),
+                            "segment": outcome_labels.get(outcome_id, outcome_id),
+                            "outcome_id": outcome_id,
+                            "count": float(frame["Y"][row_index, outcome_index]),
+                        }
+                    )
+            value_rates, prefill_issues = derive_weekly_value_rates(
+                valuation_records, pd.DataFrame(observed_rows)
+            )
+            if prefill_issues:
+                st.warning(
+                    "Some historical value rates could not be derived and are not "
+                    "available as suggestions: " + "; ".join(prefill_issues[:3])
+                )
+            for outcome_id in fh_target_ids:
+                suggestion = suggest_value_prefill(
+                    value_rates,
+                    valuation_kind=VALUATION_KIND_FH_LTR,
+                    market=market,
+                    segment=outcome_labels.get(outcome_id, outcome_id),
+                )
+                if suggestion is not None:
+                    prefill_suggestions[("fh", outcome_id)] = suggestion
+            for outcome_id in dna_target_ids:
+                suggestion = suggest_value_prefill(
+                    value_rates,
+                    valuation_kind=VALUATION_KIND_DNA_REVENUE,
+                    market=market,
+                    segment=outcome_labels.get(outcome_id, outcome_id),
+                )
+                if suggestion is not None:
+                    prefill_suggestions[("dna", outcome_id)] = suggestion
+        except (TypeError, ValueError, KeyError) as exc:
+            st.warning(
+                "Historical value prefill is unavailable because the governed "
+                f"valuation catalogue is invalid: {exc}"
+            )
+
     with st.expander("Economic value assumptions (forward, for this scenario)"):
         st.caption(
             "Explicit future value assumptions for this scenario only - "
@@ -1615,6 +1975,12 @@ def _render_scenario_value_assumptions_editor(
             "data. Distinct from the Results page's historical ROI, "
             "which reports what already happened."
         )
+        if not valuation_payload:
+            st.info(
+                "No governed historical valuation catalogue is loaded for this "
+                "project. Enter an explicit forward assumption; the app will not "
+                "reuse historical realised values automatically."
+            )
         currency = st.text_input(
             "Currency (ISO-3)",
             value=stored.get("currency") or default_currency or "",
@@ -1629,11 +1995,25 @@ def _render_scenario_value_assumptions_editor(
                 default_value = (stored.get("fh_value_by_outcome_id") or {}).get(
                     oid, 0.0
                 )
+                widget_key = f"sva_fh_{oid}"
+                suggestion = prefill_suggestions.get(("fh", oid))
+                if suggestion is not None:
+                    st.caption(
+                        f"Governed suggestion: {suggestion.suggested_value:.2f} "
+                        f"{suggestion.currency} (week {suggestion.source_week}; "
+                        "most recent observed rate). This is not applied automatically."
+                    )
+                    if st.button(
+                        "Use governed suggestion",
+                        key=f"sva_prefill_fh_{oid}",
+                    ):
+                        st.session_state[widget_key] = float(suggestion.suggested_value)
+                        st.rerun()
                 fh_values[oid] = st.number_input(
                     f"{outcome_labels.get(oid, oid)} ({oid})",
                     min_value=0.0,
-                    value=float(default_value),
-                    key=f"sva_fh_{oid}",
+                    value=float(st.session_state.get(widget_key, default_value)),
+                    key=widget_key,
                 )
 
         dna_mode = DNA_VALUE_MODE_OVERALL
@@ -1655,6 +2035,10 @@ def _render_scenario_value_assumptions_editor(
                 else DNA_VALUE_MODE_SEGMENT_SPECIFIC
             )
             if dna_mode == DNA_VALUE_MODE_OVERALL:
+                st.caption(
+                    "Overall DNA value has no single-cell historical prefill. "
+                    "Enter an explicit governed assumption or choose segment-specific values."
+                )
                 stored_dna = stored.get("dna_value_by_outcome_id") or {}
                 default_overall = next(iter(stored_dna.values()), 0.0)
                 dna_overall_value = st.number_input(
@@ -1668,11 +2052,27 @@ def _render_scenario_value_assumptions_editor(
                     default_value = (stored.get("dna_value_by_outcome_id") or {}).get(
                         oid, 0.0
                     )
+                    widget_key = f"sva_dna_{oid}"
+                    suggestion = prefill_suggestions.get(("dna", oid))
+                    if suggestion is not None:
+                        st.caption(
+                            f"Governed suggestion: {suggestion.suggested_value:.2f} "
+                            f"{suggestion.currency} (week {suggestion.source_week}; "
+                            "most recent observed rate). This is not applied automatically."
+                        )
+                        if st.button(
+                            "Use governed suggestion",
+                            key=f"sva_prefill_dna_{oid}",
+                        ):
+                            st.session_state[widget_key] = float(
+                                suggestion.suggested_value
+                            )
+                            st.rerun()
                     dna_values[oid] = st.number_input(
                         f"{outcome_labels.get(oid, oid)} ({oid})",
                         min_value=0.0,
-                        value=float(default_value),
-                        key=f"sva_dna_{oid}",
+                        value=float(st.session_state.get(widget_key, default_value)),
+                        key=widget_key,
                     )
 
         if not currency or len(currency) != 3:
@@ -1918,6 +2318,30 @@ try:
 except (ValueError, PlanningGovernanceError) as e:
     _objective_error = (_objective_error or "") + f" Optimisation objective: {e}"
 
+# REQ-OPT-001 Requirement 1 (Decision 16): validate the actual vocabulary
+# kind the analyst selected - this is the real gate, not a display sitting
+# beside the optimiser unused. maximise_profit is unconditionally blocked
+# (a repository-wide audit found no governed profit/margin/COGS definition
+# anywhere); maximise_roi/minimise_cpa require every channel this
+# optimisation considers to be cost-bearing (Decision 7 - SEO exclusion).
+# Blocked/gated kinds are never silently hidden from the selector above -
+# they stay selectable, and the reason is disclosed here and used below to
+# block the Run buttons.
+_objective_vocab_error: str | None = None
+if objective_display_kind in ("maximise_profit", "maximise_roi", "minimise_cpa"):
+    _vocab_resolution = resolve_objective_kind(
+        objective_display_kind,
+        meta=meta,
+        operation="optimisation",
+        ltv=ltv,
+        value_currency=value_currency,
+        value_weights_by_outcome_id=value_weights_by_outcome_id or None,
+        considered_channels=meta.channels,
+        activities=activity_definitions or None,
+    )
+    if not _vocab_resolution.ready:
+        _objective_vocab_error = "; ".join(_vocab_resolution.reasons)
+
 st.caption(
     "Each objective states exactly what it maximises - Family History GSAs, Family History sign-ups "
     "and DNA kit sales are never silently combined into one generic 'volume' number. "
@@ -1926,7 +2350,13 @@ st.caption(
 )
 if _objective_error:
     st.error(f"Objective configuration: {_objective_error}")
-elif objective == "expected_value":
+if _objective_vocab_error:
+    render_status_badge("unavailable", label=_objective_labels[objective_display_kind])
+    st.error(
+        f"'{_objective_labels[objective_display_kind]}' is not available for this "
+        f"optimisation: {_objective_vocab_error}"
+    )
+if not _objective_error and objective == "expected_value":
     # Display actual currency when available
     if value_currency:
         st.caption(f"Value currency: **{value_currency}**")
@@ -1954,6 +2384,13 @@ tab_manual, tab_constrained, tab_unconstrained = st.tabs(
 
 
 def _render_steady_state_manual_tab():
+    if _candidate_a_steady_state_blocked:
+        st.error(
+            "Cannot evaluate a Candidate A plan in steady-state monthly mode. "
+            "Select Sequential weekly so the explicit future Search cap and "
+            "full final-outcome replay are used."
+        )
+        return
     st.caption("Evaluation method: **Steady-state monthly approximation**.")
     st.markdown("Predicted outcomes for the spend plan as edited above.")
     # PR 82C: routed through ScenarioService.evaluate_manual() with a typed
@@ -2119,6 +2556,13 @@ def _render_steady_state_manual_tab():
             governance_dependencies=gov_deps,
         )
         manual_scenario["predicted"] = predicted
+        # REQ-OPT-001 (Decision 16): disclose exactly which closed
+        # objective-kind vocabulary entry the analyst selected - never
+        # buried behind the aliased legacy `objective` string alone (e.g.
+        # "minimise_cpa" and "maximise_revenue" both alias to the legacy
+        # "expected_value" objective, but are materially different analyst
+        # intents worth persisting distinctly).
+        manual_scenario["objective_kind_vocabulary_selection"] = objective_display_kind
         scenarios.append(manual_scenario)
         set_state("scenarios", scenarios)
         st.success(f"Saved scenario '{scenario_name}'.")
@@ -2290,15 +2734,83 @@ def _render_sequential_manual_tab():
         )
         all_acknowledged = all_acknowledged and hold_last_ack
 
-    st.warning(
-        "**No promotion schedule can be entered for sequential weekly in this UI "
-        "yet.** Choose explicitly rather than relying on an unstated default:"
-    )
-    no_promotion_ack = st.checkbox(
-        "I explicitly confirm no promotion is planned for this plan window.",
-        key=f"{plan_key}_seq_no_promotion_ack",
-    )
-    all_acknowledged = all_acknowledged and no_promotion_ack
+    # REQ-PLANACT-001 (Decision 14): structured promotion-period input,
+    # materialised into build_future_context's promo_future above via the
+    # real, unmodified materialize_promo_future - the analyst declares
+    # promotions once (start/end week, intensity), not by hand-constructing
+    # a per-week value. When none are declared, the previous unconditional
+    # "confirm no promotion" gate is preserved exactly (same checkbox
+    # label/key, so no analyst-facing regression for the common case).
+    if "promotion_periods" not in st.session_state:
+        st.session_state["promotion_periods"] = []
+
+    st.markdown("#### Promotion periods (sequential weekly only)")
+    with st.expander("+ Add a promotion period"):
+        promo_outcome = st.selectbox(
+            "Outcome", meta.outcome_ids, key=f"{plan_key}_promo_outcome"
+        )
+        promo_start = st.date_input(
+            "Start week",
+            value=preview_start_week.date(),
+            key=f"{plan_key}_promo_start",
+        )
+        promo_end = st.date_input(
+            "End week",
+            value=preview_start_week.date(),
+            key=f"{plan_key}_promo_end",
+        )
+        promo_intensity = st.number_input(
+            "Intensity (same unit/scale as the historical promo column this "
+            "outcome was fit with)",
+            value=0.0,
+            key=f"{plan_key}_promo_intensity",
+        )
+        promo_label = st.text_input(
+            "Label (optional)", value="", key=f"{plan_key}_promo_label"
+        )
+        if st.button("Add promotion period", key=f"{plan_key}_add_promo"):
+            try:
+                period = PromotionPeriod(
+                    promotion_id=f"promo-{len(st.session_state['promotion_periods'])}-{promo_outcome}",
+                    outcome_id=promo_outcome,
+                    start_week=promo_start.strftime("%Y-%m-%d"),
+                    end_week=promo_end.strftime("%Y-%m-%d"),
+                    intensity=promo_intensity,
+                    label=promo_label,
+                )
+            except ValueError as exc:
+                st.error(f"Cannot add promotion period: {exc}")
+            else:
+                st.session_state["promotion_periods"].append(period)
+                st.rerun()
+
+    for i, promo in enumerate(st.session_state["promotion_periods"]):
+        p1, p2 = st.columns([5, 1])
+        p1.markdown(
+            f"**{i + 1}.** {promo.label or promo.promotion_id} - outcome="
+            f"{promo.outcome_id}, {promo.start_week} to {promo.end_week}, "
+            f"intensity={promo.intensity}"
+        )
+        if p2.button("Remove", key=f"{plan_key}_rm_promo_{i}"):
+            st.session_state["promotion_periods"].pop(i)
+            st.rerun()
+
+    if st.session_state["promotion_periods"]:
+        st.caption(
+            f"{len(st.session_state['promotion_periods'])} promotion period(s) "
+            "declared above will be used for this plan window - an explicit "
+            "input, not an unstated default."
+        )
+    else:
+        st.warning(
+            "**No promotion schedule can be entered for sequential weekly in this UI "
+            "yet.** Choose explicitly rather than relying on an unstated default:"
+        )
+        no_promotion_ack = st.checkbox(
+            "I explicitly confirm no promotion is planned for this plan window.",
+            key=f"{plan_key}_seq_no_promotion_ack",
+        )
+        all_acknowledged = all_acknowledged and no_promotion_ack
 
     if not all_acknowledged:
         st.info(
@@ -2348,6 +2860,7 @@ def _render_sequential_manual_tab():
                 terminal_future_context,
             ) = _evaluate_sequential_manual_plan(
                 market=market,
+                model_type=model_type,
                 meta=meta,
                 params=params,
                 frame=frame,
@@ -2364,6 +2877,7 @@ def _render_sequential_manual_tab():
                 currency_context=currency_context,
                 trace=trace,
                 n_posterior_draws=seq_n_posterior_draws,
+                promotion_periods=st.session_state["promotion_periods"],
             )
     except ValueError as exc:
         st.error(f"Cannot build the sequential weekly plan: {exc}")
@@ -2519,8 +3033,11 @@ with tab_manual:
 
 with tab_constrained:
     st.caption(
-        "Evaluation method: **steady-state monthly** - this optimiser mode does "
-        "not support sequential weekly."
+        "Evaluation method: **sequential weekly** - the optimiser uses the "
+        "exact carry-in-aware weekly replay kernel."
+        if evaluation_method == "sequential_weekly"
+        else "Evaluation method: **steady-state monthly** - each month is "
+        "evaluated at the fitted steady-state response."
     )
     st.markdown("#### Constraints (distinct from the assumptions above)")
     st.markdown(
@@ -2603,46 +3120,309 @@ with tab_constrained:
             st.session_state["scenario_constraints"].pop(i)
             st.rerun()
 
+    st.markdown("#### Extended constraints (Decision 16 governed vocabulary)")
+    st.caption(
+        "The extended kinds Decision 16 adds beyond the constraints above - maximum spend, "
+        "a spend range, an absolute change from the reference plan, zero spend/no available "
+        "demand, and a non-monetary required-minimum-activity floor. These reach the same "
+        "optimiser bounds the constraints above do (`core.optimization_constraint_vocabulary`), "
+        "never a separate/duplicate rule set."
+    )
+    if "governed_scenario_constraints" not in st.session_state:
+        st.session_state["governed_scenario_constraints"] = []
+
+    with st.expander("+ Add an extended constraint"):
+        g_kind = st.selectbox(
+            "Constraint type",
+            [
+                "maximum_spend",
+                "spend_range",
+                "absolute_change_from_reference",
+                "zero_spend",
+                "unavailable",
+                "required_minimum_activity",
+            ],
+            format_func=lambda k: CONSTRAINT_KIND_LABELS.get(k, k),
+            key="gc_kind",
+        )
+        st.caption(
+            {
+                "maximum_spend": "An upper bound on spend, distinct from a locked/fixed value.",
+                "spend_range": "Both a minimum and a maximum bound in one constraint.",
+                "absolute_change_from_reference": "A +/- absolute-currency band around the reference plan's spend, distinct from a percentage band.",
+                "zero_spend": "An analyst's explicit choice to spend nothing - distinct from 'unavailable'.",
+                "unavailable": "No available demand/activity this period - a fact, distinct from an analyst's zero-spend choice.",
+                "required_minimum_activity": "A non-monetary activity floor (e.g. units, impressions) - never treated as a spend bound unless a governed unit-to-spend rate is supplied below.",
+            }.get(g_kind, "")
+        )
+        g_ch = st.selectbox(
+            "Channel",
+            meta.channels,
+            key="gc_channel",
+            format_func=lambda c: model_input_display_label(
+                c, activity_definitions=activity_definitions, market=market
+            ),
+        )
+        g_mo = st.selectbox("Month", months, key="gc_month")
+        g_value = None
+        g_min_value = None
+        g_max_value = None
+        g_absolute_delta = None
+        g_unit_to_spend_rate = None
+        if g_kind == "maximum_spend":
+            g_value = st.number_input(
+                "Maximum spend", min_value=0.0, value=0.0, key="gc_value"
+            )
+        elif g_kind == "spend_range":
+            g_min_value = st.number_input(
+                "Minimum spend", min_value=0.0, value=0.0, key="gc_min_value"
+            )
+            g_max_value = st.number_input(
+                "Maximum spend", min_value=0.0, value=0.0, key="gc_max_value"
+            )
+        elif g_kind == "absolute_change_from_reference":
+            g_absolute_delta = st.number_input(
+                "Absolute allowed change (+/-)",
+                min_value=0.0,
+                value=0.0,
+                key="gc_abs_delta",
+            )
+        elif g_kind == "required_minimum_activity":
+            g_value = st.number_input(
+                "Required minimum activity (units)",
+                min_value=0.0,
+                value=0.0,
+                key="gc_activity_value",
+            )
+            g_unit_to_spend_rate = st.number_input(
+                "Unit-to-spend rate (0 = advisory-only, never invented)",
+                min_value=0.0,
+                value=0.0,
+                key="gc_unit_rate",
+                help="A governed currency-per-unit rate, if one exists - left at 0, this "
+                "floor is disclosed but never silently applied as a spend bound.",
+            )
+        if st.button("Add extended constraint"):
+            try:
+                governed_constraint = GovernedSpendConstraint(
+                    kind=g_kind,
+                    channel=g_ch,
+                    month=g_mo,
+                    value=g_value if g_value else None,
+                    min_value=g_min_value if g_kind == "spend_range" else None,
+                    max_value=g_max_value if g_kind == "spend_range" else None,
+                    absolute_delta=g_absolute_delta if g_absolute_delta else None,
+                    unit_to_spend_rate=(
+                        g_unit_to_spend_rate if g_unit_to_spend_rate else None
+                    ),
+                    label=f"{g_kind} {g_ch} {g_mo}",
+                )
+            except ValueError as exc:
+                st.error(f"Cannot add constraint: {exc}")
+            else:
+                st.session_state["governed_scenario_constraints"].append(
+                    governed_constraint
+                )
+                st.rerun()
+
+    for i, gc in enumerate(st.session_state["governed_scenario_constraints"]):
+        gc1, gc2 = st.columns([5, 1])
+        gc1.markdown(
+            f"**{i + 1}.** {CONSTRAINT_KIND_LABELS.get(gc.kind, gc.kind)} - "
+            f"channel={model_input_display_label(gc.channel, activity_definitions=activity_definitions, market=market) if gc.channel else 'any'}"
+            f", month={gc.month or 'any'}, value={gc.value}, "
+            f"range=[{gc.min_value}, {gc.max_value}], absolute delta={gc.absolute_delta}"
+        )
+        if gc2.button("Remove", key=f"rm_governed_constraint_{i}"):
+            st.session_state["governed_scenario_constraints"].pop(i)
+            st.rerun()
+
+    st.markdown("#### Capacity limits (Decision 18)")
+    st.caption(
+        "Real-world capacity/cap limits (e.g. a Search spend ceiling, or a channel "
+        "toggled unavailable this month) - reaches the same optimiser bounds the "
+        "constraints above do (`core.capacity_plan_application`), composable with "
+        "them in the same run, never a separate/duplicate rule set. Only the two "
+        "kinds with no unit-conversion input required (spend limit, availability "
+        "toggle) are entered here; a non-money-denominated limit (delivery "
+        "exposure, fixed commitment, bounded range) requires a governed unit-to-"
+        "spend rate this UI does not yet collect."
+    )
+    if "capacity_limits" not in st.session_state:
+        st.session_state["capacity_limits"] = []
+
+    with st.expander("+ Add a capacity limit"):
+        cap_kind = st.selectbox(
+            "Limit type",
+            ["spend_limit", "availability_toggle"],
+            format_func=lambda k: {
+                "spend_limit": "Spend limit",
+                "availability_toggle": "Availability toggle",
+            }.get(k, k),
+            key="cap_kind",
+        )
+        cap_ch = st.selectbox(
+            "Channel",
+            meta.channels,
+            key="cap_channel",
+            format_func=lambda c: model_input_display_label(
+                c, activity_definitions=activity_definitions, market=market
+            ),
+        )
+        cap_mo = st.selectbox("Month", months, key="cap_month")
+        if cap_kind == "spend_limit":
+            cap_value = st.number_input(
+                "Spend limit", min_value=0.0, value=0.0, key="cap_value"
+            )
+        else:
+            cap_available = st.checkbox(
+                "Available this month (unchecked = toggled off, forced to zero spend)",
+                value=True,
+                key="cap_available",
+            )
+            cap_value = 1.0 if cap_available else 0.0
+        cap_owner = st.text_input(
+            "Owner (optional, disclosure only)", value="", key="cap_owner"
+        )
+        if st.button("Add capacity limit"):
+            try:
+                limit = CapacityLimitDefinition(
+                    limit_id=f"cap-{len(st.session_state['capacity_limits'])}-{cap_ch}-{cap_mo}",
+                    limit_version=1,
+                    kind=cap_kind,
+                    unit="GBP" if cap_kind == "spend_limit" else "boolean",
+                    applies_to=cap_ch,
+                    value_by_period={cap_mo: cap_value},
+                    owner=cap_owner,
+                )
+            except ValueError as exc:
+                st.error(f"Cannot add capacity limit: {exc}")
+            else:
+                st.session_state["capacity_limits"].append(limit)
+                st.rerun()
+
+    for i, cl in enumerate(st.session_state["capacity_limits"]):
+        cl1, cl2 = st.columns([5, 1])
+        cl1.markdown(
+            f"**{i + 1}.** {cl.kind} - channel="
+            f"{model_input_display_label(cl.applies_to, activity_definitions=activity_definitions, market=market)}"
+            f", values={dict(cl.value_by_period)}"
+        )
+        if cl2.button("Remove", key=f"rm_capacity_limit_{i}"):
+            st.session_state["capacity_limits"].pop(i)
+            st.rerun()
+
     if st.button("Run constrained optimisation", type="primary"):
-        if objective == "expected_value" and value_mapping is None:
+        if _objective_vocab_error:
+            st.error(
+                f"Cannot run optimisation: '{_objective_labels[objective_display_kind]}' "
+                f"is not available: {_objective_vocab_error}"
+            )
+            result = None
+        elif _candidate_a_steady_state_blocked:
+            st.error(
+                "Candidate A optimisation requires the sequential weekly "
+                "production path; steady-state monthly is blocked because it "
+                "cannot replay the Search-mediated final outcome."
+            )
+            result = None
+        elif objective == "expected_value" and value_mapping is None:
             st.error(
                 "Cannot run optimisation: 'Maximise expected value' needs an outcome value mapping - a value weight for every target outcome and a single governed currency across them (set on the Structure page)."
             )
             result = None
+        elif (
+            st.session_state["scenario_constraints"]
+            and st.session_state["governed_scenario_constraints"]
+        ):
+            # REQ-OPT-001 Requirement 2 (Decision 16): the two constraint
+            # vocabularies are never combined in one optimisation run
+            # (core.optimization_constraint_vocabulary's own approved
+            # design - governed_constraints replaces, never supplements,
+            # the legacy constraints for bounds-building). Block with a
+            # clear reason rather than silently dropping one list.
+            st.error(
+                "Cannot run optimisation: both the constraints above and the extended "
+                "(Decision 16) constraints below are populated. Remove all constraints from "
+                "one list before running - the two vocabularies are never combined in a "
+                "single optimisation run."
+            )
+            result = None
         else:
             with st.spinner("Optimising..."):
+                sequential_context = None
+                if evaluation_method == "sequential_weekly":
+                    try:
+                        sequential_context = _build_sequential_optimisation_context(
+                            market=market,
+                            model_type=model_type,
+                            meta=meta,
+                            params=params,
+                            frame=frame,
+                            spec=spec,
+                            spend_plan=spend_plan,
+                            activity_definitions=activity_definitions,
+                            counterfactual_policy=counterfactual_policy,
+                            governed_cost_registry=governed_cost_registry,
+                            promotion_periods=st.session_state["promotion_periods"],
+                        )
+                    except ValueError as exc:
+                        st.error(
+                            f"Cannot build the sequential optimisation plan: {exc}"
+                        )
                 # PR 82C: routed through ScenarioService.optimise() with a
                 # typed OptimisationInput - the page no longer calls
                 # optimize_scenario() directly.
-                opt_service_result = ScenarioService().optimise(
-                    OptimisationInput(
-                        current_spend_plan=spend_plan,
-                        months=months,
-                        channels=meta.channels,
-                        market=market,
-                        meta=meta,
-                        params=params,
-                        reference_context_by_month=reference_context_by_month,
-                        ltv=ltv,
-                        objective=objective if planning_objective is None else None,
-                        planning_objective=optimisation_objective,
-                        constraints=st.session_state["scenario_constraints"],
-                        artefact_kind="constrained_optimisation",
-                        conserve_total_budget=True,
-                        activity_definitions=activity_definitions or None,
-                        counterfactual_policy=counterfactual_policy,
-                        cost_mapping_registry=governed_cost_registry,
-                        cost_context_id="default",
-                        cost_as_of_by_month=cost_as_of_by_month,
-                        posterior_trace=trace,
-                        posterior_evaluation_draws=50,
-                        value_mapping=value_mapping,
-                        currency_context=currency_context,
-                        **identity_kwargs,
-                        **scenario_governance_kwargs,
+                opt_service_result = (
+                    None
+                    if evaluation_method == "sequential_weekly"
+                    and sequential_context is None
+                    else ScenarioService().optimise(
+                        OptimisationInput(
+                            current_spend_plan=spend_plan,
+                            months=months,
+                            channels=meta.channels,
+                            market=market,
+                            meta=meta,
+                            params=params,
+                            reference_context_by_month=reference_context_by_month,
+                            ltv=ltv,
+                            objective=objective if planning_objective is None else None,
+                            planning_objective=optimisation_objective,
+                            constraints=st.session_state["scenario_constraints"],
+                            governed_constraints=(
+                                st.session_state["governed_scenario_constraints"]
+                                or None
+                            ),
+                            capacity_limits=(
+                                st.session_state["capacity_limits"] or None
+                            ),
+                            artefact_kind="constrained_optimisation",
+                            conserve_total_budget=True,
+                            activity_definitions=activity_definitions or None,
+                            counterfactual_policy=counterfactual_policy,
+                            cost_mapping_registry=governed_cost_registry,
+                            cost_context_id="default",
+                            cost_as_of_by_month=cost_as_of_by_month,
+                            posterior_trace=(
+                                trace
+                                if sequential_context is None
+                                and evaluation_method != "sequential_weekly"
+                                else None
+                            ),
+                            posterior_evaluation_draws=50,
+                            evaluation_method=evaluation_method,
+                            sequential_context=sequential_context,
+                            value_mapping=value_mapping,
+                            currency_context=currency_context,
+                            **identity_kwargs,
+                            **scenario_governance_kwargs,
+                        )
                     )
                 )
-                if opt_service_result.errors:
+                if opt_service_result is None:
+                    result = None
+                elif opt_service_result.errors:
                     for _err in opt_service_result.errors:
                         st.error(f"Cannot run optimisation: {_err}")
                     result = None
@@ -2680,7 +3460,7 @@ with tab_constrained:
             )
         c1, c2 = st.columns(2)
         c1.metric(
-            f"Current total ({_objective_labels[objective]})",
+            f"Current total ({_objective_labels[objective_display_kind]})",
             f"{result['current_objective_value']:,.0f}",
         )
         c2.metric(
@@ -2725,6 +3505,35 @@ with tab_constrained:
             technical_title="Technical details · optimised evaluator output",
         )
 
+        # REQ-OPT-001 Requirement 4 (Decision 16): disclose which extended
+        # governed constraints actually bound at this solution - never
+        # buried in raw session state.
+        _gc_disclosures = result.get("governed_constraint_disclosures") or []
+        if _gc_disclosures:
+            st.markdown("**Extended constraints: disposition and binding status**")
+            for _d in _gc_disclosures:
+                _bound_note = (
+                    "**binding at this solution**"
+                    if _d.get("binding")
+                    else "not binding at this solution"
+                )
+                st.caption(
+                    f"{CONSTRAINT_KIND_LABELS.get(_d['kind'], _d['kind'])} "
+                    f"({_d.get('channel') or 'any'}, {', '.join(_d.get('months') or []) or 'any'}) - "
+                    f"{_d['disposition']}, {_bound_note}. {_d['detail']}"
+                )
+
+        # REQ-CAP-001/REQ-OPT-001 Requirement 4 (Decision 18): disclose
+        # every capacity limit's disposition at this solution.
+        _cap_disclosures = result.get("capacity_disclosures") or []
+        if _cap_disclosures:
+            st.markdown("**Capacity limits: disposition**")
+            for _cd in _cap_disclosures:
+                st.caption(
+                    f"{_cd['kind']} ({_cd.get('channel') or 'any'}, {_cd.get('period') or 'any'}) - "
+                    f"{_cd['disposition']}. {_cd['detail']}"
+                )
+
         name = st.text_input(
             "Scenario name *",
             value=f"constrained-{market}-{months[0]}",
@@ -2754,14 +3563,55 @@ with tab_constrained:
                 governance_dependencies=gov_deps,
             )
             s["predicted"] = result["predicted"]
+            # Optimiser results retain the ordinary scenario schema because
+            # their persisted output is the monthly comparison table.  Keep
+            # the exact evaluation engine as an explicit disclosure without
+            # routing this shape into the sequential-manual schema, which
+            # requires the full weekly evaluation payload.
+            s["evaluation_method"] = result.get(
+                "evaluation_method", "steady_state_monthly"
+            )
+            s["sequential_optimisation_strategy"] = result.get(
+                "sequential_optimisation_strategy"
+            )
+            s["sequential_optimisation_objective_horizon"] = result.get(
+                "sequential_optimisation_objective_horizon"
+            )
+            # REQ-OPT-001 (Decision 16): disclose exactly which closed
+            # objective-kind vocabulary entry the analyst selected, plus
+            # every governed constraint's disposition/binding status at the
+            # solution actually returned - never buried in raw session
+            # state.
+            s["objective_kind_vocabulary_selection"] = objective_display_kind
+            s["governed_constraint_disclosures"] = result[
+                "governed_constraint_disclosures"
+            ]
+            s["capacity_disclosures"] = result["capacity_disclosures"]
+            # Production-integration follow-up (persistence item): the two
+            # sibling capacity fields `optimize_scenario` already returns
+            # alongside `capacity_disclosures` (core.optimization, same
+            # `_capacity_application_result` block) were not yet being
+            # saved onto the scenario - an analyst reopening a saved
+            # scenario could see *that* a capacity limit disclosed as
+            # binding/non-binding, but not the full binding-report detail
+            # or which version of core.capacity_plan_application produced
+            # it. Both are already plain JSON-serialisable values in
+            # `result` (list-of-dicts / str-or-None) - no new computation.
+            s["capacity_binding_reports"] = result["capacity_binding_reports"]
+            s["capacity_plan_application_version"] = result[
+                "capacity_plan_application_version"
+            ]
             scenarios.append(s)
             set_state("scenarios", scenarios)
             st.success(f"Saved scenario '{name}'.")
 
 with tab_unconstrained:
     st.caption(
-        "Evaluation method: **steady-state monthly** - this optimiser mode does "
-        "not support sequential weekly."
+        "Evaluation method: **sequential weekly** - the benchmark uses the "
+        "exact carry-in-aware weekly replay kernel."
+        if evaluation_method == "sequential_weekly"
+        else "Evaluation method: **steady-state monthly** - each month is "
+        "evaluated at the fitted steady-state response."
     )
     st.warning(
         "**Theoretical optimum, not a recommended plan.** This reallocates the same total budget "
@@ -2769,45 +3619,92 @@ with tab_unconstrained:
         "comparison only."
     )
     if st.button("Run unconstrained benchmark", type="primary"):
-        if objective == "expected_value" and value_mapping is None:
+        if _objective_vocab_error:
+            st.error(
+                f"Cannot run optimisation: '{_objective_labels[objective_display_kind]}' "
+                f"is not available: {_objective_vocab_error}"
+            )
+            result = None
+        elif _candidate_a_steady_state_blocked:
+            st.error(
+                "Candidate A optimisation requires the sequential weekly "
+                "production path; steady-state monthly is blocked because it "
+                "cannot replay the Search-mediated final outcome."
+            )
+            result = None
+        elif objective == "expected_value" and value_mapping is None:
             st.error(
                 "Cannot run optimisation: 'Maximise expected value' needs an outcome value mapping - a value weight for every target outcome and a single governed currency across them (set on the Structure page)."
             )
             result = None
         else:
             with st.spinner("Optimising..."):
+                sequential_context = None
+                if evaluation_method == "sequential_weekly":
+                    try:
+                        sequential_context = _build_sequential_optimisation_context(
+                            market=market,
+                            model_type=model_type,
+                            meta=meta,
+                            params=params,
+                            frame=frame,
+                            spec=spec,
+                            spend_plan=spend_plan,
+                            activity_definitions=activity_definitions,
+                            counterfactual_policy=counterfactual_policy,
+                            governed_cost_registry=governed_cost_registry,
+                            promotion_periods=st.session_state["promotion_periods"],
+                        )
+                    except ValueError as exc:
+                        st.error(
+                            f"Cannot build the sequential optimisation plan: {exc}"
+                        )
                 # PR 82C: routed through ScenarioService.optimise() with a
                 # typed OptimisationInput - the page no longer calls
                 # optimize_scenario() directly.
-                opt_service_result = ScenarioService().optimise(
-                    OptimisationInput(
-                        current_spend_plan=spend_plan,
-                        months=months,
-                        channels=meta.channels,
-                        market=market,
-                        meta=meta,
-                        params=params,
-                        reference_context_by_month=reference_context_by_month,
-                        ltv=ltv,
-                        objective=objective if planning_objective is None else None,
-                        planning_objective=optimisation_objective,
-                        constraints=[],
-                        artefact_kind="unconstrained_benchmark",
-                        conserve_total_budget=True,
-                        activity_definitions=activity_definitions or None,
-                        counterfactual_policy=counterfactual_policy,
-                        cost_mapping_registry=governed_cost_registry,
-                        cost_context_id="default",
-                        cost_as_of_by_month=cost_as_of_by_month,
-                        posterior_trace=trace,
-                        posterior_evaluation_draws=50,
-                        value_mapping=value_mapping,
-                        currency_context=currency_context,
-                        **identity_kwargs,
-                        **scenario_governance_kwargs,
+                opt_service_result = (
+                    None
+                    if evaluation_method == "sequential_weekly"
+                    and sequential_context is None
+                    else ScenarioService().optimise(
+                        OptimisationInput(
+                            current_spend_plan=spend_plan,
+                            months=months,
+                            channels=meta.channels,
+                            market=market,
+                            meta=meta,
+                            params=params,
+                            reference_context_by_month=reference_context_by_month,
+                            ltv=ltv,
+                            objective=objective if planning_objective is None else None,
+                            planning_objective=optimisation_objective,
+                            constraints=[],
+                            artefact_kind="unconstrained_benchmark",
+                            conserve_total_budget=True,
+                            activity_definitions=activity_definitions or None,
+                            counterfactual_policy=counterfactual_policy,
+                            cost_mapping_registry=governed_cost_registry,
+                            cost_context_id="default",
+                            cost_as_of_by_month=cost_as_of_by_month,
+                            posterior_trace=(
+                                trace
+                                if sequential_context is None
+                                and evaluation_method != "sequential_weekly"
+                                else None
+                            ),
+                            posterior_evaluation_draws=50,
+                            evaluation_method=evaluation_method,
+                            sequential_context=sequential_context,
+                            value_mapping=value_mapping,
+                            currency_context=currency_context,
+                            **identity_kwargs,
+                            **scenario_governance_kwargs,
+                        )
                     )
                 )
-                if opt_service_result.errors:
+                if opt_service_result is None:
+                    result = None
+                elif opt_service_result.errors:
                     for _err in opt_service_result.errors:
                         st.error(f"Cannot run optimisation: {_err}")
                     result = None
@@ -2832,7 +3729,7 @@ with tab_unconstrained:
             st.caption("**Planning use: Official planning**")
         c1, c2 = st.columns(2)
         c1.metric(
-            f"Current total ({_objective_labels[objective]})",
+            f"Current total ({_objective_labels[objective_display_kind]})",
             f"{result['current_objective_value']:,.0f}",
         )
         c2.metric(

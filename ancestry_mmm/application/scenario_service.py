@@ -50,6 +50,7 @@ from ancestry_mmm.core.sequential_scenario_evaluation import (
     SequentialScenarioEvaluationResult,
 )
 from ancestry_mmm.core.sequential_simulation import WeeklyPlan
+from ancestry_mmm.core.named_event_fit_inputs import NamedEventFitInputs
 from ancestry_mmm.core.validation_policy import ApprovalReadiness, ThresholdPolicy
 from ancestry_mmm.core.outcome_approval import OutcomeApproval
 
@@ -142,6 +143,8 @@ class SequentialManualScenarioInput:
     trace: Optional[Any] = None
     n_posterior_draws: int = 0
     posterior_seed: int = 42
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None
+    terminal_named_event_fit_inputs: Optional[NamedEventFitInputs] = None
 
 
 @dataclass
@@ -188,6 +191,28 @@ class OptimisationInput:
     currency_context: Optional[CurrencyContext] = None
     approval_readiness: Optional[ApprovalReadiness] = None
     current_policy: Optional[ThresholdPolicy] = None
+    # REQ-OPT-001 Requirement 2 (Decision 16): the extended governed
+    # constraint-kind vocabulary (`core.optimization_constraint_vocabulary.
+    # GovernedSpendConstraint`) - replaces `constraints` for bounds-building
+    # when supplied. Typed `Any` here (not `GovernedSpendConstraint`) to
+    # avoid a hard import-time dependency on that module from every caller
+    # of this service, matching `constraints: Optional[List[Any]]` above.
+    governed_constraints: Optional[List[Any]] = None
+    # REQ-CAP-001/REQ-OPT-001 Requirement 4 (Decision 18): generalised
+    # capacity-limit application (`core.capacity_plan_application.
+    # apply_capacity_limits_to_bounds`) - composable with `constraints`/
+    # `governed_constraints` in the same run, never a separate/duplicate
+    # rule set. Typed `Any` for the same reason as governed_constraints
+    # above.
+    capacity_limits: Optional[List[Any]] = None
+    capacity_realised_by_limit_and_period: Optional[Dict[str, Dict[str, float]]] = None
+    capacity_unit_to_spend_rate_by_limit_id: Optional[Dict[str, float]] = None
+    # Sequential weekly is the production default.  The page and callers
+    # may explicitly select steady-state monthly only as a labelled
+    # diagnostic/legacy path; omitting the method must not silently produce
+    # materially different recommendations.
+    evaluation_method: str = "sequential_weekly"
+    sequential_context: Optional[Any] = None
 
 
 @dataclass
@@ -361,6 +386,8 @@ class ScenarioService:
                 trace=sc_input.trace,
                 n_posterior_draws=sc_input.n_posterior_draws,
                 posterior_seed=sc_input.posterior_seed,
+                named_event_fit_inputs=sc_input.named_event_fit_inputs,
+                terminal_named_event_fit_inputs=sc_input.terminal_named_event_fit_inputs,
             )
         except Exception as exc:
             errors.append(f"Sequential manual scenario evaluation failed: {exc}")
@@ -439,6 +466,12 @@ class ScenarioService:
                 currency_context=opt_input.currency_context,
                 approval_readiness=opt_input.approval_readiness,
                 current_policy=opt_input.current_policy,
+                governed_constraints=opt_input.governed_constraints,
+                capacity_limits=opt_input.capacity_limits,
+                capacity_realised_by_limit_and_period=opt_input.capacity_realised_by_limit_and_period,
+                capacity_unit_to_spend_rate_by_limit_id=opt_input.capacity_unit_to_spend_rate_by_limit_id,
+                evaluation_method=opt_input.evaluation_method,
+                sequential_context=opt_input.sequential_context,
             )
         except Exception as exc:
             errors.append(f"Optimisation failed: {exc}")

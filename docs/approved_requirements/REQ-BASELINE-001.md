@@ -162,3 +162,41 @@ Modelling
 ## Approval date
 
 2026-08-18
+
+
+## Addendum, 2026-08-30 (Phase C): T1-T3/P1-P3 resolved (Decision 15)
+
+The user's 2026-08-29 brief, confirmed in-session 2026-08-30, explicitly
+delegates this record's T1-T3/P1-P3 selection (previously reserved by
+`docs/wp10_time_varying_baseline_decision_package.md`) to research and
+model validation. This addendum records the resulting resolution: full
+decision record, with sources consulted and the reasoning for why this
+is not a close preference-based call, in
+`docs/time_varying_baseline_decision_record.md`.
+
+**Resolved:** Candidate T3 (no new time-varying-intercept process;
+`core.hierarchical_model`/`core.market_specific_model`'s existing static
+intercept plus their already-fitted, already-forward-projected trend/
+Fourier terms already satisfy role #5's practical planning intent) and
+Candidate P1 (no planning use of any additional baseline signal). T1 is
+rejected for planning use per `pymc-marketing`'s own documented
+GP-extrapolation weakness (already cited by this record's own
+"Approval and traceability" section above). T2 is rejected FOR NOW, not
+permanently: no valid identifying strategy under this record's own
+Requirement 2 (`REQ-LATENT-001`'s Requirement 1) exists for a generic
+baseline-shift latent state today, unlike Candidate A's Google-Trends-
+anchored demand state - an already-approved governance blocker, not a
+preference call. Reconsidering T2 requires first resolving that
+separate, harder identification question.
+
+A small, bounded, strictly diagnostic-only residual-shift detector
+(`ancestry_mmm/core/baseline_diagnostics.py`) is implemented alongside
+this resolution - it is never wired into any causal pathway, planning
+surface, or official-use gate, so it does not require or constitute
+compliance with this record's own Requirement 2 (a pure diagnostic never
+enters a causal pathway or official use).
+
+**Still not resolved:** the identifying-strategy question for a
+hypothetical future T2 baseline (a separate, harder research question).
+No change to `core.hierarchical_model`/`core.market_specific_model`'s
+existing static intercept accompanies this addendum.

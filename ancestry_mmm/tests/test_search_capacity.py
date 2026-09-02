@@ -22,12 +22,18 @@ from ancestry_mmm.core.graph_model_compiler import (
     candidate_a_graph_issues,
     check_engine_capability,
 )
+from ancestry_mmm.core.capacity import (
+    CAP_HIT_CAPPED,
+    CAP_HIT_UNAVAILABLE,
+    CAP_HIT_UNCAPPED,
+)
 from ancestry_mmm.core.search_capacity import (
     CANDIDATE_A_CAPTURE_SHARE_COMPONENTS,
     SEARCH_CANDIDATE_A_ENGINE,
     SearchCandidateASpec,
     SearchCapacityValidationError,
     build_candidate_a_search_model,
+    candidate_a_cap_hit_status,
     candidate_a_forward,
     candidate_a_use_gate,
     counterfactual_search_effects,
@@ -513,3 +519,63 @@ class TestExtractCandidateASequentialParams:
         )
         with pytest.raises(SearchCapacityValidationError):
             extract_candidate_a_sequential_params(ordinary_trace)
+
+
+class TestCandidateACapHitStatus:
+    """Decision 10/18 (`docs/capacity_cap_semantics_decision_record.md`):
+    purely additive extension - core.capacity's governed four-value
+    classification, computed from Candidate A's own existing cap/
+    binding-evidence inputs. Does not touch cap_binding/
+    probability_cap_binding themselves."""
+
+    def test_with_probability_evidence(self):
+        cap = np.array([100.0, 100.0, np.nan])
+        probability_cap_binding = np.array([0.95, 0.05, 0.5])
+        results = candidate_a_cap_hit_status(
+            cap, probability_cap_binding=probability_cap_binding
+        )
+        assert results[0].status == CAP_HIT_CAPPED
+        assert results[1].status == CAP_HIT_UNCAPPED
+        assert results[2].status == CAP_HIT_UNAVAILABLE
+
+    def test_with_point_binding_evidence(self):
+        cap = np.array([50.0, 50.0])
+        point_binding = np.array([True, False])
+        results = candidate_a_cap_hit_status(cap, point_binding=point_binding)
+        assert results[0].status == CAP_HIT_CAPPED
+        assert results[1].status == CAP_HIT_UNCAPPED
+
+    def test_requires_exactly_one_evidence_kind(self):
+        cap = np.array([1.0])
+        with pytest.raises(SearchCapacityValidationError):
+            candidate_a_cap_hit_status(cap)
+        with pytest.raises(SearchCapacityValidationError):
+            candidate_a_cap_hit_status(
+                cap,
+                probability_cap_binding=np.array([0.5]),
+                point_binding=np.array([True]),
+            )
+
+    def test_does_not_mutate_existing_forward_state(self):
+        # Regression: confirms this new function is purely additive - the
+        # existing candidate_a_forward reconciliation is unaffected.
+        state = candidate_a_forward(
+            latent_branded_search_demand=[100.0],
+            paid_capture_share=0.5,
+            organic_capture_share=0.2,
+            direct_navigation_capture_share=0.1,
+            paid_search_cap=[40.0],
+        )
+        assert bool(state.cap_binding[0]) is True
+        results = candidate_a_cap_hit_status(
+            np.array([40.0]), point_binding=state.cap_binding
+        )
+        assert results[0].status == CAP_HIT_CAPPED
+        # Original field untouched.
+        assert bool(state.cap_binding[0]) is True
+
+    def test_infinite_cap_is_rejected(self):
+        with pytest.raises(SearchCapacityValidationError, match="inf"):
+            candidate_a_cap_hit_status(
+                np.array([np.inf]), point_binding=np.array([False])
+            )

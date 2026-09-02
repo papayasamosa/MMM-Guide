@@ -29,6 +29,7 @@ from ancestry_mmm.core.outcome_valuation_periods import (
     PERIOD_GRAIN_WEEK,
 )
 from ancestry_mmm.core.outcome_valuation_reporting import attributable_spend
+from ancestry_mmm.core.outcomes import FH_LTR_HORIZON_MONTHS
 
 OUTCOME_IDS = ["New", "DNA_CrossSell"]
 CHANNELS = ["TV_Brand", "DNA_Media"]
@@ -147,6 +148,7 @@ def _valuation_records(weeks, *, market="UK", segment=SEGMENT, aggregate_value=5
             quality_status=STATE_ESTIMATED,
             aggregate_value=aggregate_value,
             currency="GBP",
+            horizon_months=FH_LTR_HORIZON_MONTHS,
         )
         for week in weeks
     ]
@@ -378,6 +380,7 @@ class TestComparePeriods:
             quality_status=STATE_OBSERVED_ZERO,
             aggregate_value=0.0,
             currency="GBP",
+            horizon_months=FH_LTR_HORIZON_MONTHS,
         )
         records = [zero_week_record] + _valuation_records(WEEK_STARTS[1:])
         request_a = _base_request(

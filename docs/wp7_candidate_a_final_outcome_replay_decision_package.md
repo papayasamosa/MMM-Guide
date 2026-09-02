@@ -198,7 +198,32 @@ compounding that cost, not introducing a new one.
 **Owner:** Data Science / Platform engineering (decision), Modelling
 (counterfactual specification and extrapolation-policy review).
 
-**Status:** Decision-support package only. `CandidateAReplayNotSupportedError`
-continues to be raised by `core.predict.predict_mu` and `core.
-sequential_simulation.simulate_sequential_outcomes` for a Candidate A fit
-pending review of this package.
+**Status:** the decision-support package remains the authority for the
+replay choices. The approved implementation addendum below records the
+production integration; it does not change the selected statistical options.
+
+## Implementation addendum, 2026-09-01
+
+Candidate A final-outcome replay is now implemented through the existing
+posterior parameter extraction and NumPy replay boundary. The replay uses
+the fitted demand/capture/outcome-link variables, applies an explicit
+non-negative Paid Search cap before the captured-demand terms, and evaluates
+the full final-outcome link once per posterior draw. Historical attribution
+uses the fit-pinned historical cap. Curves require one explicit future cap
+per market; sequential Scenario Planner and Optimiser paths require one
+explicit weekly cap in the `WeeklyPlan`. No historical last value is silently
+carried into a future plan.
+
+The same replay is now available to official model-input/monetary curves,
+period attribution, sequential planning, sequential optimisation, and the
+Results contribution waterfall. Draw-level replay is retained through the
+existing posterior sampling loops, so cap non-linearity and parameter
+uncertainty are not replaced by posterior summaries added after the fact.
+Missing replay variables, invalid caps, missing fit-time cap provenance, and
+unsupported named-event combinations fail closed.
+
+The implementation does not grant planning or optimisation approval by
+itself. Candidate A still carries its existing evidence/use gates and needs
+real governed Google Trends, Search delivery/cap observations, and any
+required approval before official use. The long named-event NUTS recovery
+run is recorded separately in the durable handoff.

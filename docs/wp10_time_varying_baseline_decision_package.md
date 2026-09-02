@@ -207,3 +207,36 @@ extrapolation validation), Data Science / Platform engineering
 exists in `core.hierarchical_model`/`core.market_specific_model`; both
 continue to use a single static per-market/outcome intercept exactly as
 before, pending review of this package.
+
+
+## Update, 2026-08-30: technical selection delegated by later approved instructions; T/P candidates resolved
+
+The user's "Post-UI/UX Implementation Instructions: Approved Business
+Decisions" brief (2026-08-29), a later human instruction, explicitly
+established a source-of-truth order placing the brief's own approved
+decisions and instructions above an older decision package such as this
+one, and explicitly authorised (2026-08-30, in-session confirmation)
+proceeding on this package's T1-T3/P1-P3 candidates: "I deliberately
+said I do not want to choose the statistical method based on preference.
+The task is to compare appropriate approaches using PyMC Marketing,
+wider MMM research and model validation, then select the approach
+supported by the evidence." This supersedes this package's original
+"not chosen by the coding agent" reservation FOR THIS SPECIFIC
+TECHNICAL SELECTION.
+
+The resulting resolution - T3 (no new baseline process; existing trend/
+Fourier continuation already satisfies role #5's planning intent) and
+P1 (no planning use), with T1 rejected on upstream's own documented
+GP-extrapolation weakness and T2 rejected FOR NOW because no valid
+`REQ-LATENT-001` identifying strategy exists for a generic baseline
+state (an already-approved governance blocker, not a preference) - is
+recorded in full, with sources consulted, in
+`docs/time_varying_baseline_decision_record.md`. A bounded, opt-in,
+strictly diagnostic-only (never planning-read) residual-shift detection
+utility is implemented alongside this resolution - it does not
+constitute approval of T2 and does not require `REQ-LATENT-001`
+compliance, since a pure diagnostic never enters a causal pathway or
+official use. This package's original text above is preserved as
+history and remains an accurate record of the state of the decision
+before 2026-08-30 - it is not rewritten, only superseded for the
+specific choice this update describes.

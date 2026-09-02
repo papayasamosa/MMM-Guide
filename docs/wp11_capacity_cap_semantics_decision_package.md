@@ -197,3 +197,32 @@ continues to use its existing binary `cap_binding` check and `core.
 graph_model_compiler` continues to reject `capacity_constrained` for
 every structure other than Candidate A's authorised Search shape, exactly
 as before, pending review of this package.
+
+## Update, 2026-08-30: technical selection delegated by later approved instructions; S/G candidates resolved
+
+The user's "Post-UI/UX Implementation Instructions: Approved Business
+Decisions" brief (2026-08-29), a later human instruction, explicitly
+established a source-of-truth order placing the brief's own approved
+decisions and instructions above an older decision package such as this
+one, and explicitly authorised (2026-08-30, in-session confirmation)
+proceeding on this package's S1-S3/G1-G3 technical selection: "The exact
+cap vocabulary, shared-module design and implementation architecture are
+technical choices. Review the existing Candidate A design, available
+data, PyMC Marketing documentation and relevant research, then choose
+and document the best implementation." This supersedes this package's
+original "not chosen by the coding agent" reservation FOR THIS SPECIFIC
+TECHNICAL SELECTION ONLY - the business questions this package always
+correctly kept separate (that capacity constraints must exist, be
+realistic, and be shared/flexible) were never reserved; they were
+answered by the user's own Decisions 10 and 18.
+
+The resulting technical selection (S1, extended with S2's evidence-
+transparency discipline; G1, scoped to the vocabulary/governed-object/
+reconciliation-identity layer only, not the graph-compiler's second-
+pathway question) is recorded in full, with sources consulted and
+alternatives rejected, in
+`docs/capacity_cap_semantics_decision_record.md`. This package's
+original text above is preserved as history and remains an accurate
+record of the state of the decision before 2026-08-30 - it is not
+rewritten, only superseded for the specific choice this update
+describes.

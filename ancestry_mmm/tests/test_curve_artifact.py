@@ -354,6 +354,99 @@ class TestGovernedContextFields:
         fields = governed_context_fields(metadata)
         assert fields["extrapolation_status"] == "extrapolated"
 
+    def test_extracts_outcome_metric_identity_from_the_metric_registry(self):
+        """Production-integration follow-up (Results/exports disclosure
+        labels): `outcome_definition_version` above identifies which
+        *version* of a definition was used, never which metric it is (e.g.
+        GSA vs net bill-through) - this is that missing distinguishing
+        field, read via the same `core.outcomes.METRIC_REGISTRY` every
+        other governed display already uses for a human label."""
+        metadata = _metadata(
+            outcome_definition_snapshot={
+                "outcome_id": "fh_new_gsa",
+                "metric_key": "fh_gsa",
+            },
+        )
+        fields = governed_context_fields(metadata)
+        assert fields["outcome_metric_key"] == "fh_gsa"
+        assert fields["outcome_metric_label"] == "GSA"
+
+    def test_unrecognised_metric_key_yields_no_fabricated_label(self):
+        metadata = _metadata(
+            outcome_definition_snapshot={
+                "outcome_id": "fh_new_gsa",
+                "metric_key": "some_custom_metric",
+            },
+        )
+        fields = governed_context_fields(metadata)
+        assert fields["outcome_metric_key"] == "some_custom_metric"
+        assert fields["outcome_metric_label"] is None
+
+    def test_experiment_calibration_and_search_capacity_read_from_diagnostics_snapshot(
+        self,
+    ):
+        """These two disclosures are read from the artifact's own
+        creation-time `diagnostics_snapshot` - the same `DiagnosticSection`
+        shape `pages/06_Diagnostics.py` already reads for its own tabs -
+        never recomputed here."""
+        metadata = _metadata(
+            diagnostics_snapshot={
+                "experiment_calibration": {
+                    "status": "computed",
+                    "payload": {
+                        "experiments": {
+                            "entries": [
+                                {
+                                    "experiment_id": "exp-1",
+                                    "evidence_mode": "prior_calibration",
+                                },
+                                {
+                                    "experiment_id": "exp-2",
+                                    "evidence_mode": "validation_only",
+                                },
+                            ]
+                        }
+                    },
+                },
+                "search_capacity": {
+                    "status": "computed",
+                    "payload": {"use_gate": {"official_use_eligible": False}},
+                },
+            }
+        )
+        fields = governed_context_fields(metadata)
+        assert fields["experiment_calibration_status"] == "computed"
+        assert fields["linked_experiment_count"] == 2
+        assert fields["search_capacity_status"] == "computed"
+        assert fields["search_capacity_official_use_eligible"] is False
+
+    def test_experiment_calibration_and_search_capacity_default_to_not_applicable_honestly(
+        self,
+    ):
+        """Most fits today have neither experiment evidence nor a Search
+        Candidate A spec linked (application.diagnostics_service's own
+        documented default) - this must read as the real
+        `"not_applicable"` status, never a fabricated `False`/`0`."""
+        metadata = _metadata(
+            diagnostics_snapshot={
+                "experiment_calibration": {"status": "not_applicable", "payload": None},
+                "search_capacity": {"status": "not_applicable", "payload": None},
+            }
+        )
+        fields = governed_context_fields(metadata)
+        assert fields["experiment_calibration_status"] == "not_applicable"
+        assert fields["linked_experiment_count"] is None
+        assert fields["search_capacity_status"] == "not_applicable"
+        assert fields["search_capacity_official_use_eligible"] is None
+
+    def test_missing_diagnostics_snapshot_yields_no_fabricated_values(self):
+        metadata = _metadata(diagnostics_snapshot={})
+        fields = governed_context_fields(metadata)
+        assert fields["experiment_calibration_status"] is None
+        assert fields["linked_experiment_count"] is None
+        assert fields["search_capacity_status"] is None
+        assert fields["search_capacity_official_use_eligible"] is None
+
 
 # ---------------------------------------------------------------------------
 # PR 96A: unknown metadata is bound into integrity, not just preserved

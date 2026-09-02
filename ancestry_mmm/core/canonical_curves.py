@@ -44,6 +44,7 @@ from .market_specific_predict import (
     steady_state_outcome_response_market_specific,
 )
 from .predict import extract_posterior_params, steady_state_outcome_response
+from .search_capacity import SEARCH_CANDIDATE_A_ENGINE
 from .transformations import hill_function
 from .uncertainty import DEFAULT_CRED_MASS, DEFAULT_N_DRAWS, sample_draw_indices
 from .outcome_group_totals import aggregate_outcome_group_draws
@@ -908,11 +909,17 @@ def _predict(
     params,
     model_type: str,
     context: CurveReferenceContext,
+    candidate_a_paid_search_cap: Optional[float] = None,
 ) -> Dict[str, float]:
     fn = (
         steady_state_outcome_response_market_specific
         if model_type == "market_specific"
         else steady_state_outcome_response
+    )
+    kwargs = (
+        {"candidate_a_paid_search_cap": candidate_a_paid_search_cap}
+        if model_type != "market_specific"
+        else {}
     )
     return fn(
         market,
@@ -920,6 +927,7 @@ def _predict(
         meta,
         params,
         context.prediction_context(),
+        **kwargs,
     )
 
 
@@ -1073,6 +1081,7 @@ def generate_canonical_curve_draws(
         Sequence[ActivityDefinition] | Mapping[str, ActivityDefinition]
     ] = None,
     governance_mode: str = "official",
+    candidate_a_paid_search_cap_by_market: Optional[Mapping[str, float]] = None,
 ) -> pd.DataFrame:
     """Generate component response decomposition on the outcome-count scale.
 
@@ -1175,6 +1184,21 @@ def generate_canonical_curve_draws(
                 )
     if not model_run_id:
         raise ValueError("model_run_id is required")
+    candidate_a_caps = dict(candidate_a_paid_search_cap_by_market or {})
+    if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
+        if set(candidate_a_caps) != set(meta.markets):
+            raise ValueError(
+                "Candidate A curves require one explicit future paid-search "
+                f"cap per market; expected {sorted(meta.markets)}, got "
+                f"{sorted(candidate_a_caps)}"
+            )
+        if any(
+            not np.isfinite(float(value)) or float(value) < 0
+            for value in candidate_a_caps.values()
+        ):
+            raise ValueError(
+                "Candidate A curve paid-search caps must be finite and non-negative"
+            )
     if set(reference_contexts) != set(meta.markets):
         raise ValueError("Provide exactly one explicit reference context per market")
     for market, context in reference_contexts.items():
@@ -1321,6 +1345,7 @@ def generate_canonical_curve_draws(
                     params=params,
                     model_type=model_type,
                     context=context,
+                    candidate_a_paid_search_cap=candidate_a_caps.get(market),
                 )
                 for spend_point, raw_spend in enumerate(axis):
                     raw_spend = float(raw_spend)
@@ -1340,6 +1365,7 @@ def generate_canonical_curve_draws(
                         params=params,
                         model_type=model_type,
                         context=context,
+                        candidate_a_paid_search_cap=candidate_a_caps.get(market),
                     )
                     derivative_axis_value = (
                         raw_spend if effective_curve_type == "monetary" else media_input
@@ -1384,6 +1410,7 @@ def generate_canonical_curve_draws(
                         params=params,
                         model_type=model_type,
                         context=context,
+                        candidate_a_paid_search_cap=candidate_a_caps.get(market),
                     )
                     mu_upper = _predict(
                         market=market,
@@ -1392,6 +1419,7 @@ def generate_canonical_curve_draws(
                         params=params,
                         model_type=model_type,
                         context=context,
+                        candidate_a_paid_search_cap=candidate_a_caps.get(market),
                     )
                     saturation = float(
                         hill_function(

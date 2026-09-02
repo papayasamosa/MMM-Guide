@@ -87,6 +87,11 @@ Bundle layout (a single zip):
                                           yet - "none governed yet" is a valid,
                                           not-an-error reading (see
                                           resolve_imported_search_objects below).
+    config/candidate_a_fit_inputs.json - REQ-SEARCH-002: the complete
+                                          validated Candidate A observation
+                                          boundary used for fitting, including
+                                          delivery/cap/capture arrays and any
+                                          Google Trends anchor, if configured.
     config/variable_coverage_matrices.json - REQ-COVERAGE-001 S1: every
                                           `VariableCoverageMatrix` version worth
                                           keeping (core.coverage.
@@ -202,9 +207,13 @@ from .optimization import SpendConstraint
 # source-pack adoption state and its explicit semantic review statuses (WP3).
 # 17 -> 18 for WP1 mixed-frequency method versions, publication timing, and
 # official conversion evidence. 18 -> 19 for the optional Candidate A Search
-# formulation and identification evidence. Older bundles remain importable
+# formulation and identification evidence. 19 -> 20 for the optional,
+# Finance-supplied FX rate set and immutable records. 20 -> 21 for the
+# complete optional Candidate A fit-input boundary. 21 -> 22 for the
+# row-aligned, window-gated SEO visibility fit-input boundary. 22 -> 23 for
+# durable governed future-assumption bundles. Older bundles remain importable
 # because these fields restore as None until explicitly reviewed.
-PROJECT_BUNDLE_SCHEMA_VERSION = 19
+PROJECT_BUNDLE_SCHEMA_VERSION = 23
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -295,11 +304,17 @@ def export_project(
     approval_readiness: Optional[dict] = None,
     counterfactual_policy: Optional[dict] = None,
     currency_context: Optional[dict] = None,
+    fx_rate_set: Optional[dict] = None,
+    fx_rate_records: Optional[List[dict]] = None,
     value_mapping: Optional[dict] = None,
     causal_graphs: Optional[List[dict]] = None,
     search_objects: Optional[List[dict]] = None,
     search_candidate_a_spec: Optional[dict] = None,
+    candidate_a_fit_inputs: Optional[dict] = None,
     search_identification_report: Optional[dict] = None,
+    google_trends_anchor: Optional[dict] = None,
+    seo_fit_inputs: Optional[dict] = None,
+    future_assumption_bundles: Optional[List[dict]] = None,
     source_versions: Optional[List[dict]] = None,
     source_definitions: Optional[List[dict]] = None,
     variable_coverage_matrices: Optional[List[dict]] = None,
@@ -508,6 +523,14 @@ def export_project(
             (tmp / "config" / "currency_context.json").write_text(
                 json.dumps(currency_context, indent=2, default=str)
             )
+        if fx_rate_set is not None:
+            (tmp / "config" / "fx_rate_set.json").write_text(
+                json.dumps(fx_rate_set, indent=2, default=str)
+            )
+        if fx_rate_records is not None:
+            (tmp / "config" / "fx_rate_records.json").write_text(
+                json.dumps(fx_rate_records, indent=2, default=str)
+            )
         if value_mapping is not None:
             (tmp / "config" / "value_mapping.json").write_text(
                 json.dumps(value_mapping, indent=2, default=str)
@@ -532,9 +555,25 @@ def export_project(
             (tmp / "config" / "search_candidate_a_spec.json").write_text(
                 json.dumps(search_candidate_a_spec, indent=2, default=str)
             )
+        if candidate_a_fit_inputs is not None:
+            (tmp / "config" / "candidate_a_fit_inputs.json").write_text(
+                json.dumps(candidate_a_fit_inputs, indent=2, default=str)
+            )
         if search_identification_report is not None:
             (tmp / "config" / "search_identification_report.json").write_text(
                 json.dumps(search_identification_report, indent=2, default=str)
+            )
+        if google_trends_anchor is not None:
+            (tmp / "config" / "google_trends_anchor.json").write_text(
+                json.dumps(google_trends_anchor, indent=2, default=str)
+            )
+        if seo_fit_inputs is not None:
+            (tmp / "config" / "seo_fit_inputs.json").write_text(
+                json.dumps(seo_fit_inputs, indent=2, default=str)
+            )
+        if future_assumption_bundles is not None:
+            (tmp / "config" / "future_assumption_bundles.json").write_text(
+                json.dumps(future_assumption_bundles, indent=2, default=str)
             )
         # REQ-COVERAGE-001 S3: append-only immutable SourceVersion history
         # (core.coverage.SourceVersion.to_dict() dicts) - never pruned on
@@ -701,12 +740,20 @@ def export_project(
                 "approval_readiness": approval_readiness is not None,
                 "counterfactual_policy": counterfactual_policy is not None,
                 "currency_context": currency_context is not None,
+                "fx_rate_set": fx_rate_set is not None,
+                "fx_rate_records": fx_rate_records is not None
+                and bool(fx_rate_records),
                 "value_mapping": value_mapping is not None,
                 "causal_graphs": causal_graphs is not None and bool(causal_graphs),
                 "search_objects": search_objects is not None and bool(search_objects),
                 "search_candidate_a_spec": search_candidate_a_spec is not None,
+                "candidate_a_fit_inputs": candidate_a_fit_inputs is not None,
                 "search_identification_report": search_identification_report
                 is not None,
+                "google_trends_anchor": google_trends_anchor is not None,
+                "seo_fit_inputs": seo_fit_inputs is not None,
+                "future_assumption_bundles": future_assumption_bundles is not None
+                and bool(future_assumption_bundles),
                 "source_versions": source_versions is not None
                 and bool(source_versions),
                 "source_definitions": source_definitions is not None
@@ -825,6 +872,8 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # absent here - it never fabricates legacy evidence.
         "counterfactual_policy": None,
         "currency_context": None,
+        "fx_rate_set": None,
+        "fx_rate_records": None,
         "value_mapping": None,
         # REQ-GRAPH-001: None for bundles exported before this capability
         # existed - "no graph yet" is a valid, not-an-error reading, same
@@ -837,7 +886,11 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # REQ-SEARCH-002: None for bundles exported before Candidate A. The
         # absence is not approval and must keep official Search use blocked.
         "search_candidate_a_spec": None,
+        "candidate_a_fit_inputs": None,
         "search_identification_report": None,
+        "google_trends_anchor": None,
+        "seo_fit_inputs": None,
+        "future_assumption_bundles": None,
         # REQ-COVERAGE-001 S3: None for bundles exported before this
         # capability existed - "no source-version history recorded yet" is
         # a valid, not-an-error reading, same convention as causal_graphs/
@@ -1038,6 +1091,14 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
             result["currency_context"] = json.loads(
                 (config_dir / "currency_context.json").read_text()
             )
+        if (config_dir / "fx_rate_set.json").exists():
+            result["fx_rate_set"] = json.loads(
+                (config_dir / "fx_rate_set.json").read_text()
+            )
+        if (config_dir / "fx_rate_records.json").exists():
+            result["fx_rate_records"] = json.loads(
+                (config_dir / "fx_rate_records.json").read_text()
+            )
         if (config_dir / "value_mapping.json").exists():
             result["value_mapping"] = json.loads(
                 (config_dir / "value_mapping.json").read_text()
@@ -1054,9 +1115,25 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
             result["search_candidate_a_spec"] = json.loads(
                 (config_dir / "search_candidate_a_spec.json").read_text()
             )
+        if (config_dir / "candidate_a_fit_inputs.json").exists():
+            result["candidate_a_fit_inputs"] = json.loads(
+                (config_dir / "candidate_a_fit_inputs.json").read_text()
+            )
         if (config_dir / "search_identification_report.json").exists():
             result["search_identification_report"] = json.loads(
                 (config_dir / "search_identification_report.json").read_text()
+            )
+        if (config_dir / "google_trends_anchor.json").exists():
+            result["google_trends_anchor"] = json.loads(
+                (config_dir / "google_trends_anchor.json").read_text()
+            )
+        if (config_dir / "seo_fit_inputs.json").exists():
+            result["seo_fit_inputs"] = json.loads(
+                (config_dir / "seo_fit_inputs.json").read_text()
+            )
+        if (config_dir / "future_assumption_bundles.json").exists():
+            result["future_assumption_bundles"] = json.loads(
+                (config_dir / "future_assumption_bundles.json").read_text()
             )
         if (config_dir / "source_versions.json").exists():
             result["source_versions"] = json.loads(

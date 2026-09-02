@@ -303,3 +303,46 @@ cost-allocation sign-off under D7-B).
 **Status:** Decision-support package only. `REQ-SEARCH-004`,
 `REQ-SEARCH-005`, and `REQ-SEO-001` remain target-state contracts with
 zero implementation, pending review of this package.
+
+## Update, 2026-08-30: D1, D2, and D3 resolved by business-decision brief
+
+The business-decision brief "Post-UI/UX Implementation Instructions:
+Approved Business Decisions" (decision date 2026-08-29) resolves three
+of this package's seven sub-decisions. This update records the
+resolutions without rewriting the original analysis above, which remains
+valid as a record of what was open before this brief.
+
+- **D1 (SEO visibility causal role and estimand): resolved in favour of
+  D1-B.** Decision 6 ("SEO is a marketing activity with a causal
+  contribution") approves a real, non-diagnostic causal role — SEO work
+  -> better ranking/visibility -> more organic traffic ->
+  more sign-ups/sales — rather than D1-A's permanent diagnostic-only
+  treatment. The role is estimand-specific per use, per Part 6 §15.10, as
+  D1-B's own candidate text requires. See `REQ-SEO-001`'s 2026-08-30
+  addendum for the contract-level resolution. **Still open within D1:**
+  the specific estimand, transformation of the (non-linear) positional
+  metric, counterfactual definition, and demand-control set for any given
+  use — these require the identification/refutation evidence Part 7
+  §22.7/`VL-034` demands and are Phase B/C implementation work, not
+  resolved by this brief.
+- **D2 (controllable SEO intervention): resolved in favour of D2-A.**
+  Decision 7 ("SEO should not have spend-based ROI") and Decision 6's
+  "non-paid marketing activity" framing confirm no controllable,
+  spend-based SEO intervention is approved — SEO visibility remains
+  permanently outside planning/optimisation via the observed-metric-only
+  path, consistent with Part 8's default-exclusion rule. This forecloses
+  D2-B unless a future, separately-scoped decision names an actual
+  controllable content/technical-SEO work-stream with its own unit,
+  cost, and timing.
+- **D3 (initial governed Search intent taxonomy content and ownership):
+  resolved in favour of D3-B.** Decision 2 ("Minimum Paid Search detail")
+  names Brand/Non-Brand as the two top-level governed intent groups. See
+  `REQ-SEARCH-004`'s 2026-08-30 addendum for the full contract-level
+  resolution, including the orthogonal platform (Google/Bing) axis and
+  the reporting roll-up hierarchy.
+
+**D4, D5, D6, and D7 remain open**, exactly as originally recorded above.
+Decision 2 supplies D4's *gating principle* (evidence-based promotion,
+no invented threshold) without a concrete number, which is not a
+resolution of D4 itself — the numeric thresholds still require the
+evidence-gathering work D4 always anticipated.

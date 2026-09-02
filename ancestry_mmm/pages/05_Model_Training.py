@@ -60,7 +60,38 @@ from ancestry_mmm.core.outcomes import (
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
 from ancestry_mmm.core.activities import activity_fit_fingerprint
 from ancestry_mmm.core.search_objects import search_object_fit_fingerprint
+from ancestry_mmm.core.search_capacity import (
+    CandidateASearchFitInputs,
+)
+from ancestry_mmm.core.google_trends_anchor import (
+    GoogleTrendsAnchorFitInputs,
+    GoogleTrendsQuerySetDefinition,
+    GoogleTrendsRawObservation,
+    compute_anchor_series,
+)
+from ancestry_mmm.core.seo_visibility import (
+    GscPositionRow,
+    SeoModelFitInputs,
+    compute_weekly_positional_visibility_series,
+)
 from ancestry_mmm.core.coverage import VariableCoverageMatrix
+from ancestry_mmm.core.named_event_fit_inputs import build_named_event_fit_inputs
+from ancestry_mmm.core.named_events import (
+    EventResponseDefinition,
+    NamedEventFamily,
+    NamedEventOccurrence,
+)
+from ancestry_mmm.core.experiments import (
+    EVIDENCE_MODE_LIKELIHOOD_CALIBRATION,
+    CompatibilityAssessment,
+    ExperimentRecord,
+    ExperimentToModelUse,
+)
+from ancestry_mmm.core.experiment_lift_test_mapping import (
+    ModelLiftTestCalibrationInput,
+    build_lift_test_calibration_row,
+    calibration_inputs_fingerprint,
+)
 
 MODEL_TYPE_LABELS = {
     "shared": "Shared response across markets (Model A)",
@@ -193,6 +224,319 @@ def _resolve_causal_graph():
     return None
 
 
+def _model_week_labels() -> tuple[str, ...]:
+    return tuple(str(pd.Timestamp(value).date()) for value in frame["dates"])
+
+
+def _seo_fit_inputs_for_current_frame():
+    payload = get_state("seo_fit_inputs")
+    if payload is None:
+        return None
+    if isinstance(payload, SeoModelFitInputs):
+        fit_inputs = payload
+    else:
+        if not isinstance(payload, dict):
+            raise ValueError("seo_fit_inputs must be a serialized mapping")
+        fit_inputs = SeoModelFitInputs.from_dict(payload)
+    fit_inputs.validate_frame(
+        markets=[frame["markets"][int(index)] for index in frame["market_idx"]],
+        weeks=_model_week_labels(),
+    )
+    return fit_inputs
+
+
+def _candidate_a_fit_inputs_for_current_frame():
+    """Resolve the optional serialized Candidate A observations.
+
+    Search arrays remain governed inputs assembled by the data-preparation
+    workflow. This boundary adds the approved Google Trends anchor to that
+    object without fabricating any Search observations or silently using a
+    stale anchor from another frame.
+    """
+    payload = get_state("candidate_a_fit_inputs")
+    if payload is None:
+        return None
+    if isinstance(payload, CandidateASearchFitInputs):
+        fit_inputs = payload
+    else:
+        if not isinstance(payload, dict):
+            raise ValueError("candidate_a_fit_inputs must be a serialized mapping")
+        fit_inputs = CandidateASearchFitInputs.from_dict(payload)
+    anchor_payload = get_state("google_trends_anchor")
+    if not anchor_payload:
+        return fit_inputs
+    anchor = GoogleTrendsAnchorFitInputs.from_dict(anchor_payload)
+    if tuple(anchor.model_weeks) != _model_week_labels():
+        raise ValueError(
+            "The Google Trends Candidate A anchor does not cover the current "
+            "model frame; upload one governed extraction for this frame."
+        )
+    from dataclasses import replace
+
+    return replace(fit_inputs, google_trends_anchor=anchor)
+
+
+def _calibration_inputs_for_current_fit():
+    """Build model calibration rows from the governed registry.
+
+    The affected likelihood field uses the explicit adapter target format
+    ``direct:<channel>:<outcome_id>``. This avoids guessing an outcome in the
+    joint MMM. A declaration with another shape is rejected at fit time and
+    remains visible in Diagnostics for correction.
+    """
+    records = [
+        ExperimentRecord.from_dict(item)
+        for item in (get_state("experiment_records") or [])
+    ]
+    uses = [
+        ExperimentToModelUse.from_dict(item)
+        for item in (get_state("experiment_model_uses") or [])
+    ]
+    assessments = {
+        item["experiment_id"]: CompatibilityAssessment.from_dict(item)
+        for item in (get_state("experiment_compatibility_assessments") or [])
+    }
+    records_by_key = {
+        (record.experiment_id, record.experiment_version): record for record in records
+    }
+    fit_start = pd.Timestamp(frame["dates"][0])
+    fit_end = pd.Timestamp(frame["dates"][-1])
+    model_markets = set(frame.get("markets") or [])
+    inputs = []
+    for use in uses:
+        if use.evidence_mode != EVIDENCE_MODE_LIKELIHOOD_CALIBRATION:
+            continue
+        target = use.affected_likelihood_term_name or ""
+        parts = target.split(":", 2)
+        if len(parts) != 3 or parts[0] != "direct" or not parts[1] or not parts[2]:
+            raise ValueError(
+                "Likelihood calibration target must use direct:<channel>:<outcome_id>."
+            )
+        record = records_by_key.get((use.experiment_id, use.experiment_version))
+        assessment = assessments.get(use.experiment_id)
+        if record is None or assessment is None:
+            raise ValueError(
+                f"Calibration use {use.experiment_id!r} has no matching "
+                "experiment record and compatibility assessment."
+            )
+        if assessment.is_local or not model_markets.issubset(set(record.market_scope)):
+            raise ValueError(
+                f"Experiment {record.experiment_id!r} is scoped to "
+                f"{record.market_scope}, not the full fitted market set "
+                f"{sorted(model_markets)}; the current calibration adapter "
+                "cannot safely aggregate a local experiment into a global fit."
+            )
+        if record.applicability_period_start and record.applicability_period_end:
+            applicability_start = pd.Timestamp(record.applicability_period_start)
+            applicability_end = pd.Timestamp(record.applicability_period_end)
+            if applicability_end < fit_start or applicability_start > fit_end:
+                raise ValueError(
+                    f"Experiment {record.experiment_id!r} is outside its "
+                    "declared applicability period for this model frame."
+                )
+        row = build_lift_test_calibration_row(record, use, assessment, channel=parts[1])
+        inputs.append(ModelLiftTestCalibrationInput(row=row, outcome_id=parts[2]))
+    return inputs or None
+
+
+def _render_google_trends_candidate_a_boundary() -> None:
+    """Collect and validate the external Candidate A anchor, if supplied."""
+    with st.expander("Google Trends Candidate A — Brand Demand anchor", expanded=False):
+        st.caption(
+            "Candidate A uses Google Trends Candidate A as the approved Brand Demand "
+            "anchor. Uploading is optional at this screen, but a Candidate A fit "
+            "cannot run until a complete governed weekly series and Search inputs "
+            "are present. Trends values are relative 0–100 indices, never search counts."
+        )
+        current_anchor = get_state("google_trends_anchor")
+        if current_anchor:
+            anchor = GoogleTrendsAnchorFitInputs.from_dict(current_anchor)
+            st.success(
+                f"Anchor loaded: `{anchor.query_set.query_set_id}`; "
+                f"{len(anchor.observations)} weekly observations; "
+                f"extraction {anchor.query_set.extraction_date or 'date not recorded'}."
+            )
+        upload = st.file_uploader(
+            "Google Trends CSV (columns: week, raw_index)",
+            type=["csv"],
+            key="google_trends_candidate_a_upload",
+        )
+        meta_cols = st.columns(3)
+        query_set_id = meta_cols[0].text_input("Query-set ID", key="gt_query_set_id")
+        geography = meta_cols[1].text_input("Geography", key="gt_geography")
+        terms_text = meta_cols[2].text_input(
+            "Approved branded terms (comma-separated)", key="gt_branded_terms"
+        )
+        detail_cols = st.columns(3)
+        category = detail_cols[0].text_input(
+            "Category", value="all_categories", key="gt_category"
+        )
+        search_property = detail_cols[1].text_input(
+            "Search property", value="web_search", key="gt_search_property"
+        )
+        extraction_date = detail_cols[2].text_input(
+            "Extraction date (YYYY-MM-DD)", key="gt_extraction_date"
+        )
+        sigma = st.number_input(
+            "Trend measurement sigma",
+            min_value=0.001,
+            value=0.15,
+            step=0.01,
+            key="gt_sigma",
+        )
+        if st.button("Validate and load Google Trends anchor", key="load_gt_anchor"):
+            if upload is None:
+                st.error("Choose a Google Trends CSV first.")
+            elif (
+                not query_set_id.strip()
+                or not geography.strip()
+                or not terms_text.strip()
+            ):
+                st.error(
+                    "Query-set ID, geography, and the approved branded term list are required."
+                )
+            else:
+                try:
+                    trends_frame = pd.read_csv(upload.getvalue())
+                    required = {"week", "raw_index"}
+                    if not required.issubset(trends_frame.columns):
+                        raise ValueError("CSV must contain week and raw_index columns")
+                    query_set = GoogleTrendsQuerySetDefinition(
+                        query_set_id=query_set_id.strip(),
+                        branded_terms=tuple(
+                            term.strip()
+                            for term in terms_text.split(",")
+                            if term.strip()
+                        ),
+                        geography=geography.strip(),
+                        time_range_start=_model_week_labels()[0],
+                        time_range_end=_model_week_labels()[-1],
+                        category=category.strip(),
+                        search_property=search_property.strip(),
+                        extraction_date=extraction_date.strip() or None,
+                    )
+                    raw = [
+                        GoogleTrendsRawObservation(
+                            query_set_id=query_set.query_set_id,
+                            week=str(pd.Timestamp(row.week).date()),
+                            raw_index=float(row.raw_index),
+                        )
+                        for row in trends_frame.itertuples(index=False)
+                    ]
+                    observations = tuple(
+                        compute_anchor_series(query_set.query_set_id, raw)
+                    )
+                    anchor = GoogleTrendsAnchorFitInputs(
+                        query_set=query_set,
+                        observations=observations,
+                        model_weeks=_model_week_labels(),
+                        measurement_sigma=float(sigma),
+                    )
+                    set_state("google_trends_anchor", anchor.to_dict())
+                    st.success(
+                        "Google Trends anchor validated and attached to the current "
+                        "project; it will be included in the next fit and bundle."
+                    )
+                    st.rerun()
+                except (ValueError, TypeError, KeyError) as exc:
+                    st.error(f"Google Trends anchor validation failed: {exc}")
+
+
+_render_google_trends_candidate_a_boundary()
+
+
+def _render_seo_visibility_boundary() -> None:
+    """Load the governed GSC positional-visibility treatment boundary.
+
+    The upload is intentionally raw-row based: absent market/week cells stay
+    absent and therefore inactive in the fitted MMM.  No missing SEO history
+    is converted to zero and no SEO cost/ROI is created here.
+    """
+    with st.expander("SEO visibility / ranking pathway", expanded=False):
+        st.caption(
+            "Upload GSC rows with market, week, dimension_label, position, "
+            "impressions and optional clicks. The app computes the approved "
+            "impression-weighted positional-visibility index and fits it only "
+            "inside the observed window; missing weeks are not zero-filled. "
+            "SEO remains outside spend-based CPA/ROI and optimisation."
+        )
+        current = get_state("seo_fit_inputs")
+        if current:
+            loaded = (
+                current
+                if isinstance(current, SeoModelFitInputs)
+                else SeoModelFitInputs.from_dict(current)
+            )
+            observed = int(sum(loaded.active_mask))
+            st.success(
+                f"SEO visibility boundary loaded: {observed} active row(s) across "
+                f"{len(loaded.window_by_market)} market(s)."
+            )
+        upload = st.file_uploader(
+            "GSC CSV (market, week, dimension_label, position, impressions, clicks)",
+            type=["csv"],
+            key="seo_visibility_upload",
+        )
+        if st.button("Validate and load SEO visibility", key="load_seo_visibility"):
+            if upload is None:
+                st.error("Choose a GSC positional-visibility CSV first.")
+            else:
+                try:
+                    seo_frame = pd.read_csv(upload.getvalue())
+                    required = {
+                        "market",
+                        "week",
+                        "dimension_label",
+                        "position",
+                        "impressions",
+                    }
+                    missing = sorted(required - set(seo_frame.columns))
+                    if missing:
+                        raise ValueError(
+                            "GSC CSV is missing required source fields: "
+                            + ", ".join(missing)
+                        )
+                    rows_by_market_week = {}
+                    model_markets = [
+                        frame["markets"][int(index)] for index in frame["market_idx"]
+                    ]
+                    model_weeks = list(_model_week_labels())
+                    for row in seo_frame.to_dict("records"):
+                        market = str(row["market"]).strip()
+                        week = str(pd.Timestamp(row["week"]).date())
+                        if market not in frame["markets"]:
+                            raise ValueError(
+                                f"GSC row market {market!r} is not in the model frame."
+                            )
+                        rows_by_market_week.setdefault((market, week), []).append(
+                            GscPositionRow(
+                                dimension_label=str(row["dimension_label"]),
+                                position=float(row["position"]),
+                                impressions=float(row["impressions"]),
+                                clicks=float(row.get("clicks", 0.0) or 0.0),
+                            )
+                        )
+                    observations = compute_weekly_positional_visibility_series(
+                        rows_by_market_week
+                    )
+                    fit_inputs = SeoModelFitInputs.from_observations(
+                        observations,
+                        model_markets=model_markets,
+                        model_weeks=model_weeks,
+                    )
+                    set_state("seo_fit_inputs", fit_inputs.to_dict())
+                    st.success(
+                        "SEO visibility validated and attached to the next fit. "
+                        f"Observed window cells: {len(observations)}."
+                    )
+                    st.rerun()
+                except (ValueError, TypeError, KeyError) as exc:
+                    st.error(f"SEO visibility validation failed: {exc}")
+
+
+_render_seo_visibility_boundary()
+
+
 def _build_proposed_model(build_model_type: str):
     """Build the unfit `(model, meta)` for the CURRENT proposed
     configuration (live `model_spec`/`prior_config`/`dna_lag_weeks`/causal
@@ -203,18 +547,21 @@ def _build_proposed_model(build_model_type: str):
 
     WP1 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`): delegates
     engine selection to `application.model_fit_service` instead of an
-    inline shared/market-specific ternary. `candidate_a_fit_inputs` is not
-    yet threaded from session state here - no UI on this page collects
-    Candidate A Search observations yet, so a project whose approved graph
-    requires the Candidate A engine currently fails closed with a specific
-    ModelFitServiceError rather than silently falling back to the ordinary
-    builder (see the "not yet integrated" note in REPO_REVIEW_AND_NEXT_STEPS.md).
+    inline shared/market-specific ternary. Candidate A Search observations
+    and the optional Google Trends anchor are resolved from the governed fit
+    boundary here; a required but incomplete boundary fails closed with a
+    specific `ModelFitServiceError` rather than silently falling back to the
+    ordinary builder.
     """
     prior_config = get_state("prior_config")
     dna_lag_weeks = get_state("dna_lag_weeks", 4)
     direct_dna_outcome_ids = get_state("direct_dna_outcome_ids") or None
     causal_graph = _resolve_causal_graph()
     search_objects = get_state("search_objects") or []
+    named_event_fit_inputs = _named_event_fit_inputs_for_current_frame()
+    candidate_a_fit_inputs = _candidate_a_fit_inputs_for_current_frame()
+    seo_fit_inputs = _seo_fit_inputs_for_current_frame()
+    calibration_inputs = _calibration_inputs_for_current_fit()
     result = build_model_for_spec(
         frame=frame,
         model_spec=spec,
@@ -225,8 +572,40 @@ def _build_proposed_model(build_model_type: str):
         direct_dna_outcome_ids=direct_dna_outcome_ids,
         causal_graph=causal_graph,
         search_objects=search_objects,
+        candidate_a_fit_inputs=candidate_a_fit_inputs,
+        named_event_fit_inputs=named_event_fit_inputs,
+        calibration_inputs=calibration_inputs,
+        seo_fit_inputs=seo_fit_inputs,
     )
     return result.model, result.meta
+
+
+def _named_event_fit_inputs_for_current_frame():
+    """Resolve the current governed event registry for the actual fit frame.
+
+    The model-training page owns the fit-time boundary: event definitions are
+    read from the project snapshot and converted into the same deterministic
+    basis used by the model builder.  An opted-out or empty registry returns
+    ``None``, preserving the ordinary model graph exactly.
+    """
+    families = [
+        NamedEventFamily.from_dict(item)
+        for item in (get_state("named_event_families") or [])
+    ]
+    occurrences = [
+        NamedEventOccurrence.from_dict(item)
+        for item in (get_state("named_event_occurrences") or [])
+    ]
+    definitions = [
+        EventResponseDefinition.from_dict(item)
+        for item in (get_state("named_event_response_definitions") or [])
+    ]
+    return build_named_event_fit_inputs(
+        frame,
+        families=families,
+        occurrences=occurrences,
+        response_definitions=definitions,
+    )
 
 
 def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
@@ -252,6 +631,8 @@ def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
     activity_definitions = get_state("activity_definitions") or []
     search_objects = get_state("search_objects") or []
     coverage_matrix_dict = get_state("variable_coverage_matrix")
+    named_event_fit_inputs = _named_event_fit_inputs_for_current_frame()
+    calibration_inputs = _calibration_inputs_for_current_fit()
     model_spec_fingerprint = fingerprint_model_spec(
         spec_dict,
         get_state("prior_config") or {},
@@ -288,6 +669,12 @@ def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
             else None
         ),
         official_preparation_evidence=get_state("official_preparation_result"),
+        named_event_fit_fingerprint=(
+            named_event_fit_inputs.fingerprint()
+            if named_event_fit_inputs is not None
+            else None
+        ),
+        calibration_fit_fingerprint=calibration_inputs_fingerprint(calibration_inputs),
     )
     return f"{fingerprint_dataframe(frame['df'])}:{model_spec_fingerprint}"
 

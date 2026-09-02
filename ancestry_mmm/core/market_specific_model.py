@@ -30,9 +30,10 @@ side for the model comparison workflow (docs/model_validation.md).
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
+import pandas as pd
 import pymc as pm
 import pytensor.tensor as pt
 
@@ -52,6 +53,17 @@ from .pathways import MediaOutcomePathway
 from .net_billthrough import assert_model_frame_net_billthrough_complete
 from .schema import ModelSpec
 from .transformations import pt_geometric_adstock_matrix, pt_hill_function
+from .named_event_fit_inputs import NamedEventFitInputs
+from .experiment_lift_test_mapping import (
+    ModelLiftTestCalibrationInput,
+    attach_lift_test_calibration_terms,
+    calibration_inputs_fingerprint,
+)
+from .named_event_response import (
+    EVENT_RESPONSE_SHRINKAGE_PRIOR_DEFAULT_SCALE,
+    NAMED_EVENT_RESPONSE_STRUCTURE,
+)
+from .seo_visibility import SeoModelFitInputs
 
 
 def _market_specific_adstock_and_saturation(
@@ -85,6 +97,9 @@ def build_fh_market_specific_model(
     prior_config: Optional[Dict] = None,
     direct_dna_outcome_ids: Optional[List[str]] = None,
     causal_graph: Optional[CausalGraph] = None,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
+    calibration_inputs: Optional[Sequence[ModelLiftTestCalibrationInput]] = None,
+    seo_fit_inputs: Optional[SeoModelFitInputs] = None,
 ) -> "tuple[pm.Model, FHModelMeta]":
     """
     Build the market-specific, partially-pooled joint hierarchical FH model
@@ -99,7 +114,9 @@ def build_fh_market_specific_model(
     module. `causal_graph` has the same meaning as Model A's - see
     `core.hierarchical_model.build_fh_hierarchical_model`.
     `direct_dna_outcome_ids` has the same meaning as Model A's - see
-    that function's docstring.
+    that function's docstring. `named_event_fit_inputs` has the same
+    meaning and the same additive, backward-compatible None default as
+    Model A's - see that function's docstring (Decision 12).
 
     Requires at least 2 markets - partial pooling across a single market is
     meaningless (there is nothing to pool with).
@@ -471,6 +488,32 @@ def build_fh_market_specific_model(
             + eta_promo
         )
 
+        if seo_fit_inputs is not None:
+            seo_fit_inputs.validate_frame(
+                markets=[markets[int(index)] for index in market_idx],
+                weeks=[str(pd.Timestamp(value).date()) for value in frame["dates"]],
+            )
+            seo_feature = pt.constant(
+                np.asarray(seo_fit_inputs.standardized_visibility, dtype=float)
+            )
+            seo_active = pt.constant(
+                np.asarray(seo_fit_inputs.active_mask, dtype=float)
+            )
+            seo_visibility_beta = pm.Normal(
+                "seo_visibility_beta",
+                mu=0,
+                sigma=prior_config.get("seo_visibility_sigma", 0.5),
+                dims="outcome",
+            )
+            eta_seo = pm.Deterministic(
+                "eta_seo_visibility",
+                seo_feature[:, None]
+                * seo_active[:, None]
+                * seo_visibility_beta[None, :],
+                dims=("obs", "outcome"),
+            )
+            eta = eta + eta_seo
+
         outcome_controls = frame.get("outcome_controls") or {}
         outcome_control_names = frame.get("outcome_control_names") or {}
         for oid, arr in outcome_controls.items():
@@ -504,6 +547,78 @@ def build_fh_market_specific_model(
                 + pm.math.dot(pt.as_tensor_variable(X_controls), control_coef)[:, None]
             )
 
+        # -----------------------------------------------------------------
+        # Named-event response (Decision 12, `core.named_event_fit_inputs`) -
+        # identical wiring to `core.hierarchical_model.
+        # build_fh_hierarchical_model`; see that function's own comment for
+        # the full rationale. None (the default) adds nothing to `eta` at
+        # all - no `event_*` variable exists in the model graph, so a
+        # project with no named event opted in fits byte-for-byte
+        # identically to before this parameter existed.
+        # -----------------------------------------------------------------
+        consumed_response_definitions: List[Any] = []
+        named_event_response_method_version = ""
+        named_event_fit_blocks: List[Any] = []
+        if named_event_fit_inputs is not None:
+            named_event_response_method_version = NAMED_EVENT_RESPONSE_STRUCTURE
+            consumed_response_definitions = list(
+                named_event_fit_inputs.consumed_response_definitions()
+            )
+            named_event_fit_blocks = [
+                (b.family_id, b.market) for b in named_event_fit_inputs.blocks
+            ]
+            eta_events = pt.zeros((n_obs, n_outcomes))
+            for family_id in named_event_fit_inputs.family_ids:
+                family_tau = pm.HalfNormal(
+                    f"event_tau_{family_id}",
+                    sigma=named_event_fit_inputs.shrinkage_prior_scale_by_family.get(
+                        family_id, EVENT_RESPONSE_SHRINKAGE_PRIOR_DEFAULT_SCALE
+                    ),
+                )
+                for event_block in named_event_fit_inputs.blocks_for_family(family_id):
+                    n_basis = event_block.design.shape[1]
+                    coord_name = f"event_basis_{family_id}_{event_block.market}"
+                    model.add_coord(coord_name, np.arange(n_basis))
+                    event_coefs = pm.Normal(
+                        f"event_coefs_{family_id}_{event_block.market}",
+                        mu=0,
+                        sigma=family_tau,
+                        dims=coord_name,
+                    )
+                    contrib = pm.math.dot(
+                        pt.as_tensor_variable(event_block.design), event_coefs
+                    )
+                    if event_block.outcome_scope:
+                        for scoped_outcome in event_block.outcome_scope:
+                            if scoped_outcome not in outcome_ids:
+                                continue
+                            o_idx = outcome_ids.index(scoped_outcome)
+                            eta_events = pt.set_subtensor(
+                                eta_events[:, o_idx],
+                                eta_events[:, o_idx] + contrib,
+                            )
+                    else:
+                        eta_events = eta_events + contrib[:, None]
+            eta_events = pm.Deterministic(
+                "eta_events", eta_events, dims=("obs", "outcome")
+            )
+            eta = eta + eta_events
+
+        if calibration_inputs:
+            attach_lift_test_calibration_terms(
+                model=model,
+                sat_media=sat_media,
+                hill_K=hill_K,
+                hill_S=hill_S,
+                beta=beta,
+                eta=eta,
+                channels=channels,
+                outcome_ids=outcome_ids,
+                primary_mask=pathway_masks.primary_matrix(outcome_ids, channels),
+                market_idx=market_idx,
+                inputs=calibration_inputs,
+            )
+
         mu = pm.Deterministic(
             "mu", pt.clip(pt.exp(eta), 1e-6, 1e9), dims=("obs", "outcome")
         )
@@ -519,7 +634,6 @@ def build_fh_market_specific_model(
             "y_obs", mu=mu, alpha=alpha[None, :], observed=Y, dims=("obs", "outcome")
         )
 
-    outcome_catalogue: List[Any] = frame.get("outcomes") or []
     meta = FHModelMeta(
         markets=markets,
         outcome_ids=outcome_ids,
@@ -563,5 +677,14 @@ def build_fh_market_specific_model(
         causal_graph_engine=(
             GRAPH_ENGINE_PYMC_HIERARCHICAL if causal_graph is not None else ""
         ),
+        named_event_response_definitions_at_fit=consumed_response_definitions,
+        named_event_response_method_version=named_event_response_method_version,
+        named_event_fit_blocks=named_event_fit_blocks,
+        calibration_inputs_at_fit=[
+            item.to_dict() for item in (calibration_inputs or ())
+        ],
+        calibration_fit_fingerprint=calibration_inputs_fingerprint(calibration_inputs)
+        or "",
+        seo_fit_inputs_at_fit=(seo_fit_inputs.to_dict() if seo_fit_inputs else {}),
     )
     return model, meta

@@ -234,6 +234,59 @@ class FutureContextResult:
         }
         return _sha256_hex(payload)
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "market": self.market,
+            "period_labels": list(self.period_labels),
+            "mode": self.mode,
+            "trend": self.trend.tolist(),
+            "fourier": self.fourier.tolist(),
+            "promo": self.promo.tolist(),
+            "outcome_ids": list(self.outcome_ids),
+            "control_names": list(self.control_names),
+            "X_controls": self.X_controls.tolist(),
+            "outcome_controls": {
+                key: value.tolist() for key, value in self.outcome_controls.items()
+            },
+            "outcome_control_names": {
+                key: list(value) for key, value in self.outcome_control_names.items()
+            },
+            "control_assumptions": [
+                assumption.to_dict() for assumption in self.control_assumptions
+            ],
+            "schema_version": self.schema_version,
+            "fingerprint": self.fingerprint(),
+        }
+
+    @classmethod
+    def from_dict(cls, values: Mapping[str, Any]) -> "FutureContextResult":
+        payload = dict(values)
+        payload["period_labels"] = tuple(payload.get("period_labels") or ())
+        payload["trend"] = np.asarray(payload.get("trend") or (), dtype=float)
+        payload["fourier"] = np.asarray(payload.get("fourier") or (), dtype=float)
+        payload["promo"] = np.asarray(payload.get("promo") or (), dtype=float)
+        payload["outcome_ids"] = tuple(payload.get("outcome_ids") or ())
+        payload["control_names"] = tuple(payload.get("control_names") or ())
+        payload["X_controls"] = np.asarray(payload.get("X_controls") or (), dtype=float)
+        payload["outcome_controls"] = {
+            key: np.asarray(value, dtype=float)
+            for key, value in (payload.get("outcome_controls") or {}).items()
+        }
+        payload["outcome_control_names"] = {
+            key: tuple(value)
+            for key, value in (payload.get("outcome_control_names") or {}).items()
+        }
+        payload["control_assumptions"] = tuple(
+            FutureControlAssumption(
+                name=str(item["name"]),
+                assumption=str(item["assumption"]),
+                is_decision_ready=bool(item["is_decision_ready"]),
+            )
+            for item in (payload.get("control_assumptions") or ())
+        )
+        known = set(cls.__dataclass_fields__)
+        return cls(**{key: value for key, value in payload.items() if key in known})
+
 
 def build_future_context(
     *,

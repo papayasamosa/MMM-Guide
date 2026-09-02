@@ -57,6 +57,7 @@ from ancestry_mmm.core.canonical_curves import (
 from ancestry_mmm.core.reporting_rollups import (
     ReportingEnrichmentError,
     build_reporting_views,
+    roll_up_paid_search_reporting_draws,
     summarize_reporting_draws,
 )
 from ancestry_mmm.core.outcome_group_totals import reporting_group_options
@@ -77,6 +78,7 @@ from ancestry_mmm.core.fingerprint import (
 )
 from ancestry_mmm.core.causal_graph import current_structural_fingerprint_for_identity
 from ancestry_mmm.core.outcomes import (
+    FH_LTR_HORIZON_MONTHS,
     fh_gsa_outcome_ids,
     fh_signup_outcome_ids,
     dna_kit_sale_outcome_ids,
@@ -248,7 +250,10 @@ def _render_outcome_valuation_catalogue_editor(meta, outcome_definitions, record
         "Family History rows value projected LTR against an approved "
         "outcome (e.g. sign-ups); DNA rows value revenue against an "
         "approved outcome (e.g. kit sales). Leave 'Value' blank only for "
-        "a quality status that denotes a genuinely absent value."
+        "a quality status that denotes a genuinely absent value. Family "
+        f"History LTR rows always use the approved {FH_LTR_HORIZON_MONTHS}"
+        "-month lifetime-value horizon (REQ-OUT-003) - this is applied "
+        "automatically, not an editable field."
     )
     edited_df = st.data_editor(
         _outcome_valuation_editor_df(records),
@@ -291,10 +296,20 @@ def _render_outcome_valuation_catalogue_editor(meta, outcome_definitions, record
             agg_value = None if pd.isna(agg_value) else float(agg_value)
             currency = row.get("currency")
             currency = None if pd.isna(currency) or not currency else str(currency)
+            valuation_kind = str(row["valuation_kind"])
+            # REQ-OUT-003 sections 1/6: the FH LTR horizon is a fixed governed
+            # fact, not an analyst-typed number - applied automatically so
+            # it can never be mistyped or silently omitted. DNA revenue
+            # rows carry no horizon concept at all.
+            horizon_months = (
+                FH_LTR_HORIZON_MONTHS
+                if valuation_kind == VALUATION_KIND_FH_LTR
+                else None
+            )
             try:
                 candidate_records.append(
                     WeeklyOutcomeValuationRecord(
-                        valuation_kind=str(row["valuation_kind"]),
+                        valuation_kind=valuation_kind,
                         market=str(row["market"]),
                         week=str(row["week"]),
                         segment=str(row["segment"]),
@@ -302,6 +317,7 @@ def _render_outcome_valuation_catalogue_editor(meta, outcome_definitions, record
                         quality_status=str(row["quality_status"]),
                         aggregate_value=agg_value,
                         currency=currency,
+                        horizon_months=horizon_months,
                     )
                 )
             except ValueError as exc:
@@ -860,6 +876,8 @@ def _humanise_reporting_summary(dataframe, outcome_labels):
     rename = {
         "reporting_channel": "Reporting channel",
         "platform": "Platform / supplier",
+        "search_intent_group_id": "Search intent group",
+        "search_platform": "Search platform",
         "activity_id": "Activity",
         "market": "Market",
         "segment": "Segment",
@@ -887,6 +905,8 @@ def _humanise_reporting_summary(dataframe, outcome_labels):
         "Funnel reporting group",
         "Reporting channel",
         "Platform / supplier",
+        "Search intent group",
+        "Search platform",
         "Activity",
         "Market",
         "Outcome",
@@ -1347,6 +1367,45 @@ def _render_official_reporting_views(artifact, activity_definitions, outcome_lab
                 width="stretch",
                 column_config=dataframe_column_config(displayed_summary),
             )
+            if _view_name == "channel_platform":
+                try:
+                    paid_search_draws = roll_up_paid_search_reporting_draws(
+                        draws,
+                        activity_definitions,
+                        measure="incremental_response",
+                        strict=True,
+                    )
+                except ReportingEnrichmentError as exc:
+                    st.error(
+                        "Paid Search hierarchy cannot be rendered until its "
+                        f"taxonomy is resolved: {exc}"
+                    )
+                else:
+                    if not paid_search_draws.empty:
+                        search_dimensions = [
+                            column
+                            for column in (
+                                "market",
+                                "outcome_id",
+                                "effect_type",
+                            )
+                            if column in paid_search_draws.columns
+                        ]
+                        search_summary = summarize_reporting_draws(
+                            paid_search_draws,
+                            by=search_dimensions,
+                        )
+                        st.markdown("**Paid Search reporting hierarchy**")
+                        st.caption(
+                            "Incremental response is aggregated within each "
+                            "posterior draw, then rolled up as Google/Bing × "
+                            "Brand/Non-Brand → Brand/Non-Brand → Total Paid Search."
+                        )
+                        st.dataframe(
+                            search_summary,
+                            width="stretch",
+                            column_config=dataframe_column_config(search_summary),
+                        )
             if view["funnel_rollup_status"].eq("contains_unclassified").any():
                 st.warning(
                     "Some activity results are grouped as Unclassified because "
@@ -1449,6 +1508,38 @@ def _render_official_artifact(
         width="stretch",
         column_config=dataframe_column_config(meta_df),
     )
+    _governed_context = governed_context_fields(md)
+    # Production-integration follow-up (Results/exports disclosure labels):
+    # a compact, prominent caption alongside the meta table - not buried in
+    # the "Technical details" expander below, which stays the place for the
+    # full governed-context dump. Every disclosure here is read straight
+    # from `_governed_context` (computed once, reused below too); nothing
+    # is recomputed or asserted beyond what that dict already reports, and
+    # a disclosure line is only shown when there is something real to say -
+    # "not_applicable" (the honest, common case for experiment/Search-
+    # capacity evidence today - see governed_context_fields' own docstring)
+    # renders no line at all, never a fabricated "N/A" or "0".
+    _outcome_metric_label = _governed_context.get("outcome_metric_label")
+    if _outcome_metric_label:
+        st.caption(f"Outcome definition: {_outcome_metric_label}")
+    if _governed_context.get("experiment_calibration_status") == "computed":
+        _n_experiments = _governed_context.get("linked_experiment_count") or 0
+        st.caption(
+            f"Calibrated: this model has {_n_experiments} registered experiment "
+            "use(s) linked at creation time (see Diagnostics for evidence detail)."
+        )
+    if _governed_context.get("search_capacity_status") == "computed":
+        if _governed_context.get("search_capacity_official_use_eligible") is False:
+            st.warning(
+                "Search capacity: this model's Candidate A Search evidence did "
+                "not clear the official-use gate at creation time (see "
+                "Diagnostics · Candidate A Search for the blocking reason)."
+            )
+        else:
+            st.caption(
+                "Search capacity: Candidate A Search evidence was assessed for "
+                "this model (see Diagnostics · Candidate A Search for detail)."
+            )
     render_technical_details(
         title="Technical details · saved response curve",
         details={
@@ -1462,7 +1553,7 @@ def _render_official_artifact(
             "Historical integrity": md.historical_integrity,
             "Current authorization status": authorization.current_authorization_status,
             "Requested-use eligibility": authorization.requested_use_eligibility,
-            **{key: value for key, value in governed_context_fields(md).items()},
+            **{key: value for key, value in _governed_context.items()},
         },
     )
     _render_official_artifact_curves(artifact, outcome_labels)
@@ -2098,6 +2189,9 @@ if model_run_id and spec_dict is not None:
                 else None
             ),
             official_preparation_evidence=get_state("official_preparation_result"),
+            calibration_fit_fingerprint=(
+                getattr(meta, "calibration_fit_fingerprint", "") or None
+            ),
         ),
         "posterior_fingerprint": fingerprint_posterior(params),
     }

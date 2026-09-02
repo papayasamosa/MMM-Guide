@@ -32,6 +32,8 @@ from ancestry_mmm.core.hierarchical_model import (
     build_fh_hierarchical_model,
 )
 from ancestry_mmm.core.market_specific_model import build_fh_market_specific_model
+from ancestry_mmm.core.named_event_fit_inputs import NamedEventFitInputs
+from ancestry_mmm.core.experiment_lift_test_mapping import ModelLiftTestCalibrationInput
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.search_capacity import (
     SEARCH_CANDIDATE_A_ENGINE,
@@ -41,6 +43,7 @@ from ancestry_mmm.core.search_capacity import (
     identify_candidate_a_search,
     validate_candidate_a_spec,
 )
+from ancestry_mmm.core.seo_visibility import SeoModelFitInputs
 from ancestry_mmm.core.search_objects import SearchObjectDefinition
 
 MODEL_TYPE_SHARED = "shared"
@@ -164,6 +167,9 @@ def build_model_for_spec(
     causal_graph: Optional[CausalGraph] = None,
     search_objects: Sequence[SearchObjectDefinition | Mapping[str, Any]] = (),
     candidate_a_fit_inputs: Optional[CandidateASearchFitInputs] = None,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
+    calibration_inputs: Optional[Sequence[ModelLiftTestCalibrationInput]] = None,
+    seo_fit_inputs: Optional[SeoModelFitInputs] = None,
 ) -> ModelFitResult:
     """The one place `pages/05_Model_Training.py` (or any non-Streamlit
     caller - a future FastAPI service, a batch job) should build a proposed
@@ -208,6 +214,9 @@ def build_model_for_spec(
             direct_dna_outcome_ids=direct_dna_outcome_ids,
             causal_graph=causal_graph,
             search_candidate_a=candidate_a_fit_inputs,
+            named_event_fit_inputs=named_event_fit_inputs,
+            calibration_inputs=calibration_inputs,
+            seo_fit_inputs=seo_fit_inputs,
         )
         return ModelFitResult(
             model=model,
@@ -230,6 +239,9 @@ def build_model_for_spec(
         prior_config=prior_config,
         direct_dna_outcome_ids=direct_dna_outcome_ids,
         causal_graph=causal_graph,
+        named_event_fit_inputs=named_event_fit_inputs,
+        calibration_inputs=calibration_inputs,
+        seo_fit_inputs=seo_fit_inputs,
     )
     return ModelFitResult(
         model=model,

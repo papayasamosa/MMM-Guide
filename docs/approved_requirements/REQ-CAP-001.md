@@ -161,3 +161,137 @@ Modelling
 ## Approval date
 
 2026-08-18
+
+## Addendum, 2026-08-30: generalisation direction approved (Decision 18), G1/G2/G3 remains genuinely open
+
+The business-decision brief "Post-UI/UX Implementation Instructions:
+Approved Business Decisions" (Decision 18, "Real-world capacity
+constraints belong in the optimiser") approves the *business
+requirement* that capacity constraints must be flexible, user-editable,
+and shared consistently across Scenario Planner, Optimiser, and
+Search-specific capped contribution — this is directionally **Candidate
+G1** ("generalise now: a shared module") from `docs/wp11_capacity_cap_
+semantics_decision_package.md`, since a Candidate-A-scoped-only module
+(G2) cannot serve TV inventory, sponsorship inventory, or any other
+non-Search capacity example Decision 18 names.
+
+This addendum does **not** select G1 over G3 (approve the vocabulary now,
+defer only the shared module) — both remain compatible with Decision
+18's business requirement, and the engineering-risk tradeoff between them
+(encoding accidental Candidate-A-specific assumptions into a premature
+generalisation, vs. leaving the gap unimplementable in any pathway-
+agnostic sense) is exactly the kind of question this package's own text
+reserves for a future implementation-time decision, not a business
+policy this brief settles. **Candidate S1/S2/S3 (the cap-hit status
+vocabulary's concrete definition) also remains fully open** — Decision
+18 does not specify how "ambiguous" or "unavailable" should be
+represented.
+
+**What this addendum does approve, at the contract level:** capacity
+constraints must be expressible for at least the categories Decision 18
+names (spend limits, delivery/exposure limits, availability on/off,
+fixed commitments, minimum/maximum ranges) and usable by Scenario
+Planner, Optimiser (see `REQ-OPT-001`'s Requirement 4, which cross-
+references this record rather than duplicating it), and Search-specific
+capped contribution from one governed source — never three independently
+diverging capacity representations. A non-money-denominated limit (e.g.
+impressions) must never be silently treated as a spend cap absent a
+valid, governed mapping — reaffirming, not changing, `AGENTS.md`'s
+existing invariant this record's §1 already cites. The optimisation
+result must disclose which constraints (of any kind) were binding, per
+`REQ-OPT-001`'s Requirement 5.
+
+No code, schema, or module is created by this addendum. Phase E
+implementation must still resolve G1/G2/G3 and S1/S2/S3 via
+`docs/wp11_capacity_cap_semantics_decision_package.md` before building
+anything.
+
+## Addendum, 2026-08-30 (Phase C/E): cap-hit vocabulary and shared module implemented (Decisions 10/18)
+
+The user's 2026-08-29 "Post-UI/UX Implementation Instructions" brief,
+confirmed in-session 2026-08-30, explicitly delegates this record's
+S1-S3/G1-G3 technical selection (previously reserved by
+`docs/wp11_capacity_cap_semantics_decision_package.md`) to research and
+validation, while retaining ownership of the business questions
+(Decisions 10 and 18, already answered). This addendum records the
+resulting resolution: full decision record in
+`docs/capacity_cap_semantics_decision_record.md`; implementation in the
+new `ancestry_mmm/core/capacity.py`.
+
+**Resolved:**
+
+- the cap-hit status vocabulary's concrete operational definition
+  (`unavailable` = no governed cap value at all, distinct from a
+  supplied finite cap of zero; `ambiguous` = only reachable from
+  posterior-draw evidence, via an explicit, documented `0.20`
+  probability-of-binding ambiguity band around 0.5; `capped`/`uncapped`
+  otherwise) - S1, extended so the full underlying probability/point
+  evidence is always retained and disclosed alongside the categorical
+  label, never replaced by it;
+- the module-sharing timing - G1, scoped precisely to the cap-hit
+  vocabulary, the governed `CapacityLimitDefinition` object (spanning
+  Decision 18's named categories: spend limits, delivery/exposure
+  limits, availability toggles, fixed commitments, bounded ranges), and
+  the generalised reconciliation identity
+  (`verify_capacity_reconciliation`) - NOT `core.graph_model_compiler`'s
+  `capacity_constrained` structural validation, which remains
+  Candidate-A-only until a second concrete capacity-constrained pathway
+  actually exists to validate against (a narrower, still-legitimate
+  deferral, not a re-reservation);
+- what "a governed source and versioned cap-hit rule" requires beyond
+  the cap object's own existing identity/versioning: the classification
+  RULE itself (the ambiguity band and point-evaluation tolerance) is now
+  independently versioned (`CAP_HIT_CLASSIFICATION_RULE_VERSION`);
+- whether Candidate A's reconciliation identity generalises: yes, as
+  `realised + unmet == potential`, grounded in PyMC's own official
+  `Censored` distribution (confirmed via Context7) as a recognised
+  statistical pattern for the underlying min/censoring relationship,
+  without prescribing any specific likelihood family (`AGENTS.md`'s "not
+  one frozen algebraic form" caution preserved).
+
+`ancestry_mmm/core/search_capacity.py` is extended, not replaced: a new
+`candidate_a_cap_hit_status` function computes the four-value
+classification from Candidate A's existing cap/binding-evidence inputs
+via `core.capacity`'s shared function. `CandidateAForwardState.cap_
+binding` and `CandidateAPosteriorOutputs.probability_cap_binding`
+(the existing boolean/probability fields) are completely unchanged -
+verified by dedicated regression tests.
+
+**Still not resolved / deliberately out of scope:** `core.graph_model_
+compiler`'s compiler-level support for a second capacity-constrained
+pathway (no such pathway exists yet); any actual capacity VALUE for a
+real market/channel (this addendum supplies the governed shape, never
+invents a number); wiring `CapacityLimitDefinition` into the Scenario
+Planner/Optimiser UI (a separate integration pass, `REQ-OPT-001`'s own
+scope).
+
+## Addendum, 2026-08-31: generalised plan-application layer implemented (Decision 18 continuation)
+
+The previous addendum's "wiring `CapacityLimitDefinition` into the
+Scenario Planner/Optimiser UI" item is partially resolved: the
+underlying *application logic* (as opposed to the UI itself) now exists,
+usable identically by Scenario Planner and Optimiser. Full decision
+record in `docs/capacity_plan_application_decision_record.md`;
+implementation in the new `ancestry_mmm/core/capacity_plan_
+application.py`.
+
+**Resolved:** `classify_capacity_limit_binding` (report-only, reuses
+`classify_cap_hit_status` unchanged) for Scenario-Planner-style
+disclosure; `apply_capacity_limits_to_bounds` (tightens a scipy bounds
+list in the same shape `core.optimization_constraint_vocabulary`
+produces) for Optimiser-style bounds application - both read one
+governed `CapacityLimitDefinition` source, satisfying `REQ-OPT-001`
+Requirement 4's "usable together... disclosing which constraints of
+either kind were binding." A non-money-denominated limit
+(`delivery_exposure_limit`, `fixed_commitment`, `bounded_range`) is
+applied to spend bounds only when the caller supplies an explicit
+`unit_to_spend_rate`; absent one it is disclosed as advisory-only, never
+silently treated as a spend cap - reaffirming, not changing, this
+record's own §1 invariant. `availability_toggle` off forces a `(0, 0)`
+bound, disclosed as a distinct fact from an analyst's own zero-spend
+choice.
+
+**Still not resolved / deliberately out of scope:** actual UI wiring in
+`pages/08_Scenario_Planner.py`; integration into `core.optimization.
+optimize_scenario`'s SLSQP call sites; any real capacity value or
+unit-to-spend conversion rate for an actual market/channel.

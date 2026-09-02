@@ -7,8 +7,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-import streamlit as st
 import pandas as pd
+import numpy as np
+import streamlit as st
 
 from ancestry_mmm.utils import (
     init_session_state,
@@ -63,6 +64,17 @@ from ancestry_mmm.core.search_objects import (
 )
 from ancestry_mmm.core.coverage import VariableCoverageMatrix
 from ancestry_mmm.core.market_data_capability import check_market_channel_capability
+from ancestry_mmm.core.data_support_classification import (
+    DATA_SUPPORT_CLASSIFICATION_VERSION,
+    DATA_SUPPORT_NOT_SUFFICIENT,
+    DATA_SUPPORT_SUFFICIENT,
+    DATA_SUPPORT_WEAK,
+    GOVERNED_RESPONSES,
+)
+from ancestry_mmm.application.data_support_service import (
+    assemble_project_data_support_overview,
+)
+from ancestry_mmm.core.baseline_diagnostics import detect_residual_level_shift
 from ancestry_mmm.application.diagnostics_service import (
     DiagnosticsService,
     DiagnosticsInput,
@@ -86,6 +98,15 @@ from ancestry_mmm.core.causal_graph import (
     CausalGraph,
     current_structural_fingerprint_for_identity,
 )
+from ancestry_mmm.core.named_event_fit_inputs import (
+    build_named_event_fit_inputs,
+    build_named_event_fit_inputs_for_replay,
+)
+from ancestry_mmm.core.named_events import (
+    EventResponseDefinition,
+    NamedEventFamily,
+    NamedEventOccurrence,
+)
 from ancestry_mmm.core.funnel import FunnelLink, funnel_coherence_diagnostics
 from ancestry_mmm.core.outcomes import (
     outcome_catalogue_fingerprint_payload,
@@ -107,7 +128,12 @@ from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
 from ancestry_mmm.core.market_specific_model import build_fh_market_specific_model
 from ancestry_mmm.core.models import fit_model
 from ancestry_mmm.application.model_fit_service import build_model_for_spec
-from ancestry_mmm.core.search_capacity import SEARCH_CANDIDATE_A_ENGINE
+from ancestry_mmm.core.search_capacity import (
+    SEARCH_CANDIDATE_A_ENGINE,
+    CandidateASearchFitInputs,
+)
+from ancestry_mmm.core.google_trends_anchor import GoogleTrendsAnchorFitInputs
+from ancestry_mmm.core.seo_visibility import SeoModelFitInputs
 from ancestry_mmm.core.predict import extract_posterior_params, predict_mu
 from ancestry_mmm.core.market_specific_predict import (
     extract_market_specific_posterior_params,
@@ -140,11 +166,143 @@ from ancestry_mmm.core.experiments import (
     ExperimentRecord,
     ExperimentToModelUse,
 )
+from ancestry_mmm.core.experiment_lift_test_mapping import (
+    ModelLiftTestCalibrationInput,
+)
 
 MODEL_TYPE_LABEL = {
     "shared": "Shared response across markets",
     "market_specific": "Market-specific response with partial pooling",
 }
+
+
+def _diagnostics_named_event_fit_inputs(frame, meta):
+    """Build the exact fit-time named-event basis for diagnostics replay.
+
+    Diagnostics is a replay caller, so it must use the current factual event
+    registry while pinning response-definition versions to the fit metadata.
+    An event-consuming fit is intentionally left fail-closed when the
+    registry cannot supply those records.
+    """
+    if not meta.named_event_response_definitions_at_fit:
+        return None
+    families, occurrences, definitions = _current_named_event_registry()
+    return build_named_event_fit_inputs_for_replay(
+        frame,
+        families=families,
+        occurrences=occurrences,
+        response_definitions=definitions,
+        fitted_response_definitions=meta.named_event_response_definitions_at_fit,
+    )
+
+
+def _current_named_event_registry():
+    """Return the current project event registry as typed records."""
+    families = [
+        NamedEventFamily.from_dict(item)
+        for item in (get_state("named_event_families") or [])
+    ]
+    occurrences = [
+        NamedEventOccurrence.from_dict(item)
+        for item in (get_state("named_event_occurrences") or [])
+    ]
+    definitions = [
+        EventResponseDefinition.from_dict(item)
+        for item in (get_state("named_event_response_definitions") or [])
+    ]
+    return families, occurrences, definitions
+
+
+def _backtest_named_event_fit_inputs(frame):
+    """Build fit-time named-event inputs for one leakage-safe train frame."""
+    families, occurrences, definitions = _current_named_event_registry()
+    return build_named_event_fit_inputs(
+        frame,
+        families=families,
+        occurrences=occurrences,
+        response_definitions=definitions,
+    )
+
+
+def _backtest_named_event_replay_inputs(frame, fitted_response_definitions):
+    """Build a fold-test replay basis pinned to that fold's fit metadata."""
+    if not fitted_response_definitions:
+        return None
+    families, occurrences, definitions = _current_named_event_registry()
+    return build_named_event_fit_inputs_for_replay(
+        frame,
+        families=families,
+        occurrences=occurrences,
+        response_definitions=definitions,
+        fitted_response_definitions=fitted_response_definitions,
+    )
+
+
+def _candidate_a_fit_inputs_for_rebuild():
+    """Restore the exact Candidate A observation boundary for diagnostics.
+
+    Candidate A is an engine choice, not a generic Search label. A calibrated
+    or prior-predictive rebuild must receive the same validated arrays and
+    Trends anchor used by fitting; otherwise Diagnostics would test a
+    different model or silently fall back to the ordinary MMM.
+    """
+    if getattr(meta, "causal_graph_engine", "") != SEARCH_CANDIDATE_A_ENGINE:
+        return None
+    payload = get_state("candidate_a_fit_inputs")
+    if payload is None:
+        raise ValueError(
+            "This fit used Candidate A, but its persisted Search fit inputs "
+            "are unavailable; cannot rebuild the exact fit-time model."
+        )
+    fit_inputs = (
+        payload
+        if isinstance(payload, CandidateASearchFitInputs)
+        else CandidateASearchFitInputs.from_dict(payload)
+    )
+    anchor_payload = get_state("google_trends_anchor")
+    if anchor_payload:
+        anchor = GoogleTrendsAnchorFitInputs.from_dict(anchor_payload)
+        if tuple(anchor.model_weeks) != tuple(
+            str(pd.Timestamp(value).date()) for value in frame["dates"]
+        ):
+            raise ValueError(
+                "The persisted Google Trends anchor no longer covers this "
+                "fit's frame; cannot rebuild the exact model."
+            )
+        from dataclasses import replace
+
+        fit_inputs = replace(fit_inputs, google_trends_anchor=anchor)
+    return fit_inputs
+
+
+def _seo_fit_inputs_for_rebuild():
+    payload = get_state("seo_fit_inputs")
+    if payload is None:
+        if getattr(meta, "seo_fit_inputs_at_fit", None):
+            return SeoModelFitInputs.from_dict(meta.seo_fit_inputs_at_fit)
+        return None
+    fit_inputs = (
+        payload
+        if isinstance(payload, SeoModelFitInputs)
+        else SeoModelFitInputs.from_dict(payload)
+    )
+    fit_inputs.validate_frame(
+        markets=[frame["markets"][int(index)] for index in frame["market_idx"]],
+        weeks=[str(pd.Timestamp(value).date()) for value in frame["dates"]],
+    )
+    return fit_inputs
+
+
+def _calibration_inputs_for_rebuild():
+    """Restore fit-pinned calibration inputs from `FHModelMeta`."""
+    payload = getattr(meta, "calibration_inputs_at_fit", []) or []
+    if getattr(meta, "calibration_fit_fingerprint", "") and not payload:
+        raise ValueError(
+            "This fit records calibration identity but not its fit-time rows; "
+            "cannot rebuild the exact calibrated model."
+        )
+    return [ModelLiftTestCalibrationInput.from_dict(item) for item in payload]
+
 
 st.set_page_config(
     page_title="Model Diagnostics | Ancestry Family History & DNA MMM",
@@ -281,6 +439,7 @@ experiment_assessments = [
 # can silently drift apart on what they each think "the current model" is.
 current_model_identity: "ModelIdentity | None" = None
 if model_run_id and posterior_params is not None and model_spec_dict is not None:
+    current_named_event_fit_inputs = _backtest_named_event_fit_inputs(frame)
     current_model_identity = ModelIdentity(
         model_run_id=model_run_id,
         data_fingerprint=fingerprint_dataframe(frame["df"]),
@@ -326,12 +485,20 @@ if model_run_id and posterior_params is not None and model_spec_dict is not None
                 if search_objects
                 else None
             ),
+            named_event_fit_fingerprint=(
+                current_named_event_fit_inputs.fingerprint()
+                if current_named_event_fit_inputs is not None
+                else None
+            ),
             variable_coverage_fingerprint=(
                 VariableCoverageMatrix.from_dict(coverage_matrix_dict).fingerprint()
                 if coverage_matrix_dict
                 else None
             ),
             official_preparation_evidence=get_state("official_preparation_result"),
+            calibration_fit_fingerprint=(
+                getattr(meta, "calibration_fit_fingerprint", "") or None
+            ),
         ),
         posterior_fingerprint=fingerprint_posterior(posterior_params),
     )
@@ -370,6 +537,7 @@ if st.button("Compute scorecard", type="primary"):
             frame=frame,
             meta=meta,
             model_type=model_type,
+            named_event_fit_inputs=_diagnostics_named_event_fit_inputs(frame, meta),
             model_identity=current_model_identity,
             raw_model_spec=(
                 ModelSpec.from_dict(model_spec_dict) if model_spec_dict else None
@@ -713,6 +881,63 @@ def _render_residual_explorer(payload: dict, meta, outcome_labels: dict) -> None
         width="stretch",
     )
 
+    # Decision 15 (REQ-BASELINE-001): a bounded, opt-in, diagnostic-only
+    # residual level-shift check (core.baseline_diagnostics.detect_
+    # residual_level_shift), read from this exact same view_df["residual"]
+    # series - never a separately recomputed residual. Deliberately NOT
+    # wired into any causal pathway, planning surface, or official-use
+    # gate (the decision record's own T3/P1 resolution: the existing
+    # trend/Fourier terms already satisfy the time-varying-baseline
+    # planning intent; no new latent process was approved) - this is
+    # display-only, a signal for a human to investigate, never an
+    # automatically-modelled effect.
+    if len(view_df) >= 2:
+        with st.expander("Residual level-shift diagnostic (Decision 15)"):
+            st.caption(
+                "Checks whether this residual series shows an unexplained "
+                "mean shift before vs. after a chosen week - e.g. a "
+                "competitor launch or market shock the model's trend/"
+                "seasonality/media terms do not already explain. A simple, "
+                "transparent two-sample check, not a formal changepoint "
+                "test or a claim of statistical significance."
+            )
+            _shift_dates = view_df["date"].tolist()
+            _breakpoint_choice = st.select_slider(
+                "Split week",
+                options=list(range(1, len(_shift_dates))),
+                value=len(_shift_dates) // 2,
+                format_func=lambda i: str(_shift_dates[i]),
+                key="residual_shift_breakpoint",
+            )
+            _threshold = st.number_input(
+                "Threshold (standard deviations)",
+                min_value=0.1,
+                value=2.0,
+                step=0.1,
+                key="residual_shift_threshold",
+            )
+            _shift_result = detect_residual_level_shift(
+                view_df["residual"].to_numpy(dtype=float),
+                breakpoint_index=int(_breakpoint_choice),
+                threshold_std_devs=float(_threshold),
+            )
+            _shift_cols = st.columns(3)
+            _shift_cols[0].metric(
+                "Mean before", format_number(_shift_result.mean_before)
+            )
+            _shift_cols[1].metric("Mean after", format_number(_shift_result.mean_after))
+            _shift_cols[2].metric(
+                "Shift detected", "Yes" if _shift_result.shift_detected else "No"
+            )
+            if _shift_result.shift_detected:
+                st.warning(
+                    f"Mean residual shifted by {_shift_result.shift_magnitude:.3g} "
+                    f"at {_shift_dates[_breakpoint_choice]} - beyond "
+                    f"{_threshold:g} pooled standard deviations. Worth human "
+                    "investigation; not itself evidence of a causal effect."
+                )
+            st.caption(_shift_result.disclaimer)
+
     if comparison_ids:
         base_label = view_label
         base_series = view_df[["date", "residual"]].assign(series=base_label)
@@ -848,14 +1073,25 @@ st.caption(
     "separately."
 )
 if scorecard:
-    tab_conv, tab_fit, tab_ppc, tab_plaus, tab_ident, tab_candidate_a = st.tabs(
+    (
+        tab_conv,
+        tab_fit,
+        tab_ppc,
+        tab_plaus,
+        tab_ident,
+        tab_support,
+        tab_candidate_a,
+        tab_seo,
+    ) = st.tabs(
         [
             "Convergence",
             "In-sample fit & error metrics",
             "Posterior predictive coverage",
             "Plausibility flags",
             "Identification & collinearity",
+            "Data support classification",
             "Candidate A Search",
+            "SEO visibility",
         ]
     )
     with tab_conv:
@@ -1074,6 +1310,178 @@ if scorecard:
                 elif stab_section.status == "failed":
                     st.error(f"Coefficient stability failed: {stab_section.error}")
 
+    with tab_support:
+        st.caption(
+            "Consolidated per-channel data-support verdict (Decision 17, "
+            "REQ-DATASUPPORT-001): sufficient to attempt estimation / "
+            "weak-support-limited / not sufficient for a separate "
+            "coefficient. This rolls up evidence already computed "
+            "elsewhere - the Identification & collinearity tab above, the "
+            "pre-fit support review on Model Config, and the Data Coverage "
+            "review - into one verdict per channel. It never recomputes "
+            "any of them, and never replaces their own detail tabs, which "
+            "remain the place to review the full evidence behind this "
+            "rollup."
+        )
+        render_decision_help(
+            "How the consolidated verdict is built",
+            controls=(
+                "Whether a channel's evidence is strong enough to estimate "
+                "a separate coefficient for it at all, across up to twelve "
+                "named evidence dimensions (Decision 17)."
+            ),
+            why=(
+                "A model can converge and fit well while still not being "
+                "able to separately identify a channel's own effect - this "
+                "rollup surfaces that risk per channel, before relying on "
+                "its estimated coefficient."
+            ),
+            options={
+                "Sufficient to attempt estimation": (
+                    "No evidence dimension with an approved severity "
+                    "threshold raised a concern."
+                ),
+                "Weak support-limited": (
+                    "At least one dimension raised a moderate concern - "
+                    "review before trusting this channel's separate effect."
+                ),
+                "Not sufficient for a separate coefficient": (
+                    "At least one dimension raised a severe concern - an "
+                    "explicit governed response (group into a higher-level "
+                    "channel, stronger regularisation, partial pooling, or "
+                    "exclude and retain in aggregate) is required before "
+                    "this classification can be recorded."
+                ),
+            },
+            normal_path=(
+                "Most channels with a reasonable history and clean "
+                "identification evidence come back sufficient with no "
+                "action needed."
+            ),
+            downstream=(
+                "This is a diagnostic verdict only - it does not change the "
+                "fitted model, select channels, or refit anything by "
+                "itself. Choosing a governed response below records the "
+                "analyst's decision alongside the evidence; it does not by "
+                "itself alter model inputs."
+            ),
+            invalidates=(
+                "No - this reads already-computed evidence and never "
+                "refits or changes any existing approval."
+            ),
+        )
+        _support_channels = (
+            list(model_spec_dict.get("channels") or []) if model_spec_dict else []
+        )
+        if not _support_channels:
+            st.info("No channels configured for the current model spec.")
+        else:
+            _support_prefit_report = get_state("prefit_identifiability")
+            _support_identification_payload = (
+                ident_section.payload
+                if ident_section is not None and ident_section.status == "computed"
+                else None
+            )
+            _support_response_key = "data_support_governed_response_by_channel"
+            _support_response_by_channel = dict(get_state(_support_response_key) or {})
+            _support_overview = assemble_project_data_support_overview(
+                _support_channels,
+                prefit_report=_support_prefit_report,
+                identification_payload=_support_identification_payload,
+                coverage_matrix_dict=coverage_matrix_dict,
+                governed_response_by_channel=_support_response_by_channel,
+            )
+            _support_state_to_badge = {
+                DATA_SUPPORT_SUFFICIENT: "pass",
+                DATA_SUPPORT_WEAK: "review",
+                DATA_SUPPORT_NOT_SUFFICIENT: "fail",
+            }
+            for _support_row in _support_overview:
+                _support_cols = st.columns([2, 1, 5])
+                with _support_cols[0]:
+                    st.markdown(f"**{_support_row['channel']}**")
+                with _support_cols[1]:
+                    render_status_badge(
+                        _support_state_to_badge.get(_support_row["state"], "neutral")
+                    )
+                with _support_cols[2]:
+                    if _support_row["reasons"]:
+                        st.caption(
+                            "Concern raised by: "
+                            + ", ".join(
+                                r.replace("_", " ") for r in _support_row["reasons"]
+                            )
+                        )
+                    else:
+                        st.caption(
+                            "No dimension with an approved severity threshold "
+                            "raised a concern."
+                        )
+                if _support_row["needs_governed_response"]:
+                    _support_response_options = ["(not yet chosen)"] + list(
+                        GOVERNED_RESPONSES
+                    )
+                    _support_current_response = _support_response_by_channel.get(
+                        _support_row["channel"]
+                    )
+                    _support_default_index = (
+                        _support_response_options.index(_support_current_response)
+                        if _support_current_response in _support_response_options
+                        else 0
+                    )
+                    _support_chosen_response = st.selectbox(
+                        f"Governed response for {_support_row['channel']}",
+                        _support_response_options,
+                        index=_support_default_index,
+                        key=f"data_support_response_select__{_support_row['channel']}",
+                        help=(
+                            "Required before this channel's weak/not-"
+                            "sufficient verdict can be recorded (Decision 17 "
+                            "Requirement 3) - never silently defaulted."
+                        ),
+                    )
+                    if (
+                        _support_chosen_response != "(not yet chosen)"
+                        and _support_chosen_response != _support_current_response
+                    ):
+                        _support_response_by_channel[_support_row["channel"]] = (
+                            _support_chosen_response
+                        )
+                        set_state(_support_response_key, _support_response_by_channel)
+                        st.rerun()
+                    if _support_row["classification"] is None:
+                        st.warning(
+                            f"{_support_row['channel']}: pending an explicit "
+                            "governed response before a verdict can be recorded."
+                        )
+                with st.expander(f"{_support_row['channel']}: evidence detail"):
+                    _support_evidence_dict = _support_row["evidence"].to_dict()
+                    _support_evidence_rows = [
+                        {
+                            "Dimension": rec["dimension"].replace("_", " "),
+                            "Available": rec["available"],
+                            "Value": rec["value"],
+                            "Source": rec["source_module"],
+                            "Severity": rec["severity"].replace("_", " "),
+                        }
+                        for rec in _support_evidence_dict["dimension_records"]
+                    ]
+                    st.dataframe(
+                        pd.DataFrame(_support_evidence_rows),
+                        width="stretch",
+                        hide_index=True,
+                    )
+                st.markdown("---")
+            render_technical_details(
+                details={
+                    "Evidence version": DATA_SUPPORT_CLASSIFICATION_VERSION,
+                    "Combination policy": (
+                        "worst_dimension_wins_default (disclosed convention, "
+                        "not an approved business threshold - see Decision 17)"
+                    ),
+                }
+            )
+
     with tab_candidate_a:
         st.caption(
             "Candidate A Search mediation/capacity evidence (REQ-SEARCH-002) - "
@@ -1137,6 +1545,63 @@ if scorecard:
                 st.markdown("#### Official-use gate")
                 st.write(
                     f"Official use eligible: **{use_gate['official_use_eligible']}**"
+                )
+
+    with tab_seo:
+        st.caption(
+            "SEO visibility is fitted as a window-gated mediator/capture-efficiency "
+            "state. The full outcome history remains in the likelihood; weeks outside "
+            "the valid GSC window are inactive, never zero-filled."
+        )
+        seo_payload = getattr(meta, "seo_fit_inputs_at_fit", None) if meta else None
+        if not seo_payload:
+            st.info(
+                "No SEO visibility observations were supplied to this fitted model. "
+                "The SEO pathway is unavailable until a governed GSC positional-visibility "
+                "upload is attached during model fitting."
+            )
+        else:
+            try:
+                seo_fit_inputs = SeoModelFitInputs.from_dict(seo_payload)
+            except (TypeError, ValueError, KeyError) as exc:
+                st.error(f"Persisted SEO fit metadata is invalid: {exc}")
+            else:
+                seo_rows = []
+                for market, window in sorted(seo_fit_inputs.window_by_market.items()):
+                    market_mask = np.asarray(
+                        [value == market for value in seo_fit_inputs.model_markets],
+                        dtype=bool,
+                    )
+                    active_mask = np.asarray(seo_fit_inputs.active_mask, dtype=float)
+                    seo_rows.append(
+                        {
+                            "market": market,
+                            "valid_start": window.start_week,
+                            "valid_end": window.end_week,
+                            "weeks_observed": window.weeks_observed,
+                            "model_weeks": int(market_mask.sum()),
+                            "active_weeks": int(np.sum(active_mask[market_mask] > 0)),
+                        }
+                    )
+                if seo_rows:
+                    st.dataframe(
+                        pd.DataFrame(seo_rows),
+                        width="stretch",
+                        column_config=dataframe_column_config(pd.DataFrame(seo_rows)),
+                    )
+                st.write(
+                    {
+                        "metric": seo_fit_inputs.metric_definition.metric_name,
+                        "pathway": seo_fit_inputs.pathway_id,
+                        "standardization_center": seo_fit_inputs.standardization_center,
+                        "standardization_scale": seo_fit_inputs.standardization_scale,
+                        "active_rows": int(
+                            np.sum(np.asarray(seo_fit_inputs.active_mask) > 0)
+                        ),
+                        "inactive_rows": int(
+                            np.sum(np.asarray(seo_fit_inputs.active_mask) == 0)
+                        ),
+                    }
                 )
                 if use_gate["blocking_reasons"]:
                     for reason in use_gate["blocking_reasons"]:
@@ -1547,16 +2012,10 @@ def _rebuild_fit_time_model():
 
     WP3 (`Media-Mix-Lab: Coding LLM Next Steps After PR #253`): routes
     through `application.model_fit_service.build_model_for_spec` (the same
-    engine-selection adapter Model Training uses) instead of the previous
-    inline shared/market-specific ternary, which silently rebuilt the
-    *ordinary* model - dropping the entire Candidate A Search chain - for
-    any fit whose approved graph required the Candidate A engine. No UI on
-    this page (or Model Training) yet collects Candidate A Search
-    observations into session state, so `build_model_for_spec` currently
-    fails closed with a specific `ModelFitServiceError` for such a fit
-    instead: an honest "cannot rebuild" error is safer than a silently
-    wrong prior-predictive/predictive-density check against the wrong
-    model structure.
+    engine-selection adapter Model Training uses), restoring both the
+    fit-pinned Candidate A Search boundary and fit-pinned calibration terms.
+    If either boundary is unavailable or stale, the rebuild fails closed with
+    an explicit evidence error rather than checking the wrong model.
     """
     rebuild_spec = ModelSpec.from_dict(get_state("model_spec"))
     rebuild_causal_graph = None
@@ -1600,6 +2059,9 @@ def _rebuild_fit_time_model():
         direct_dna_outcome_ids=meta.direct_dna_outcome_ids,
         causal_graph=rebuild_causal_graph,
         search_objects=get_state("search_objects") or [],
+        candidate_a_fit_inputs=_candidate_a_fit_inputs_for_rebuild(),
+        calibration_inputs=_calibration_inputs_for_rebuild(),
+        seo_fit_inputs=_seo_fit_inputs_for_rebuild(),
     )
     return result.model
 
@@ -1824,6 +2286,7 @@ with st.expander("Out-of-sample accuracy (expanding-window backtest)", expanded=
 
             def fit_fold(train_df, test_df):
                 train_frame = prepare_fh_modeling_frame(train_df, spec)
+                named_event_fit_inputs = _backtest_named_event_fit_inputs(train_frame)
                 if model_type == "market_specific" and len(train_frame["markets"]) >= 2:
                     fold_model, fold_meta = build_fh_market_specific_model(
                         train_frame,
@@ -1831,6 +2294,7 @@ with st.expander("Out-of-sample accuracy (expanding-window backtest)", expanded=
                         dna_lag_weeks=dna_lag_weeks,
                         prior_config=prior_config,
                         dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
+                        named_event_fit_inputs=named_event_fit_inputs,
                     )
                 else:
                     fold_model, fold_meta = build_fh_hierarchical_model(
@@ -1839,6 +2303,7 @@ with st.expander("Out-of-sample accuracy (expanding-window backtest)", expanded=
                         dna_lag_weeks=dna_lag_weeks,
                         prior_config=prior_config,
                         dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
+                        named_event_fit_inputs=named_event_fit_inputs,
                     )
                 fold_trace = fit_model(
                     fold_model,
@@ -1850,16 +2315,38 @@ with st.expander("Out-of-sample accuracy (expanding-window backtest)", expanded=
                 )
 
                 test_frame = prepare_fh_modeling_frame(test_df, spec)
+                families, occurrences, definitions = _current_named_event_registry()
+                named_event_test_inputs = (
+                    build_named_event_fit_inputs_for_replay(
+                        test_frame,
+                        families=families,
+                        occurrences=occurrences,
+                        response_definitions=definitions,
+                        fitted_response_definitions=(
+                            fold_meta.named_event_response_definitions_at_fit
+                        ),
+                    )
+                    if fold_meta.named_event_response_definitions_at_fit
+                    else None
+                )
                 if model_type == "market_specific" and len(train_frame["markets"]) >= 2:
                     fold_params = extract_market_specific_posterior_params(
                         fold_trace, fold_meta
                     )
                     mu_test = predict_mu_market_specific(
-                        test_frame, fold_meta, fold_params
+                        test_frame,
+                        fold_meta,
+                        fold_params,
+                        named_event_fit_inputs=named_event_test_inputs,
                     )
                 else:
                     fold_params = extract_posterior_params(fold_trace, fold_meta)
-                    mu_test = predict_mu(test_frame, fold_meta, fold_params)
+                    mu_test = predict_mu(
+                        test_frame,
+                        fold_meta,
+                        fold_params,
+                        named_event_fit_inputs=named_event_test_inputs,
+                    )
 
                 r2_by_seg, mape_by_seg = {}, {}
                 for i, oid in enumerate(fold_meta.outcome_ids):
@@ -2120,6 +2607,12 @@ with st.expander("Historical validation & structural stability", expanded=False)
                             prior_config=get_state("prior_config"),
                             draws=int(hv_draws),
                             tune=int(hv_draws),
+                            named_event_fit_inputs_factory=(
+                                _backtest_named_event_fit_inputs
+                            ),
+                            named_event_replay_inputs_factory=(
+                                _backtest_named_event_replay_inputs
+                            ),
                         )
                 else:
                     with st.spinner(
@@ -2140,6 +2633,12 @@ with st.expander("Historical validation & structural stability", expanded=False)
                             prior_config=get_state("prior_config"),
                             draws=int(hv_draws),
                             tune=int(hv_draws),
+                            named_event_fit_inputs_factory=(
+                                _backtest_named_event_fit_inputs
+                            ),
+                            named_event_replay_inputs_factory=(
+                                _backtest_named_event_replay_inputs
+                            ),
                         )
             except Exception as e:
                 # Fold construction/assessment failed before any fit could even
@@ -2384,11 +2883,10 @@ with st.expander("Experiment & calibration evidence", expanded=False):
         "individually attributed evidence groups - never averaged into one "
         "score, and never used to silently override this model's fitted "
         "estimates. Provenance below comes from the governed experiment "
-        "registry (adopted on the Data Sources page); declaring a use here "
-        "records evidence mode and target identity only - no calibration "
-        "method runs in this application, so the calibrated-vs-uncalibrated "
-        "comparison stays empty until an approved calibration mechanism "
-        "exists."
+        "registry (adopted on the Data Sources page). A compatible, positive "
+        "direct likelihood-calibration use is attached to the next model fit "
+        "through the raw-PyMC lift-test adapter; prior calibration and local "
+        "or otherwise inapplicable experiments remain evidence-only."
     )
     ec_section = diag_artefact.experiment_calibration if diag_artefact else None
 
@@ -2536,8 +3034,9 @@ with st.expander("Experiment & calibration evidence", expanded=False):
     ):
         st.info(
             "No experiment uses are registered for the current model, and no "
-            "calibrated-model comparison exists (no calibration mechanism is "
-            "implemented in this application)."
+            "calibrated-model comparison is available. A valid compatible "
+            "likelihood-calibration use is applied on the next fit; a specific "
+            "experiment record is still required."
         )
 
     render_next_step("diagnostics")

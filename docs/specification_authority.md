@@ -959,3 +959,85 @@ narrower capability boundary documented in its own record:
   exact regardless of Monte Carlo sample size. Target-state design
   contract only, with zero implementation (WP2F implementation).
   Unavailable for Candidate A Search fits.
+
+## Update, 2026-08-30: Phase A of the post-UI/UX business-decision brief
+
+The business-decision brief "Post-UI/UX Implementation Instructions:
+Approved Business Decisions" (decision date 2026-08-29) resolves one or
+more previously-open items in several gap-table rows above, at the
+governance/contract level only (Phase A of that brief's own six-phase
+implementation order). This section records which rows are affected
+without rewriting their original text, matching this document's existing
+convention for focused overlays. Full detail is in each cited record's
+own 2026-08-30 addendum, and in `docs/decision_log.md`'s 2026-08-30 entry.
+
+- `REQ-OUT-001`/`REQ-NBT-001`/`REQ-NBT-002` (Family History outcomes):
+  new `REQ-OUT-003.md` records the 48-month FH LTR horizon and 120-day
+  DNA cross-sell window as approved governed facts — first concrete
+  numbers, not corrections of a wrong one (no 36-month reference existed
+  anywhere in this repository).
+- Governed Search-intent taxonomy (`REQ-SEARCH-004`): its addendum
+  resolves `docs/wp1_search_seo_granularity_decision_package.md`'s D3
+  (initial taxonomy content — Brand/Non-Brand as the two top-level
+  groups) and records Google/Bing platform as a still-unbuilt orthogonal
+  schema axis.
+- Governed SEO visibility/ranking metric contract (`REQ-SEO-001`): its
+  addendum resolves the same package's D1 (causal role, toward
+  `mediator_or_capture_efficiency_state`) and D2 (no controllable
+  spend-based intervention), and approves positional/visibility as the
+  primary SEO metric type (exact formula remains Phase B).
+- Governed FX architecture (`REQ-FX-002`/`REQ-FX-003`): addenda add an
+  `annual` rate frequency and a `finance_constant_dollar_annual` method,
+  approved as the DEFAULT governed FX method — resolving `docs/wp7_
+  governed_fx_finance_decision_package.md` items 1 and 6. Items 2-5 and
+  7-12 remain open; no actual Finance rate value is supplied.
+- Governed named-event contracts (`REQ-EVENT-001`): its addendum
+  supplies the event-family-to-treatment mapping (gifting ->
+  anticipatory; remembrance -> contemporaneous/post_event; promotional
+  -> post_event, window-bounded) that record's own "Explicitly excluded"
+  list reserved — resolving the qualitative direction of `docs/wp2_
+  named_event_statistical_method_decision_package.md`'s dimension 5
+  only; the numeric lead/lag values and dimensions 1-4/6/7 remain open.
+- Future-assumption bundles (`REQ-FUTURE-001`): its addendum records the
+  manual-entry-reduction principle and a named Phase D reconciliation
+  task against WP2G's `ScenarioValueAssumptions` (which deliberately
+  forces explicit, non-pre-filled entry) — no code change.
+- Capacity and cap semantics (`REQ-CAP-001`): its addendum records the
+  business requirement that capacity constraints span beyond Search and
+  must be shared across Scenario Planner/Optimiser — directionally
+  Candidate G1 from `docs/wp11_capacity_cap_semantics_decision_
+  package.md`, without selecting G1 over G3 or any cap-hit-vocabulary
+  candidate (S1/S2/S3), which remain open engineering decisions.
+- Latent-state scale/location identification (`REQ-LATENT-001`): its
+  addendum approves Google Trends for Ancestry branded search terms as
+  the identifying-anchor *source* for Candidate A's latent branded-search
+  demand — partially resolving `MD-021`; the exact anchoring/measurement-
+  model mathematics remains open.
+- Bounded structural causal engine (`REQ-SCENGINE-001`): its addendum
+  and a matching update to `docs/wp_structural_causal_engine_decision_
+  package.md` resolve that package's D1 as D1-B — PathMC deferred, not
+  rejected, until a concrete use case exists and the core MMM/Scenario
+  Planner/Optimiser are fully working.
+- Two genuinely new gap rows are added below this update: `REQ-OPT-001`
+  (optimiser objective-kind and constraint-kind vocabulary) and
+  `REQ-DATASUPPORT-001` (per-channel evidence-based data-support
+  classification) — both zero-implementation target-state contracts,
+  mirroring this document's existing pattern for `REQ-SCEN-004`/
+  `REQ-FUTURE-001`/`REQ-BASELINE-001`/`REQ-CAP-001`.
+- `REQ-COVERAGE-001` (variable coverage): Decision 3 (SEO shorter date
+  range) is a direct instance of this record's already-approved
+  invariants; no new record or addendum was needed.
+- `REQ-EXPMODE-001`/`REQ-CALIB-001` (experiment evidence modes):
+  Decision 11 reaffirms the already-approved architecture without
+  itself supplying the missing applicability-metadata fields or
+  calibration mechanism — both remain explicitly scoped to Phase C, no
+  addendum was made to avoid implying otherwise.
+- `REQ-BASELINE-001` (time-varying baseline): Decision 15 approves an
+  evidence-based *selection methodology* for that record's existing
+  three-candidate decision package to apply in Phase C — no addendum,
+  since no candidate is selected by this business decision.
+
+| Capability | State | Notes |
+|---|---|---|
+| Optimiser objective-kind and constraint-kind vocabulary (`REQ-OPT-001`) | Requirement exists but capability incomplete | Approved 2026-08-30, per the post-UI/UX business-decision brief (Decisions 16, 18). Target-state contract only - a closed objective-kind vocabulary (maximise_outcome/revenue/profit/roi, minimise_cpa, each requiring a valid economic-input precondition, SEO excluded from cost-based kinds) and an extended closed constraint-kind vocabulary building on `core.optimization.SpendConstraint`'s existing five kinds - blocked pending a future decision package covering the sequential-kernel tractability question (shared with `REQ-SCEN-004`/`docs/wp6_sequential_optimisation_decision_package.md`) and the exact schema representation. Zero implementation yet. |
+| Evidence-based per-channel data-support classification (`REQ-DATASUPPORT-001`) | Requirement exists but capability incomplete | Approved 2026-08-30, per the post-UI/UX business-decision brief (Decision 17). Target-state consolidation contract only, unifying `core.prefit_identifiability`'s existing four-tier channel-support classification, `core.coverage`'s missingness vocabulary, `core.market_data_capability`'s market x channel report, and `core.identification_diagnostics`'s collinearity assessment into one governed three-state per-channel classification - blocked pending a future decision package to perform the actual evidence-gathering exercise (no numeric threshold invented, mirroring Work Package 2.11's own explicit refusal to invent one while current UK activity data is under review). Zero implementation yet. |

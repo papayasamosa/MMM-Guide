@@ -157,3 +157,123 @@ Modelling
 ## Approval date
 
 2026-08-18
+
+## Addendum, 2026-08-30: manual-entry-reduction principle approved; WP2G reconciliation task recorded
+
+The business-decision brief "Post-UI/UX Implementation Instructions:
+Approved Business Decisions" (Decision 14, "Future planning should
+require only assumptions the user actually controls") approves a
+governing *principle* for this record's eventual bundle schema and for
+`core.planning.value.ScenarioValueAssumptions` (WP2G, `REQ-ECON-003`
+Requirement 5). This addendum records the principle and a named
+reconciliation task; it does not itself change the bundle schema
+decision (still open, see "Unresolved decisions" above) or any code.
+
+**Approved principle.** The analyst should not have to manually supply
+an assumption the model, a governed system default, Finance data, or an
+approved forecast method can already provide — specifically: expected
+demand, future seasonality, baseline growth, exchange rates, and
+individual future prices/values. The analyst *should* continue to
+supply: planned marketing activity, promotion periods, and explicit
+governed overrides. This confirms, and does not change, what this
+repository already does correctly: `core.planning.future_context`
+already deterministically auto-continues trend/Fourier seasonality terms
+(never asked manually); `REQ-FX-005`'s future-FX-assumption contract
+already exists (implementation blocked on Finance, per that record and
+`docs/wp7_governed_fx_finance_decision_package.md`, not on this
+principle). This addendum does not create a demand-forecasting
+capability where none exists — where an approved forecasting method does
+not yet exist (baseline/demand — `REQ-BASELINE-001`, still
+decision-required), the analyst is not required to guess merely because
+the forecast engine is unfinished, per Decision 14's own text, but no
+substitute forecast is invented by this addendum either.
+
+**Named reconciliation task (Phase D, not this record, not this pass):**
+WP2G (`4eb91f80`, 2026-08-28) implemented `ScenarioValueAssumptions` so
+that every FH-LTR/DNA-revenue number defaults to `0.0` and requires
+explicit analyst entry every time, by deliberate design, with automatic
+pre-filling from historical valuation explicitly rejected as a
+considered alternative (to avoid a *silent* default). This sits in
+tension with this addendum's principle of reducing unnecessary manual
+entry via "an approved average value/price assumption... rather than
+asking for every individual price." Both halves of Decision 14's own
+text are simultaneously true and must both survive a future
+reconciliation: (a) forward assumptions must stay governed and explicit,
+never silently defaulted from history, and (b) unnecessary manual data
+entry should be reduced via approved defaults where the business
+decision supports them, with every assumption still disclosed in the
+final plan. The reconciliation — adding an **optional**, governed,
+overridable, explicitly-disclosed pre-fill for `ScenarioValueAssumptions`
+sourced from `REQ-ECON-002`/`REQ-ECON-003`'s existing historical
+rate-derivation contract, never mandatory and never silent — is Phase D
+implementation work, not approved or implemented by this addendum. No
+change to WP2G's shipped UI or defaults accompanies this record.
+
+## Addendum, 2026-08-30 (Phase D): optional value-assumption pre-fill implemented (Decision 14 / WP2G reconciliation)
+
+This record's own 2026-08-30 addendum above named a specific,
+Phase-D-scoped reconciliation task: an optional, governed, overridable,
+disclosed pre-fill for `ScenarioValueAssumptions` sourced from
+`REQ-ECON-002`/`REQ-ECON-003`'s existing historical rate-derivation
+contract. This addendum records that the computation-contract half of
+that task is now implemented: full decision record in
+`docs/scenario_value_assumption_prefill_decision_record.md`;
+implementation in `ancestry_mmm/core/planning/value_prefill.py`.
+
+**Resolved:** a suggestion is the most recent (highest-week) observed
+`WeeklyValueRate.value_per_unit` for a `(valuation_kind, market,
+segment)` cell (`suggest_value_prefill`/`suggest_value_prefills`) - no
+new smoothing/averaging statistical step is introduced; a cell with no
+matching historical rate produces `None`, never a fabricated value. The
+suggestion is returned as its own clearly-labelled
+`ScenarioValuePrefillSuggestion` record, carrying an explicit disclaimer
+that it is never applied automatically.
+
+**Still not resolved / deliberately out of scope:** the actual Scenario
+Planner page UI wiring that would show a suggestion and let the analyst
+accept or override it (a future integration pass); this addendum does
+not touch `docs/wp9_future_assumption_bundle_decision_package.md`'s
+separately-reserved "future-assumption bundle" architecture question
+(explicitly not for the coding agent) at all. **No change to WP2G's
+shipped UI or defaults accompanies this addendum either** - `core.
+planning.value.ScenarioValueAssumptions` and `build_scenario_value_
+assumptions` are untouched; every field still defaults to requiring
+explicit analyst entry exactly as WP2G originally shipped it.
+
+
+## Addendum, 2026-08-30 (Phase D, second): bundle architecture resolved (Decision 14 continuation)
+
+This record's own "Unresolved decisions"/traceability text pointed to
+`docs/wp9_future_assumption_bundle_decision_package.md`'s B1-B3/M1-M3/
+F1-F3 candidates as the missing bundle-architecture selection. The
+user's 2026-08-29 brief, confirmed in-session 2026-08-30, explicitly
+delegates that selection: "The exact internal bundle/module architecture
+is an implementation choice. Reconcile it with the work already in the
+repo and document the resulting contract." This addendum records the
+resulting resolution: full decision record in
+`docs/future_assumption_bundle_architecture_decision_record.md`;
+implementation in the new
+`ancestry_mmm/core/planning/future_assumption_bundle.py`.
+
+**Resolved:** the bundle schema (B1 - a thin named wrapper around
+existing `FutureContextResult`s, `core.planning.future_context` itself
+completely unchanged); the materiality-grading policy (M3 - disclosed,
+ungraded consequence evidence only, no verdict field, matching this
+program's own already-established `REQ-CALIB-001` precedent exactly,
+enforced by a dedicated regression test scanning every dataclass field
+for a forbidden verdict-shaped name); and the external-forecaster
+integration policy (F1 - no production integration now, since the
+demand/seasonality "model-derived forecast" need this record's own
+first addendum already noted is satisfied by the existing trend/Fourier
+continuation, and Chronos-2/a method-agnostic interface both require
+their own substantial backtest-validation workstream this record's
+narrower scope should not rush).
+
+**Still not resolved:** any actual external-forecaster integration
+(explicitly future work, not rejected); `REQ-FORECAST-001`'s own
+consequence-assessment mechanism (a separate modelling workstream - this
+addendum resolves only how its evidence would attach to a bundle once
+built, never inventing the mechanism itself); any persistence
+(`core.persistence`), UI (`pages/08_Scenario_Planner.py`), or
+diagnostics-page wiring for a bundle. No change to `core.planning.
+future_context` accompanies this addendum.

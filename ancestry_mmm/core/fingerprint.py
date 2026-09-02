@@ -128,6 +128,8 @@ def fingerprint_model_spec(
     variable_coverage_fingerprint: Optional[str] = None,
     outcome_group_treatments: Optional[List[Dict[str, Any]]] = None,
     official_preparation_evidence: Optional[Dict[str, Any]] = None,
+    named_event_fit_fingerprint: Optional[str] = None,
+    calibration_fit_fingerprint: Optional[str] = None,
 ) -> str:
     """
     Fingerprint the full set of inputs that determine how the model is
@@ -359,6 +361,17 @@ def fingerprint_model_spec(
         "variable_coverage_fingerprint": variable_coverage_fingerprint or "",
         "official_preparation_evidence": official_preparation_evidence or {},
     }
+    # Preserve the historical fingerprint for ordinary fits that did not
+    # consume named events.  An event-bearing fit opts into this additional
+    # identity component, so adding the integration does not invalidate every
+    # unrelated saved approval.
+    if named_event_fit_fingerprint:
+        payload["named_event_fit_fingerprint"] = named_event_fit_fingerprint
+    # Like named events, calibration is an opt-in model term. Keep ordinary
+    # historical fits' fingerprints stable, but bind calibrated fits to the
+    # exact experiment rows and target outcomes they consumed.
+    if calibration_fit_fingerprint:
+        payload["calibration_fit_fingerprint"] = calibration_fit_fingerprint
     blob = _canonical_json(payload)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 

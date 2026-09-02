@@ -22,6 +22,7 @@ from ancestry_mmm.core.outcome_valuation import (
 from ancestry_mmm.core.outcomes import (
     DNA,
     FAMILY_HISTORY,
+    FH_LTR_HORIZON_MONTHS,
     METRIC_KEY_DNA_KIT_SALE_TOTAL,
     METRIC_KEY_FH_GSA,
     OutcomeDefinition,
@@ -64,6 +65,7 @@ def _valid_fh_record(**overrides) -> WeeklyOutcomeValuationRecord:
         quality_status="observed_zero",
         aggregate_value=0.0,
         currency="GBP",
+        horizon_months=FH_LTR_HORIZON_MONTHS,
     )
     values.update(overrides)
     return WeeklyOutcomeValuationRecord(**values)
@@ -150,6 +152,34 @@ class TestRecordConstruction:
     def test_four_letter_currency_rejected(self):
         with pytest.raises(ValueError, match="not a valid ISO-3"):
             _valid_fh_record(currency="GBPX")
+
+    def test_fh_ltr_record_requires_48_month_horizon(self):
+        """REQ-OUT-003 §1/§6: a missing horizon on an FH LTR record blocks
+        construction rather than silently proceeding."""
+        with pytest.raises(ValueError, match="horizon_months == 48"):
+            _valid_fh_record(horizon_months=None)
+
+    def test_fh_ltr_record_rejects_a_different_stale_horizon(self):
+        """A stale, incorrect duration figure must be blocked, not guessed
+        to be the approved 48-month horizon."""
+        with pytest.raises(ValueError, match="horizon_months == 48"):
+            _valid_fh_record(horizon_months=36)
+
+    def test_dna_revenue_record_must_not_carry_a_horizon(self):
+        """horizon_months is an FH-LTR-only concept; a DNA revenue record
+        carrying one is rejected rather than silently ignored."""
+        with pytest.raises(ValueError, match="only meaningful for"):
+            WeeklyOutcomeValuationRecord(
+                valuation_kind=VALUATION_KIND_DNA_REVENUE,
+                market="UK",
+                week="2025-01-06",
+                segment="New Customer",
+                denominator_outcome_id="dna_kit_orders_new",
+                quality_status="modelled",
+                aggregate_value=1234.56,
+                currency="GBP",
+                horizon_months=FH_LTR_HORIZON_MONTHS,
+            )
 
     def test_dna_revenue_record_is_distinct_kind(self):
         record = WeeklyOutcomeValuationRecord(

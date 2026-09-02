@@ -40,6 +40,7 @@ from ancestry_mmm.components import (
     BlockingPanel,
 )
 from ancestry_mmm.application.official_curve_readiness import (
+    GenerationBlocker,
     resolve_generation_blockers,
 )
 from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
@@ -84,6 +85,7 @@ from ancestry_mmm.core.outcomes import (
 )
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
 from ancestry_mmm.core.schema import ModelSpec
+from ancestry_mmm.core.search_capacity import SEARCH_CANDIDATE_A_ENGINE
 from ancestry_mmm.core.validation_policy import (
     load_approval_readiness,
     load_threshold_policy,
@@ -93,6 +95,11 @@ from ancestry_mmm.application.curve_service import (
     CurveGovernanceError,
     CurveService,
     OfficialCurveGovernance,
+)
+from ancestry_mmm.application.fx_service import (
+    FXUploadValidationError,
+    resolve_approved_fx_rate,
+    validate_persisted_fx_rate_set,
 )
 from ancestry_mmm.components.charts import create_response_curve_with_band
 
@@ -582,6 +589,9 @@ if model_run_id and spec_dict is not None:
                 else None
             ),
             official_preparation_evidence=get_state("official_preparation_result"),
+            calibration_fit_fingerprint=(
+                getattr(meta, "calibration_fit_fingerprint", "") or None
+            ),
         ),
         "posterior_fingerprint": fingerprint_posterior(params),
     }
@@ -719,6 +729,42 @@ if not selected_markets:
 # asked for.
 meta_selected = replace(meta, markets=selected_markets)
 
+# Candidate A's final-outcome replay is now available to official curves, but
+# its capacity input remains an explicit planning constraint.  Never reuse a
+# historical cap or default a missing cap to zero: an omitted cap must block
+# generation and explain the exact missing input.
+candidate_a_curve_caps: dict[str, float] = {}
+candidate_a_missing_curve_caps: list[str] = []
+if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
+    with st.expander("Candidate A Search capacity for this curve", expanded=True):
+        st.caption(
+            "Enter one explicit future Paid Search delivery cap per selected "
+            "market. This is a capacity constraint in capture units, never "
+            "realised spend, demand, or an inferred historical value."
+        )
+        stored_curve_caps = dict(get_state("candidate_a_curve_cap_by_market") or {})
+        for curve_market in selected_markets:
+            supplied = st.checkbox(
+                f"Supply a future Paid Search cap for {curve_market}",
+                value=curve_market in stored_curve_caps,
+                key=f"ocg_candidate_a_cap_supplied_{curve_market}",
+            )
+            if supplied:
+                cap_value = st.number_input(
+                    f"Future Paid Search delivery cap - {curve_market} "
+                    "(capture units per week)",
+                    min_value=0.0,
+                    value=float(stored_curve_caps.get(curve_market, 0.0)),
+                    step=1.0,
+                    key=f"ocg_candidate_a_curve_cap_{curve_market}",
+                )
+                candidate_a_curve_caps[curve_market] = float(cap_value)
+                stored_curve_caps[curve_market] = float(cap_value)
+            else:
+                stored_curve_caps.pop(curve_market, None)
+                candidate_a_missing_curve_caps.append(curve_market)
+        set_state("candidate_a_curve_cap_by_market", stored_curve_caps)
+
 fourier_length = len(next(iter(params.gamma_fourier.values())))
 
 # ---------------------------------------------------------------------------
@@ -740,9 +786,29 @@ cost_mapping_registry = None
 currency_by_market: dict[str, str] = {}
 reporting_currency = ""
 currency_rates: dict[tuple[str, str], float] = {}
+missing_fx_pairs: list[str] = []
 fx_as_of_date_value = ""
 fx_source_value = ""
 cost_as_of_date_value = ""
+
+_approved_fx_rate_set = None
+_approved_fx_records = []
+_stored_fx_rate_set = get_state("fx_rate_set")
+_stored_fx_records = get_state("fx_rate_records") or []
+if _stored_fx_rate_set is not None:
+    try:
+        _loaded_fx_rate_set, _loaded_fx_records = validate_persisted_fx_rate_set(
+            _stored_fx_rate_set, _stored_fx_records
+        )
+    except (FXUploadValidationError, TypeError, ValueError) as exc:
+        st.error(
+            "The stored Finance FX rate set is invalid and cannot be used for "
+            f"monetary curves: {exc}"
+        )
+    else:
+        if _loaded_fx_rate_set.approval_status == "approved":
+            _approved_fx_rate_set = _loaded_fx_rate_set
+            _approved_fx_records = _loaded_fx_records
 
 if curve_type == "monetary":
     st.caption(
@@ -862,6 +928,24 @@ if curve_type == "monetary":
     )
 
     st.markdown("**Currency & FX**")
+    if _stored_fx_rate_set is None:
+        st.info(
+            "No governed Finance FX rate set is loaded. Same-currency identity "
+            "conversion remains available; cross-currency curves require an "
+            "explicit rate and source below, and no rate is prefilled."
+        )
+    elif _approved_fx_rate_set is not None:
+        st.success(
+            "Approved Finance FX rate set available: "
+            f"{_approved_fx_rate_set.rate_set_id} v{_approved_fx_rate_set.rate_set_version}. "
+            "Applicable rates will be resolved automatically for the selected "
+            "FX as-of date."
+        )
+    else:
+        st.warning(
+            "The loaded Finance FX rate set is not approved. It is retained in "
+            "the project, but cannot supply official monetary-curve FX evidence."
+        )
     for market in selected_markets:
         currency_by_market[market] = st.text_input(
             f"Local currency - {market} (ISO code)",
@@ -876,16 +960,56 @@ if curve_type == "monetary":
         c2.date_input("FX as-of date", value=date.today(), key="ocg_fx_as_of_date")
     )
     fx_source_value = c3.text_input("FX source", value="", key="ocg_fx_source")
-    distinct_locals = sorted(
-        {cur for cur in currency_by_market.values() if cur} - {reporting_currency}
-    )
-    for local_currency in distinct_locals:
-        currency_rates[(local_currency, reporting_currency)] = st.number_input(
-            f"FX rate: 1 {local_currency} -> {reporting_currency}",
-            value=1.0,
-            min_value=0.0,
-            key=f"ocg_fx_rate_{local_currency}",
+    if _approved_fx_rate_set is not None and not fx_source_value:
+        fx_source_value = (
+            f"{_approved_fx_rate_set.provider}/"
+            f"{_approved_fx_rate_set.rate_set_id}/v"
+            f"{_approved_fx_rate_set.rate_set_version}"
         )
+    distinct_pairs = sorted(
+        {
+            (cur, reporting_currency or cur)
+            for cur in currency_by_market.values()
+            if cur and cur != (reporting_currency or cur)
+        }
+    )
+    for local_currency, target_currency in distinct_pairs:
+        resolved_rate = None
+        if _approved_fx_rate_set is not None:
+            try:
+                resolved_rate = resolve_approved_fx_rate(
+                    _approved_fx_rate_set,
+                    _approved_fx_records,
+                    source_currency=local_currency,
+                    target_currency=target_currency,
+                    as_of_date=fx_as_of_date_value,
+                )
+            except FXUploadValidationError as exc:
+                st.error(f"Cannot use the approved Finance FX set: {exc}")
+        if resolved_rate is not None:
+            currency_rates[(local_currency, target_currency)] = float(resolved_rate)
+            st.caption(
+                f"Using approved rate 1 {local_currency} -> {target_currency}: "
+                f"{resolved_rate}"
+            )
+        else:
+            if _approved_fx_rate_set is not None:
+                st.error(
+                    f"The approved Finance FX set has no applicable "
+                    f"{local_currency}->{target_currency} rate on or before "
+                    f"{fx_as_of_date_value}."
+                )
+            rate = st.number_input(
+                f"Explicit FX rate: 1 {local_currency} -> {target_currency} "
+                "(no default)",
+                value=0.0,
+                min_value=0.0,
+                key=f"ocg_fx_rate_{local_currency}",
+            )
+            if rate > 0:
+                currency_rates[(local_currency, target_currency)] = rate
+            else:
+                missing_fx_pairs.append(f"{local_currency}->{target_currency}")
 
 # ---------------------------------------------------------------------------
 # 3. Reference context per market
@@ -1387,8 +1511,18 @@ _generation_blockers = resolve_generation_blockers(
     reporting_currency=reporting_currency,
     reference_context_confirmed=reference_context_confirmed,
     invalid_support_cells=invalid_support_cells,
+    missing_fx_pairs=missing_fx_pairs,
     artifact_id=artifact_id,
 )
+if candidate_a_missing_curve_caps:
+    _generation_blockers.append(
+        GenerationBlocker(
+            "candidate_a_missing_paid_search_cap",
+            "Candidate A official curves require an explicit future Paid "
+            "Search delivery cap for: "
+            f"{', '.join(sorted(candidate_a_missing_curve_caps))}.",
+        )
+    )
 if _generation_blockers:
     with BlockingPanel(
         "Not ready to generate",
@@ -1465,6 +1599,11 @@ if st.button(
             support_by_market_channel=support_by_market_channel or None,
             spend_points=spend_points,
             n_draws=n_draws,
+            candidate_a_paid_search_cap_by_market=(
+                candidate_a_curve_caps
+                if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE
+                else None
+            ),
             **monetary_kwargs,
         )
     except (CurveGovernanceError, CurveArtifactError, ValueError, TypeError) as exc:

@@ -15,6 +15,7 @@ from ancestry_mmm.core.outcome_valuation import (
     WeeklyOutcomeValuationRecord,
 )
 from ancestry_mmm.core.outcome_valuation_rates import derive_weekly_value_rates
+from ancestry_mmm.core.outcomes import FH_LTR_HORIZON_MONTHS
 
 
 def _record(**overrides) -> WeeklyOutcomeValuationRecord:
@@ -27,6 +28,7 @@ def _record(**overrides) -> WeeklyOutcomeValuationRecord:
         quality_status="modelled",
         aggregate_value=1000.0,
         currency="GBP",
+        horizon_months=FH_LTR_HORIZON_MONTHS,
     )
     values.update(overrides)
     return WeeklyOutcomeValuationRecord(**values)

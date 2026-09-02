@@ -1,8 +1,11 @@
 """G2A.7a.1 (REQ-AUTH-001, section 13.2): executable conformance check for
 `docs/approved_requirements/index.json` - every `required_tests` entry must
 be a real, collectable pytest node, not a shortened path pytest cannot
-resolve. Uses a single batched `pytest --collect-only` invocation rather
-than one subprocess per node.
+resolve. Uses batched `pytest --collect-only` invocations (chunked well
+under the OS command-line length limit - Windows' `CreateProcess` caps a
+command line at 32767 characters, and this repository's `required_tests`
+list has grown past what fits in a single invocation) rather than one
+subprocess per node.
 """
 
 import json
@@ -61,17 +64,34 @@ def test_every_indexed_test_node_is_collectable():
         f"Non-fully-qualified test node id(s) in index.json: {malformed}"
     )
 
-    result = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-q", *all_nodes],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    if result.returncode != 0:
+    # Batch into chunks well under Windows' ~32767-character CreateProcess
+    # command-line limit (a single invocation with the full node list
+    # already exceeds this once `required_tests` grows past a few hundred
+    # entries - confirmed 2026-08-30 at 357 nodes / ~44KB). 100 nodes per
+    # batch keeps every batch's assembled command line comfortably under
+    # the limit even for long node ids, while still using real subprocess
+    # collection (not the in-process pytest API) so this test observes the
+    # same collection behaviour a CI invocation would.
+    batch_size = 100
+    failures = []
+    for start in range(0, len(all_nodes), batch_size):
+        batch = all_nodes[start : start + batch_size]
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", "--collect-only", "-q", *batch],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            failures.append(
+                f"Batch {start}-{start + len(batch)} failed to collect:\n"
+                f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
+            )
+    if failures:
         pytest.fail(
             "One or more index.json required_tests node(s) failed to collect:\n"
-            f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
+            + "\n".join(failures)
         )
 
 

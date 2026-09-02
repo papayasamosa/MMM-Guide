@@ -2,6 +2,9 @@ import pytest
 
 from ancestry_mmm.core.activities import (
     ActivityDefinition,
+    NON_PAID_SEARCH_CAMPAIGN_TYPES,
+    SEARCH_PLATFORM_BING,
+    SEARCH_PLATFORM_GOOGLE,
     activity_node_id,
     governed_activities_in_model_scope,
     activity_definitions_fingerprint,
@@ -119,8 +122,8 @@ class TestPoolingGroupId:
     def test_defaults_to_none(self):
         assert _activity().pooling_group_id is None
 
-    def test_current_schema_version_is_4(self):
-        assert _activity().schema_version == 4
+    def test_current_schema_version_is_5(self):
+        assert _activity().schema_version == 5
 
     def test_accepts_an_explicit_value(self):
         activity = _activity(pooling_group_id="tv-brand-uk-au")
@@ -147,7 +150,7 @@ class TestPoolingGroupId:
         }
         restored = ActivityDefinition.from_dict(payload)
         assert restored.pooling_group_id is None
-        assert restored.schema_version == 4
+        assert restored.schema_version == 5
 
     def test_does_not_trigger_any_invalidation_flag(self):
         """REQ-DATAIN-001: pooling_group_id's presence must never, by
@@ -205,7 +208,7 @@ class TestActivityTaxonomy:
 
         assert restored.funnel_stage == "unclassified"
         assert restored.marketing_objective == ""
-        assert restored.schema_version == 4
+        assert restored.schema_version == 5
 
     def test_unversioned_legacy_payload_migrates_to_explicit_defaults(self):
         payload = {
@@ -225,7 +228,7 @@ class TestActivityTaxonomy:
 
         assert restored.funnel_stage == "unclassified"
         assert restored.marketing_objective == ""
-        assert restored.schema_version == 4
+        assert restored.schema_version == 5
 
     @pytest.mark.parametrize("value", ["brand", "upper", "performance", None])
     def test_funnel_stage_vocabulary_is_closed(self, value):
@@ -409,3 +412,97 @@ def test_graph_activity_resolver_uses_registry_not_free_form_metadata():
     predictor, resolved = resolve_graph_activity_predictor(Node(), [definition])
     assert predictor == "meta_paid"
     assert resolved == definition
+
+
+# ---------------------------------------------------------------------------
+# REQ-SEARCH-004 §3/addendum (Decisions 2, 4): search_intent_group_id and
+# search_platform (schema v5)
+# ---------------------------------------------------------------------------
+
+
+class TestSearchTaxonomyFields:
+    def test_default_to_unset(self):
+        activity = _activity()
+        assert activity.search_intent_group_id is None
+        assert activity.search_platform == ""
+
+    def test_accepts_governed_platform_values(self):
+        for platform in (SEARCH_PLATFORM_GOOGLE, SEARCH_PLATFORM_BING):
+            activity = _activity(search_platform=platform)
+            assert activity.search_platform == platform
+
+    def test_rejects_unknown_platform(self):
+        with pytest.raises(ValueError, match="invalid search_platform"):
+            _activity(search_platform="yahoo")
+
+    def test_accepts_an_intent_group_reference(self):
+        activity = _activity(search_intent_group_id="brand_search")
+        assert activity.search_intent_group_id == "brand_search"
+
+    @pytest.mark.parametrize("campaign_type", NON_PAID_SEARCH_CAMPAIGN_TYPES)
+    def test_pmax_demand_gen_youtube_cannot_carry_taxonomy_fields(self, campaign_type):
+        """Decision 2: PMax/Demand Gen/YouTube must never enter the Paid
+        Search taxonomy just because they appear in a source system."""
+        with pytest.raises(ValueError, match="excluded from the Paid Search taxonomy"):
+            _activity(
+                campaign_type=campaign_type, search_platform=SEARCH_PLATFORM_GOOGLE
+            )
+
+    def test_pmax_campaign_type_alone_is_still_valid(self):
+        """Excluding PMax from the taxonomy does not make a PMax activity
+        itself invalid - only forbids the taxonomy fields on it."""
+        activity = _activity(campaign_type="pmax")
+        assert activity.search_intent_group_id is None
+        assert activity.search_platform == ""
+
+    def test_taxonomy_fields_are_in_reporting_taxonomy_fields(self):
+        from ancestry_mmm.core.activities import REPORTING_TAXONOMY_FIELDS
+
+        assert "search_intent_group_id" in REPORTING_TAXONOMY_FIELDS
+        assert "search_platform" in REPORTING_TAXONOMY_FIELDS
+
+    def test_excluded_from_fit_fingerprint(self):
+        before = [_activity(search_platform="")]
+        after = [_activity(search_platform=SEARCH_PLATFORM_GOOGLE)]
+        assert activity_fit_fingerprint(before) == activity_fit_fingerprint(after)
+
+    def test_excluded_from_hard_governance_fingerprint(self):
+        """A pure taxonomy relabelling must not force curve/scenario
+        invalidation - mirrors pooling_group_id's existing exclusion."""
+        before = [_activity(search_platform="")]
+        after = [_activity(search_platform=SEARCH_PLATFORM_GOOGLE)]
+        assert activity_definitions_fingerprint(
+            before
+        ) == activity_definitions_fingerprint(after)
+
+    def test_included_in_reporting_fingerprint(self):
+        """A taxonomy change SHOULD invalidate grouped reporting artefacts
+        - the fingerprint made for exactly that purpose must change."""
+        before = [_activity(search_intent_group_id=None)]
+        after = [_activity(search_intent_group_id="brand_search")]
+        assert activity_reporting_fingerprint(before) != activity_reporting_fingerprint(
+            after
+        )
+
+    def test_round_trips_through_dict(self):
+        activity = _activity(
+            search_intent_group_id="non_brand_search",
+            search_platform=SEARCH_PLATFORM_BING,
+        )
+        restored = ActivityDefinition.from_dict(activity.to_dict())
+        assert restored == activity
+
+    def test_legacy_payload_with_no_key_at_all_resolves_to_unset(self):
+        payload = {
+            "activity_id": "organic-social",
+            "channel": "Organic Social",
+            "activity_ownership": "owned",
+            "model_role": "intervention",
+            "economic_treatment": "response_only",
+            "planning_eligibility": "scenario_only",
+            "source": "social analytics",
+        }
+        restored = ActivityDefinition.from_dict(payload)
+        assert restored.search_intent_group_id is None
+        assert restored.search_platform == ""
+        assert restored.schema_version == 5

@@ -142,3 +142,20 @@ scope and rounding policy remain Finance-owned).
 ## Approval date
 
 2026-08-27
+
+
+
+## Addendum, 2026-08-30 (Phase D): architecture implemented (Decision 13 build-out)
+
+Per the user's explicit 2026-08-30 authorisation (see wp7's updated
+text), `ancestry_mmm/core/fx_currency.py` now implements this record's
+`MonetaryObservation` canonical monetary record: the four distinct
+currency roles, the original transaction amount/currency never
+overwritten, Python `Decimal` for persisted amounts (Requirement 4),
+and the three FX-rate-identifier fields resolving against
+`REQ-FX-002`. Full detail in
+`docs/governed_fx_contract_implementation_decision_record.md`. No
+currency list, default group/model currency, or rounding policy is
+invented - every item under "Explicitly excluded" above remains
+exactly as open as before this addendum, and Finance ownership of those
+items is unchanged.

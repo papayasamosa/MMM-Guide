@@ -143,6 +143,7 @@ from .reporting_rollups import (
     build_reporting_views,
     enrich_reporting_rows,
     roll_up_reporting_draws,
+    roll_up_paid_search_reporting_draws,
     summarize_reporting_draws,
 )
 from .optimization import (
@@ -408,6 +409,7 @@ __all__ = [
     "build_reporting_views",
     "enrich_reporting_rows",
     "roll_up_reporting_draws",
+    "roll_up_paid_search_reporting_draws",
     "summarize_reporting_draws",
     "SpendConstraint",
     "OptimizationResource",

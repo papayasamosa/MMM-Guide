@@ -303,7 +303,9 @@ def test_causal_graph_editor_journey_in_browser(
     expect(
         page.get_by_text("Upload a previously exported .zip", exact=True)
     ).to_be_visible(timeout=30_000)
-    page.locator("input[type=file]").set_input_files(str(bundle_path))
+    page.get_by_label("Upload a previously exported .zip", exact=True).get_by_test_id(
+        "stFileUploaderDropzoneInput"
+    ).set_input_files(str(bundle_path))
     import_button = page.get_by_role("button", name="Import bundle")
     expect(import_button).to_be_enabled(timeout=30_000)
     import_button.click()

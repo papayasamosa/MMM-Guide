@@ -988,6 +988,7 @@ class TestCandidateASearchIntegration:
             )
         demand, captured, unmet, paid_opportunity, realised_paid, cap_binding = draws
         np.testing.assert_allclose(captured + unmet, demand, rtol=1e-6, atol=1e-6)
+
         assert np.all(unmet >= -1e-8)
         np.testing.assert_allclose(
             realised_paid, paid_opportunity, rtol=1e-6, atol=1e-6
@@ -1003,6 +1004,57 @@ class TestCandidateASearchIntegration:
                 model.named_vars["search_eta_contribution"], draws=1, random_seed=0
             )
         assert np.asarray(value).shape == (8, 1)
+
+
+class TestSeoVisibilityModelIntegration:
+    """The governed SEO observation boundary must reach the real shared
+    PyMC builder, not stop at the metric/partial-window contracts."""
+
+    def test_window_gated_visibility_is_a_fitted_model_term(self):
+        from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+        from ancestry_mmm.core.schema import ModelSpec
+        from ancestry_mmm.core.seo_visibility import (
+            GscPositionRow,
+            SeoModelFitInputs,
+            compute_weekly_positional_visibility,
+        )
+
+        frame = TestSingleChannelSingleMarketSurvivesPmDraw._single_channel_single_market_frame()
+        weeks = ("2025-01-06", "2025-01-13", "2025-01-20")
+        frame["dates"] = pd.to_datetime(weeks)
+        observations = [
+            compute_weekly_positional_visibility(
+                [GscPositionRow("brand", position=2.0, impressions=100.0)],
+                market="UK",
+                week=weeks[0],
+            ),
+            compute_weekly_positional_visibility([], market="UK", week=weeks[1]),
+            compute_weekly_positional_visibility(
+                [GscPositionRow("brand", position=4.0, impressions=100.0)],
+                market="UK",
+                week=weeks[2],
+            ),
+        ]
+        seo_inputs = SeoModelFitInputs.from_observations(
+            observations,
+            model_markets=("UK", "UK", "UK"),
+            model_weeks=weeks,
+        )
+        spec = ModelSpec(
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["TV"],
+        )
+
+        model, meta = build_fh_hierarchical_model(
+            frame, spec, seo_fit_inputs=seo_inputs
+        )
+
+        assert "seo_visibility_beta" in model.named_vars
+        assert "eta_seo_visibility" in model.named_vars
+        assert meta.seo_fit_inputs_at_fit == seo_inputs.to_dict()
 
 
 class TestResolveDirectDnaOutcomeIds:

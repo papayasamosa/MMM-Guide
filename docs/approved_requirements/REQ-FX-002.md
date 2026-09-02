@@ -110,3 +110,38 @@ rate-set selection remain Finance-owned).
 ## Approval date
 
 2026-08-27
+
+## Addendum, 2026-08-30: `annual` added to the rate-frequency vocabulary
+
+The business-decision brief "Post-UI/UX Implementation Instructions:
+Approved Business Decisions" (Decision 13) approves a Finance-supplied
+**annual** exchange rate per financial year as the default governed FX
+method (see `REQ-FX-003`'s 2026-08-30 addendum for the full resolution).
+This record's §1 rate-frequency field was a closed `daily`/`weekly`/
+`monthly` vocabulary with no value able to represent "one rate for an
+entire financial year." This addendum extends that closed vocabulary
+with a fourth value, **`annual`**, scoped by an explicit `financial_year`
+identifier (the addendum's own `rate date` field for an annual record is
+the financial year's start date; `end_date` on the owning `FXRateSet` is
+the financial year's end date) — no other field on the existing schema
+changes. This is a contract-shape decision only; no actual annual rate
+values are invented or supplied by this addendum (the real Finance rate
+table remains a separate, external, Finance-supplied input per this
+record's existing "Explicitly excluded" section).
+
+
+
+## Addendum, 2026-08-30 (Phase D): architecture implemented (Decision 13 build-out)
+
+Per the user's explicit 2026-08-30 authorisation (see wp7's updated
+text), `ancestry_mmm/core/fx_rates.py` now implements `FXRateRecord`
+(Requirement 1, including the `annual` frequency this record's own
+prior 2026-08-30 addendum added), `FXRateSet` (Requirement 2, immutable-
+identity/new-version-on-change), and `derive_cross_rate`/`build_
+derived_cross_rate_record` (Requirement 3, with round-trip identity
+verified by a regression test). Full detail in
+`docs/governed_fx_contract_implementation_decision_record.md`. No
+provider or authoritative-rate-set selection is made, and no actual
+rate value appears anywhere in the new module or its tests - every item
+under "Explicitly excluded" above remains exactly as open as before
+this addendum.

@@ -221,3 +221,67 @@ Finance where the choice has a cost or compliance implication).
 
 Decision package recorded; no decision made. This workstream stops here
 pending explicit Finance sign-off on the items above.
+
+## Update, 2026-08-30: items 1 and 6 partially resolved by business-decision brief
+
+The business-decision brief "Post-UI/UX Implementation Instructions:
+Approved Business Decisions" (Decision 13) resolves two items above at
+the contract level. This update records the resolution without rewriting
+the original analysis, which remains valid for every other item.
+
+- **Item 1 (is USD the group reporting currency?): resolved — yes**, for
+  the Finance constant-dollar default method specifically. The brief's
+  own examples (GBP→USD, AUD→USD, other local currencies→USD) confirm
+  USD as the target currency whenever `finance_constant_dollar_annual`
+  (see `REQ-FX-003`'s 2026-08-30 addendum) is used. This does not by
+  itself amend `REQ-FX-001`'s group-currency field for every purpose —
+  a purpose not using this default method is not addressed by this
+  resolution.
+- **Item 6 (default historical conversion method for weekly spend):
+  resolved, in a direction not among this package's original three
+  options** — not spend-weighted, arithmetic-average, or month-end, but
+  a Finance-supplied annual constant-dollar rate held uniform across a
+  financial year (`finance_constant_dollar_annual`, `REQ-FX-003`'s
+  2026-08-30 addendum), approved as the default specifically so MMM
+  outputs stay consistent with Finance's own reporting.
+
+**Items 2, 3, 4, 5, 7, 8, 9, 10, 11, and 12 remain fully open**, exactly
+as originally recorded above. In particular, item 7 (budget-planning
+rate) and item 8 (constant-currency basis for year-on-year decomposition)
+are related to, but not resolved by, this update's annual-default
+approval — the brief's decision is about historical/reporting
+consistency with Finance, not a selection of the budget-planning rate or
+the constant-currency comparison basis. No actual Finance rate value is
+supplied or invented by this update.
+
+
+## Update, 2026-08-30: architecture build-out completed, per the user's explicit authorisation and its rate-value exception
+
+The user's "Post-UI/UX Implementation Instructions: Approved Business
+Decisions" brief (2026-08-29), a later human instruction, explicitly
+established a source-of-truth order placing the brief's own approved
+decisions and instructions above an older decision package such as this
+one, and explicitly authorised (2026-08-30, in-session confirmation)
+building the full REQ-FX-001 through REQ-FX-006 architecture in code:
+"Proceed with the FX contract, validation, upload/input mechanism,
+versioning, Finance constant-dollar mode, optional market-rate
+architecture, and all code/tests that do not require the real rates."
+This authorisation carries one explicit, unambiguous exception this
+package's own "no coding agent mistakes an approved architecture for an
+approved business policy" caution remains fully honoured by: "do not
+invent the Finance exchange-rate values or claim official Finance
+sign-off. The actual annual currency-to-USD rate table remains an
+external business input that I will need to provide."
+
+Six new modules (`ancestry_mmm/core/fx_currency.py`, `fx_rates.py`,
+`fx_conversion.py`, `fx_provider.py`, `fx_future_assumption.py`,
+`fx_reporting.py`) now implement the approved architecture from
+REQ-FX-001 through REQ-FX-006 - full detail, including the explicit
+scope boundary against every item on this package's own "Open
+questions" list (none of which this build-out resolves), is recorded in
+`docs/governed_fx_contract_implementation_decision_record.md`. Every
+open question on this package's own list above remains exactly as open
+as before this update - no currency list, default currency mapping,
+provider selection, rounding policy, minimum-observation threshold, or
+future-FX-method default is chosen, and no actual rate value is
+invented anywhere in the new modules or their tests.

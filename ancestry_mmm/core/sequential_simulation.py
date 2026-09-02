@@ -52,19 +52,15 @@ delegated straight to `core.predict.predict_mu`/
 diverge from what those already-tested functions compute for every non-
 adstock term.
 
-Candidate A Search (WP3 boundary, unchanged): `simulate_sequential_outcomes`
-raises `CandidateAReplayNotSupportedError` for a Candidate A engine fit,
-exactly like `predict_mu` - the outcome-level replay still has no
-representation for `search_eta_contribution`, and wiring one in is a
-genuine unresolved modelling design question (REPO_REVIEW_AND_NEXT_STEPS.md,
-Work Package 3 entry), not a mechanical extension in scope here. What WP5
-*does* add is a bounded, explicitly diagnostic-only capability the brief
-calls for: `simulate_candidate_a_mediator_state_sequentially` replays the
-demand/capture/cap chain (not the final outcome) week by week for a
-hypothetical plan, reusing `core.search_capacity.candidate_a_forward`
-directly. This grants no planning or optimisation eligibility - Search
-planning eligibility remains governed separately
-(`core.search_capacity.candidate_a_use_gate`).
+Candidate A Search: `simulate_sequential_outcomes` replays the full
+demand/capture/cap contribution when `WeeklyPlan.candidate_a_paid_search_cap`
+contains an explicit value for every future week. The separate
+`simulate_candidate_a_mediator_state_sequentially` capability remains
+available for mediator-only diagnostics. This supplies the computation used
+by the production sequential planning and optimisation paths, but does not
+itself grant governance eligibility. Search eligibility remains governed
+separately (`core.search_capacity.candidate_a_use_gate`), and missing caps or
+replay evidence still fail closed.
 """
 
 from __future__ import annotations
@@ -73,16 +69,27 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+import pandas as pd
 
 from .hierarchical_model import FHModelMeta
 from .market_specific_predict import (
     FHMarketSpecificPosteriorParams,
     predict_mu_market_specific,
 )
+from .named_event_fit_inputs import (
+    NamedEventFitInputs,
+    build_named_event_fit_inputs_for_replay,
+)
+from .named_events import (
+    EventResponseDefinition,
+    NamedEventFamily,
+    NamedEventOccurrence,
+)
 from .planning.value import AdstockState
 from .predict import (
     CandidateAReplayNotSupportedError,
     FHPosteriorParams,
+    NamedEventReplayNotSupportedError,
     predict_mu,
 )
 from .search_capacity import (
@@ -627,24 +634,104 @@ def _assemble_replay_frame(
     return frame, sat_media_replay, tail_len
 
 
+def build_named_event_fit_inputs_for_sequential_replay(
+    plan: WeeklyPlan,
+    carry_in: SequentialCarryInState,
+    meta: FHModelMeta,
+    *,
+    families: Sequence[NamedEventFamily],
+    occurrences: Sequence[NamedEventOccurrence],
+    response_definitions: Sequence[EventResponseDefinition],
+) -> NamedEventFitInputs:
+    """Builds the `NamedEventFitInputs` for a `simulate_sequential_outcomes`/
+    `simulate_sequential_outcomes_market_specific` call, row-aligned to
+    `_assemble_replay_frame`'s own `(tail_len + n_weeks)` layout so the
+    result can be passed straight through as that call's own
+    `named_event_fit_inputs` argument.
+
+    `plan.period_labels` are real calendar-date strings (`core.planning.
+    future_context.continue_fourier` already relies on
+    `pd.to_datetime(period_labels)` working - the same assumption used
+    here), including into the future for a forward-looking plan - which is
+    exactly what lets a scenario/optimisation plan that extends beyond the
+    fitted historical range pick up a future, not-yet-occurred occurrence
+    of the same governed event automatically (see `build_named_event_
+    fit_inputs_for_replay`'s own docstring for why this needs no new
+    business decision).
+
+    The carry-in "tail" rows (real historical `sat_media` context for the
+    lag/cross-product mechanism only - see `_assemble_replay_frame`'s own
+    docstring) get `NaT` placeholder dates rather than their real
+    historical dates (which are not preserved anywhere in `carry_in`):
+    `build_named_event_fit_inputs`'s date-range match against `NaT` is
+    always `False` (pandas `NaT` comparisons never raise, never match), so
+    the tail rows' own event-design entries are always exactly zero. This
+    is harmless - those rows are never read by any caller
+    (`mu_future = mu_replay[tail_len:]` discards them) - and correct: the
+    named-event term has no cross-row lag dependency (unlike `sat_media`),
+    so nothing here actually needs the tail's real dates.
+    """
+    tail_len = carry_in.lag_context_length
+    n_weeks = len(plan.period_labels)
+    n_total = tail_len + n_weeks
+    plan_dates = pd.to_datetime(list(plan.period_labels)).values.astype(
+        "datetime64[ns]"
+    )
+    tail_dates = np.full(tail_len, np.datetime64("NaT"), dtype="datetime64[ns]")
+    frame = {
+        "markets": [plan.market],
+        "dates": np.concatenate([tail_dates, plan_dates]),
+        "market_bounds": [(0, n_total)],
+    }
+    return build_named_event_fit_inputs_for_replay(
+        frame,
+        families=families,
+        occurrences=occurrences,
+        response_definitions=response_definitions,
+        fitted_response_definitions=meta.named_event_response_definitions_at_fit,
+    )
+
+
 def simulate_sequential_outcomes(
     plan: WeeklyPlan,
     carry_in: SequentialCarryInState,
     meta: FHModelMeta,
     params: FHPosteriorParams,
+    *,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
+    candidate_a_paid_search_cap: Optional[np.ndarray] = None,
 ) -> SequentialSimulationResult:
     """Model A (shared) weekly recursion over `plan`'s horizon, seeded by
-    `carry_in`. Raises `CandidateAReplayNotSupportedError` for a Candidate A
-    engine fit - see module docstring; use
-    `simulate_candidate_a_mediator_state_sequentially` for the bounded
-    diagnostic mediator-state replay instead."""
-    if meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
+    `carry_in`. Candidate A requires an explicit paid-search cap for every
+    planned week; the full demand/capture/cap contribution is then replayed
+    through the final-outcome likelihood.
+
+    Raises `NamedEventReplayNotSupportedError` for a fit that consumed a
+    named-event response term UNLESS `named_event_fit_inputs` is supplied
+    (build via `build_named_event_fit_inputs_for_sequential_replay` above) -
+    same boundary/API as `core.predict.predict_mu`, which this function
+    delegates the actual replay to."""
+    candidate_a_cap = (
+        plan.candidate_a_paid_search_cap
+        if plan.candidate_a_paid_search_cap is not None
+        else candidate_a_paid_search_cap
+    )
+    if (
+        meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE
+        and candidate_a_cap is None
+    ):
         raise CandidateAReplayNotSupportedError(
-            "simulate_sequential_outcomes does not represent Candidate A's "
-            "search-mediated pathway (search_eta_contribution) in the final "
-            "outcome - same boundary as core.predict.predict_mu (WP3). See "
-            "simulate_candidate_a_mediator_state_sequentially for the "
-            "bounded diagnostic mediator-state replay."
+            "Candidate A sequential replay requires an explicit "
+            "plan.candidate_a_paid_search_cap for every future week."
+        )
+    if meta.named_event_response_definitions_at_fit and named_event_fit_inputs is None:
+        raise NamedEventReplayNotSupportedError(
+            "simulate_sequential_outcomes does not represent this fit's "
+            "named-event response term (event_coefs_<family>_<market>) "
+            "unless the caller supplies named_event_fit_inputs (see "
+            "build_named_event_fit_inputs_for_sequential_replay) - same "
+            "boundary as core.predict.predict_mu (Decision 12). Consumed: "
+            f"{meta.named_event_response_definitions_at_fit!r}."
         )
     _validate_plan_matches_carry_in(plan, carry_in, meta)
 
@@ -668,8 +755,37 @@ def simulate_sequential_outcomes(
         sat_media_future,
         market_idx_value=meta.markets.index(plan.market),
     )
+    candidate_a_cap_replay = candidate_a_cap
+    if (
+        meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE
+        and candidate_a_cap_replay is not None
+        and tail_len
+    ):
+        historical_cap = np.asarray(
+            getattr(meta, "candidate_a_historical_paid_search_cap", ()),
+            dtype=float,
+        )
+        if historical_cap.shape != (
+            len(getattr(meta, "candidate_a_fit_period_labels", ())),
+        ):
+            raise CandidateAReplayNotSupportedError(
+                "Candidate A sequential replay needs the historical paid-search "
+                "cap tail recorded with the fitted model."
+            )
+        candidate_a_cap_replay = np.concatenate(
+            [
+                historical_cap[-tail_len:],
+                np.asarray(candidate_a_cap_replay, dtype=float),
+            ]
+        )
     mu_replay = predict_mu(
-        replay_frame, meta, params, precomputed_sat_media=sat_media_replay
+        replay_frame,
+        meta,
+        params,
+        precomputed_sat_media=sat_media_replay,
+        named_event_fit_inputs=named_event_fit_inputs,
+        candidate_a_paid_search_cap=candidate_a_cap_replay,
+        seo_use_reference_for_future=True,
     )
     mu_future = mu_replay[tail_len:]
 
@@ -703,9 +819,26 @@ def simulate_sequential_outcomes_market_specific(
     carry_in: SequentialCarryInState,
     meta: FHModelMeta,
     params: FHMarketSpecificPosteriorParams,
+    *,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> SequentialSimulationResult:
     """Model C (market-specific) mirror of `simulate_sequential_outcomes` -
-    same contract, using this market's own `hill_K` and `predict_mu_market_specific`."""
+    same contract, using this market's own `hill_K` and
+    `predict_mu_market_specific`. This function had no explicit early
+    `NamedEventReplayNotSupportedError` check of its own before (unlike
+    Model A's `simulate_sequential_outcomes`) - it only ever failed closed
+    indirectly, via `predict_mu_market_specific`'s own guard below. It now
+    has one, for a clearer, earlier error and API parity with Model A."""
+    if meta.named_event_response_definitions_at_fit and named_event_fit_inputs is None:
+        raise NamedEventReplayNotSupportedError(
+            "simulate_sequential_outcomes_market_specific does not "
+            "represent this fit's named-event response term "
+            "(event_coefs_<family>_<market>) unless the caller supplies "
+            "named_event_fit_inputs (see "
+            "build_named_event_fit_inputs_for_sequential_replay) - same "
+            "boundary as core.predict.predict_mu (Decision 12). Consumed: "
+            f"{meta.named_event_response_definitions_at_fit!r}."
+        )
     _validate_plan_matches_carry_in(plan, carry_in, meta)
 
     decay = np.array([params.decay_rate[c] for c in meta.channels])
@@ -726,7 +859,12 @@ def simulate_sequential_outcomes_market_specific(
     )
     replay_frame["markets"] = [plan.market]
     mu_replay = predict_mu_market_specific(
-        replay_frame, meta, params, precomputed_sat_media=sat_media_replay
+        replay_frame,
+        meta,
+        params,
+        precomputed_sat_media=sat_media_replay,
+        named_event_fit_inputs=named_event_fit_inputs,
+        seo_use_reference_for_future=True,
     )
     mu_future = mu_replay[tail_len:]
 
@@ -760,6 +898,9 @@ def simulate_terminal_carryover(
     ending_state: SequentialCarryInState,
     meta: FHModelMeta,
     params: FHPosteriorParams,
+    *,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
+    candidate_a_paid_search_cap: Optional[np.ndarray] = None,
 ) -> SequentialSimulationResult:
     """Continue the recursion beyond the plan horizon - typically with
     `zero_media_extension_plan`'s all-zero media, or an explicitly supplied
@@ -770,8 +911,21 @@ def simulate_terminal_carryover(
     Returns a SEPARATE `SequentialSimulationResult` - report it separately.
     Nothing in this module, or in `core.optimization`'s objective
     functions, folds a terminal-carryover result into an optimisation
-    objective; callers must not either."""
-    return simulate_sequential_outcomes(extension_plan, ending_state, meta, params)
+    objective; callers must not either.
+
+    `named_event_fit_inputs` - see `simulate_sequential_outcomes`'s
+    identical parameter; build a fresh one for `extension_plan` (via
+    `build_named_event_fit_inputs_for_sequential_replay`) rather than
+    reusing the one built for the original plan, since the extension
+    plan's own dates differ."""
+    return simulate_sequential_outcomes(
+        extension_plan,
+        ending_state,
+        meta,
+        params,
+        named_event_fit_inputs=named_event_fit_inputs,
+        candidate_a_paid_search_cap=candidate_a_paid_search_cap,
+    )
 
 
 def simulate_terminal_carryover_market_specific(
@@ -779,10 +933,16 @@ def simulate_terminal_carryover_market_specific(
     ending_state: SequentialCarryInState,
     meta: FHModelMeta,
     params: FHMarketSpecificPosteriorParams,
+    *,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> SequentialSimulationResult:
     """Model C mirror of `simulate_terminal_carryover`."""
     return simulate_sequential_outcomes_market_specific(
-        extension_plan, ending_state, meta, params
+        extension_plan,
+        ending_state,
+        meta,
+        params,
+        named_event_fit_inputs=named_event_fit_inputs,
     )
 
 
@@ -830,6 +990,7 @@ def simulate_sequential_outcomes_posterior(
     *,
     n_draws: int = DEFAULT_N_DRAWS,
     seed: int = 42,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> np.ndarray:
     """Every sampled posterior draw run through the FULL weekly recursion
     independently - shape (n_draws, n_weeks, n_outcomes). Deliberately
@@ -855,7 +1016,9 @@ def simulate_sequential_outcomes_posterior(
     draws = []
     for chain, draw in sample_draw_indices(trace, n_draws, seed):
         params = extract_posterior_params(trace, meta, at=(chain, draw))
-        result = simulate_sequential_outcomes(plan, carry_in, meta, params)
+        result = simulate_sequential_outcomes(
+            plan, carry_in, meta, params, named_event_fit_inputs=named_event_fit_inputs
+        )
         draws.append(result.mu)
     stacked: np.ndarray = np.stack(draws, axis=0)
     return stacked
@@ -871,6 +1034,7 @@ def simulate_sequential_outcomes_posterior_draw_consistent(
     as_of_period_label: str = "",
     n_draws: int = DEFAULT_N_DRAWS,
     seed: int = 42,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> np.ndarray:
     """Model A (shared) fully draw-consistent posterior evaluator (WP3,
     closes `REQ-STATE-001`'s "Not yet covered" draw-consistent carry-in
@@ -893,7 +1057,9 @@ def simulate_sequential_outcomes_posterior_draw_consistent(
         carry_in = reconstruct_starting_state(
             historical_frame, meta, params, market, as_of_period_label
         )
-        result = simulate_sequential_outcomes(plan, carry_in, meta, params)
+        result = simulate_sequential_outcomes(
+            plan, carry_in, meta, params, named_event_fit_inputs=named_event_fit_inputs
+        )
         draws.append(result.mu)
     stacked: np.ndarray = np.stack(draws, axis=0)
     return stacked
@@ -907,6 +1073,7 @@ def simulate_sequential_outcomes_posterior_market_specific(
     *,
     n_draws: int = DEFAULT_N_DRAWS,
     seed: int = 42,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> np.ndarray:
     """Model C (market-specific) mirror of
     `simulate_sequential_outcomes_posterior` (WP3, closes `REQ-STATE-001`'s
@@ -922,7 +1089,7 @@ def simulate_sequential_outcomes_posterior_market_specific(
     for chain, draw in sample_draw_indices(trace, n_draws, seed):
         params = extract_market_specific_posterior_params(trace, meta, at=(chain, draw))
         result = simulate_sequential_outcomes_market_specific(
-            plan, carry_in, meta, params
+            plan, carry_in, meta, params, named_event_fit_inputs=named_event_fit_inputs
         )
         draws.append(result.mu)
     stacked: np.ndarray = np.stack(draws, axis=0)
@@ -939,6 +1106,7 @@ def simulate_sequential_outcomes_posterior_market_specific_draw_consistent(
     as_of_period_label: str = "",
     n_draws: int = DEFAULT_N_DRAWS,
     seed: int = 42,
+    named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
 ) -> np.ndarray:
     """Model C (market-specific) mirror of
     `simulate_sequential_outcomes_posterior_draw_consistent` - same fully
@@ -956,7 +1124,7 @@ def simulate_sequential_outcomes_posterior_market_specific_draw_consistent(
             historical_frame, meta, params, market, as_of_period_label
         )
         result = simulate_sequential_outcomes_market_specific(
-            plan, carry_in, meta, params
+            plan, carry_in, meta, params, named_event_fit_inputs=named_event_fit_inputs
         )
         draws.append(result.mu)
     stacked: np.ndarray = np.stack(draws, axis=0)

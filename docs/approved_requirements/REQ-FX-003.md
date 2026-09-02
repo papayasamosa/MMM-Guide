@@ -131,3 +131,91 @@ method selection and minimum-observation threshold remain Finance-owned).
 ## Approval date
 
 2026-08-27
+
+## Addendum, 2026-08-30: Finance constant-dollar annual method approved as the DEFAULT (resolves part of `docs/wp7_governed_fx_finance_decision_package.md` items 1 and 6)
+
+The business-decision brief "Post-UI/UX Implementation Instructions:
+Approved Business Decisions" (Decision 13) approves the following, at
+the contract level only — no actual rate values are invented, and this
+addendum does not implement any conversion code:
+
+**New closed-vocabulary method: `finance_constant_dollar_annual`.** This
+record's §1 method vocabulary gains an eighth value,
+`finance_constant_dollar_annual`, distinct from the existing `finance_
+budget_rate`/`finance_accounting_rate` tags (which remain reserved for
+`docs/wp7_governed_fx_finance_decision_package.md` items 5 and 7's still-
+open budget-planning/reconciliation questions). A rate tagged `finance_
+constant_dollar_annual` must reference an `REQ-FX-002` rate record with
+`frequency = "annual"` (this record's 2026-08-30 addendum) and applies
+uniformly to every week within its financial year — it is not a
+weekly/daily conversion method in the sense of this record's §§2-4 and
+carries no observation-count/business-day-fallback logic (§5 does not
+apply to it).
+
+**`finance_constant_dollar_annual` is the approved DEFAULT governed FX
+method for MMM outputs.** This resolves `docs/wp7_governed_fx_finance_
+decision_package.md` item 6 ("default historical conversion method for
+weekly spend") in a direction that package's own listed options did not
+anticipate — not spend-weighted, arithmetic-average, or month-end, but a
+single Finance-approved rate held constant across an entire financial
+year, chosen specifically so MMM outputs stay consistent with Finance's
+own constant-dollar reporting. This also resolves package item 1 (is USD
+the group reporting currency?) — the business-decision brief's own
+examples (GBP→USD, AUD→USD, "other local currencies → USD") confirm USD
+as the target currency for this default method; `REQ-FX-001`'s group-
+currency field should be set to USD when this default method is used,
+though `REQ-FX-001` §1 itself is not amended by this addendum (a market
+could still report in a non-USD currency for a purpose that does not use
+this default method).
+
+**Optional market-rate/API mode stays secondary and must never silently
+mix with Finance-mode results.** Per Decision 13's own text, a
+time-varying (preferably weekly) market-rate/API mode may be built as an
+alternative, explicitly selectable method — it does not replace
+`finance_constant_dollar_annual` as the default, and a single output must
+never combine Finance constant-dollar figures and market-API figures
+without an explicit, governed conversion path between them (this
+reinforces, and does not relax, this record's existing §1 "unrecognised
+or unapproved method must fail closed, never silently fall back"
+invariant).
+
+**The selected FX method must always be visible in relevant outputs**,
+per `REQ-FX-006`'s existing reporting contract — this addendum does not
+change that record, only confirms `finance_constant_dollar_annual` is
+now one of the methods `REQ-FX-006` must be able to label. The same
+policy must be shared by historical outcome valuation, multi-market
+reporting, Scenario Planner, and Optimiser, per `REQ-FX-005`'s existing
+future-assumption/scenario-translation contract — again confirmed, not
+amended, by this addendum.
+
+**Still genuinely open** (unaffected by this addendum): `docs/wp7_
+governed_fx_finance_decision_package.md` items 2, 3, 4, 5, 7, 8, 9, 10,
+11, and 12 — including, notably, item 7 (which specific method governs
+*budget-planning* future assumptions — this addendum's new method is the
+default for MMM *historical/reporting* consistency with Finance, not
+necessarily the same choice for forward budget planning, which remains a
+separate, still-open Finance decision) and item 8 (constant-currency
+basis for year-on-year decomposition — this addendum's annual method is
+a candidate input to that decomposition but does not itself select
+prior-year/current-year/budget-rate as the constant-currency basis). The
+actual Finance rate table remains external and Finance-supplied; this
+addendum invents no rate value.
+
+
+
+## Addendum, 2026-08-30 (Phase D): architecture implemented (Decision 13 build-out)
+
+Per the user's explicit 2026-08-30 authorisation (see wp7's updated
+text), `ancestry_mmm/core/fx_conversion.py` now implements the closed
+eight-value method vocabulary (including `finance_constant_dollar_
+annual`, this record's own prior 2026-08-30 default-method addendum) and
+the conversion computations for Requirements 2-5:
+`convert_daily_spend`, `convert_weekly_average` (fails closed against a
+CALLER-SUPPLIED minimum-observation threshold - this module invents no
+default), `convert_spend_weighted_weekly`, `apply_previous_business_
+day_fallback`, and `apply_finance_constant_dollar_annual`. Full detail
+in `docs/governed_fx_contract_implementation_decision_record.md`. No
+default-method selection for weekly-spend conversion beyond this
+record's own already-resolved default, and no minimum-observation
+threshold, is invented - every item under "Explicitly excluded" above
+remains exactly as open as before this addendum.

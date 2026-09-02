@@ -38,6 +38,7 @@ import pandas as pd
 
 from ancestry_mmm.core.canonical_curves import IDENTITY_COLUMNS
 from ancestry_mmm.core.fingerprint import _canonical_json, fingerprint_dataframe
+from ancestry_mmm.core.outcomes import METRIC_REGISTRY
 
 # ---------------------------------------------------------------------------
 # Versioning
@@ -373,9 +374,50 @@ def governed_context_fields(metadata: CurveArtifactMetadata) -> Dict[str, object
     immutable creation-time snapshots (``_build_artifact_metadata``); this
     only surfaces what a display/export row was previously omitting, never
     invents or recomputes anything.
+
+    Production-integration follow-up (Results/exports disclosure labels):
+    also surfaces the outcome's *metric identity* (``outcome_metric_key``/
+    ``outcome_metric_label``, e.g. distinguishing a GSA outcome from a net
+    bill-through one - ``outcome_definition_version`` above identifies
+    which *version* of a definition was used, never which metric it is),
+    plus whether this artifact's underlying model had experiment evidence
+    or Search-capacity evidence linked to it at creation time
+    (``experiment_calibration_status``/``linked_experiment_count``,
+    ``search_capacity_status``/``search_capacity_official_use_eligible``).
+    All four are read from ``metadata.diagnostics_snapshot`` - the same
+    ``DiagnosticSection``-shaped dict ``pages/06_Diagnostics.py`` already
+    reads for its "Identification & collinearity"/"Candidate A Search"
+    tabs, snapshotted once at artifact-creation time
+    (``application.curve_service``) - never recomputed here, and never
+    fabricated when the underlying diagnostics artefact did not carry a
+    computed section (most fits today have no experiment evidence or
+    Search Candidate A spec linked - see ``application.diagnostics_
+    service``'s own ``search_capacity`` section comment - so these two
+    commonly read ``"not_applicable"``, which is the honest answer, not a
+    gap in this function).
     """
     outcome = metadata.outcome_definition_snapshot or {}
     approval = metadata.outcome_approval_snapshot or {}
+    diagnostics = metadata.diagnostics_snapshot or {}
+    outcome_metric_key = outcome.get("metric_key")
+    metric_definition = (
+        METRIC_REGISTRY.get(str(outcome_metric_key)) if outcome_metric_key else None
+    )
+    experiment_calibration = cast(
+        Mapping[str, object], diagnostics.get("experiment_calibration") or {}
+    )
+    experiment_payload = cast(
+        Mapping[str, object], experiment_calibration.get("payload") or {}
+    )
+    experiment_report = cast(
+        Mapping[str, object], experiment_payload.get("experiments") or {}
+    )
+    experiment_entries = experiment_report.get("entries")
+    search_capacity = cast(
+        Mapping[str, object], diagnostics.get("search_capacity") or {}
+    )
+    search_payload = cast(Mapping[str, object], search_capacity.get("payload") or {})
+    search_use_gate = search_payload.get("use_gate")
     # Snapshot fields are declared Mapping[str, object] (arbitrary JSON-like
     # payload) - each `"rows"` entry is, by this artifact's own construction
     # contract (`_build_artifact_metadata`), always a sequence of row
@@ -415,6 +457,22 @@ def governed_context_fields(metadata: CurveArtifactMetadata) -> Dict[str, object
         ),
         "component_scope": _joined(row.get("component_type") for row in pathway_rows),
         "extrapolation_status": resolve_extrapolation_status(support_rows),
+        "outcome_metric_key": outcome_metric_key,
+        "outcome_metric_label": (
+            metric_definition.display_name if metric_definition is not None else None
+        ),
+        "experiment_calibration_status": experiment_calibration.get("status"),
+        "linked_experiment_count": (
+            len(cast(Sequence[object], experiment_entries))
+            if experiment_entries is not None
+            else None
+        ),
+        "search_capacity_status": search_capacity.get("status"),
+        "search_capacity_official_use_eligible": (
+            cast(Mapping[str, object], search_use_gate).get("official_use_eligible")
+            if search_use_gate is not None
+            else None
+        ),
     }
 
 
