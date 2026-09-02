@@ -275,9 +275,7 @@ def _candidate_a_mediated_shapley(
         return coalition_values[key]
 
     mu_without_upstream_media = coalition_value(set())
-    mediated = {
-        channel: np.zeros_like(base_mu) for channel in demand_channels
-    }
+    mediated = {channel: np.zeros_like(base_mu) for channel in demand_channels}
     # Exact coalition-weighted Shapley values keep identical/correlated
     # upstream channels symmetric while retaining the full nonlinear cap
     # replay.  Sampling remains the bounded fallback for unusually large
@@ -423,8 +421,7 @@ def compute_shapley_contributions(
             "mu_without_upstream_media"
         ]
         result["search_non_media_contribution"] = (
-            candidate_a_attribution["mu_without_upstream_media"]
-            - mu_before_candidate_a
+            candidate_a_attribution["mu_without_upstream_media"] - mu_before_candidate_a
         )
         result["search_mediated_channel_contributions"] = candidate_a_attribution[
             "mediated_by_channel"

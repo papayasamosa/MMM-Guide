@@ -410,9 +410,7 @@ def _candidate_a_attribution_meta_and_trace():
         ),
         "search_paid_capture_outcome_beta": np.full((1, n_draws, 1), 0.08),
         "search_organic_capture_outcome_beta": np.full((1, n_draws, 1), 0.03),
-        "search_direct_navigation_capture_outcome_beta": np.full(
-            (1, n_draws, 1), 0.02
-        ),
+        "search_direct_navigation_capture_outcome_beta": np.full((1, n_draws, 1), 0.02),
     }
     coords = {
         "channel": channels,
@@ -462,7 +460,12 @@ def _candidate_a_attribution_meta_and_trace():
         # Identical upstream media makes the equal-beta Shapley allocations
         # directly testable without a spend/click-share allocation rule.
         "X_media": np.array(
-            [[10.0, 10.0, 10.0], [20.0, 20.0, 20.0], [30.0, 30.0, 30.0], [40.0, 40.0, 40.0]]
+            [
+                [10.0, 10.0, 10.0],
+                [20.0, 20.0, 20.0],
+                [30.0, 30.0, 30.0],
+                [40.0, 40.0, 40.0],
+            ]
         ),
         "promo": np.zeros((4, 1)),
         "trend": np.zeros(4),
@@ -521,9 +524,7 @@ class TestCandidateAPosteriorDrawAttribution:
                 assert row["total_effect"] == pytest.approx(
                     row["direct_effect"] + row["mediated_via_search_effect"]
                 )
-                assert row["volume_contribution"] == pytest.approx(
-                    row["total_effect"]
-                )
+                assert row["volume_contribution"] == pytest.approx(row["total_effect"])
             search_row = summary[
                 summary["channel"] == "Search-mediated Candidate A"
             ].iloc[0]
@@ -561,9 +562,7 @@ class TestCandidateAPosteriorDrawAttribution:
             0.0,
             atol=1e-10,
         )
-        assert np.any(
-            zero_effect["search_mediated_channel_contributions"]["TV"] > 0
-        )
+        assert np.any(zero_effect["search_mediated_channel_contributions"]["TV"] > 0)
 
         # Draw 1 has identical media and equal demand coefficients, so the
         # posterior-draw Shapley value is symmetric across all three players.
@@ -633,20 +632,14 @@ class TestCandidateAPosteriorDrawAttribution:
             frame, meta, single_params, n_permutations=20
         )
 
-        assert np.any(
-            contributions["search_mediated_channel_contributions"]["TV"] > 0
-        )
+        assert np.any(contributions["search_mediated_channel_contributions"]["TV"] > 0)
         np.testing.assert_allclose(
-            contributions["search_mediated_channel_contributions"].get(
-                "Social", 0.0
-            ),
+            contributions["search_mediated_channel_contributions"].get("Social", 0.0),
             0.0,
             atol=1e-10,
         )
         np.testing.assert_allclose(
-            contributions["search_mediated_channel_contributions"].get(
-                "YouTube", 0.0
-            ),
+            contributions["search_mediated_channel_contributions"].get("YouTube", 0.0),
             0.0,
             atol=1e-10,
         )
