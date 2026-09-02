@@ -683,7 +683,7 @@ jobs:
           cache-dependency-glob: "uv.lock"
       - run: uv sync --locked
       - name: Run deterministic attribution recovery tests
-        run: uv run pytest ancestry_mmm/tests/test_simulation_recovery.py -v --tb=short
+        run: uv run pytest ancestry_mmm/tests/test_simulation_recovery.py -v --tb=short --no-cov
         timeout-minutes: 60
 
   # -- Candidate A posterior recovery (schedule/manual only) --

@@ -267,7 +267,9 @@ def test_official_lifecycle_journey_in_browser(
     expect(
         page.get_by_text("Upload a previously exported .zip", exact=True)
     ).to_be_visible(timeout=30_000)
-    page.locator("input[type=file]").set_input_files(str(bundle_path))
+    page.get_by_label("Upload a previously exported .zip", exact=True).get_by_test_id(
+        "stFileUploaderDropzoneInput"
+    ).set_input_files(str(bundle_path))
     import_button = page.get_by_role("button", name="Import bundle")
     expect(import_button).to_be_enabled(timeout=30_000)
     import_button.click()
@@ -467,7 +469,9 @@ def test_sequential_scenario_planner_manual_evaluation_in_browser(
     expect(
         page.get_by_text("Upload a previously exported .zip", exact=True)
     ).to_be_visible(timeout=30_000)
-    page.locator("input[type=file]").set_input_files(str(bundle_path))
+    page.get_by_label("Upload a previously exported .zip", exact=True).get_by_test_id(
+        "stFileUploaderDropzoneInput"
+    ).set_input_files(str(bundle_path))
     import_button = page.get_by_role("button", name="Import bundle")
     expect(import_button).to_be_enabled(timeout=30_000)
     import_button.click()
@@ -480,7 +484,9 @@ def test_sequential_scenario_planner_manual_evaluation_in_browser(
 
     # --- Scenario Planner: select sequential-weekly manual evaluation ----
     page.get_by_role("link", name="Scenario Planner").click()
-    method_radio_option = page.get_by_text("Sequential weekly", exact=True)
+    method_radio_option = page.get_by_test_id("stTabs").get_by_text(
+        "Sequential weekly", exact=True
+    )
     expect(method_radio_option).to_be_visible(timeout=30_000)
     method_radio_option.click()
     expect(
@@ -511,8 +517,12 @@ def test_sequential_scenario_planner_manual_evaluation_in_browser(
         "checkbox",
         name=re.compile("I understand my entered monthly values will be reassigned"),
     )
-    if start_month_ack.count() > 0:
-        _check_with_retry(start_month_ack)
+    # This deterministic fixture deliberately starts the plan after the
+    # fitted history, so the reassignment acknowledgement is expected here.
+    # Wait for the widget after the method-selection rerun before checking it;
+    # an immediate count() can observe the pre-rerun DOM and skip the gate.
+    expect(start_month_ack).to_be_visible(timeout=30_000)
+    _check_with_retry(start_month_ack)
     no_promotion_ack = page.get_by_role(
         "checkbox",
         name=re.compile("I explicitly confirm no promotion is planned"),
@@ -603,7 +613,9 @@ def test_diagnostics_wp2_evidence_sections_render_in_browser(
     expect(
         page.get_by_text("Upload a previously exported .zip", exact=True)
     ).to_be_visible(timeout=30_000)
-    page.locator("input[type=file]").set_input_files(str(bundle_path))
+    page.get_by_label("Upload a previously exported .zip", exact=True).get_by_test_id(
+        "stFileUploaderDropzoneInput"
+    ).set_input_files(str(bundle_path))
     import_button = page.get_by_role("button", name="Import bundle")
     expect(import_button).to_be_enabled(timeout=30_000)
     import_button.click()
@@ -660,7 +672,7 @@ def test_diagnostics_wp2_evidence_sections_render_in_browser(
     expect(
         page.get_by_text(
             "No experiment uses are registered for the current model, and no "
-            "calibrated-model comparison exists",
+            "calibrated-model comparison is available",
             exact=False,
         )
     ).to_be_visible(timeout=30_000)
@@ -704,7 +716,9 @@ def test_economic_valuation_section_renders_in_browser(
     expect(
         page.get_by_text("Upload a previously exported .zip", exact=True)
     ).to_be_visible(timeout=30_000)
-    page.locator("input[type=file]").set_input_files(str(bundle_path))
+    page.get_by_label("Upload a previously exported .zip", exact=True).get_by_test_id(
+        "stFileUploaderDropzoneInput"
+    ).set_input_files(str(bundle_path))
     import_button = page.get_by_role("button", name="Import bundle")
     expect(import_button).to_be_enabled(timeout=30_000)
     import_button.click()
