@@ -67,8 +67,10 @@ class ProjectExportInput:
     fx_rate_set: Optional[dict] = None
     fx_rate_records: Optional[List[dict]] = None
     value_mapping: Optional[dict] = None
+    outcome_valuation_records: Optional[List[dict]] = None
     google_trends_anchor: Optional[dict] = None
     candidate_a_fit_inputs: Optional[dict] = None
+    search_candidate_a_spec: Optional[dict] = None
     causal_graphs: Optional[List[dict]] = None
     search_objects: Optional[List[dict]] = None
     source_versions: Optional[List[dict]] = None
@@ -195,8 +197,10 @@ class ProjectService:
                 fx_rate_set=exp_input.fx_rate_set,
                 fx_rate_records=exp_input.fx_rate_records,
                 value_mapping=exp_input.value_mapping,
+                outcome_valuation_records=exp_input.outcome_valuation_records,
                 google_trends_anchor=exp_input.google_trends_anchor,
                 candidate_a_fit_inputs=exp_input.candidate_a_fit_inputs,
+                search_candidate_a_spec=exp_input.search_candidate_a_spec,
                 causal_graphs=exp_input.causal_graphs,
                 search_objects=exp_input.search_objects,
                 source_versions=exp_input.source_versions,

@@ -129,6 +129,10 @@ def init_session_state():
         # "causal_graph"/"causal_graph_versions" below.
         "search_objects": [],
         "search_object_versions": [],
+        # Optional Candidate A identity restored separately from its
+        # observations so the analyst can attach a new exact observation
+        # upload without inventing a Search object mapping.
+        "search_candidate_a_spec": None,
         # REQ-GRAPH-001: the current CausalGraph version being edited (draft
         # or approved), as a dict (core.causal_graph.CausalGraph.to_dict()).
         # None until a graph is first saved on the Causal Graph page -

@@ -62,6 +62,7 @@ def test_standard_template_downloads_are_exposed_with_plain_language_help():
         "Download Activity and Media template",
         "Download Context and External Factors template",
         "Download Experiment Evidence template",
+        "Download valuation template",
     }
     assert any("Required sheets are listed below" in (i.value or "") for i in at.info)
 

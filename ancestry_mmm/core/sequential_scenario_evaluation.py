@@ -37,7 +37,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 import numpy as np
 
@@ -655,6 +655,7 @@ def sequential_scenario_to_dict(
     result: SequentialScenarioEvaluationResult,
     *,
     notes: str = "",
+    scenario_value_assumptions: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build the persisted-scenario dict for a saved sequential-weekly
     scenario (WP5 part 4) - appended to the SAME `scenarios` list a
@@ -681,6 +682,11 @@ def sequential_scenario_to_dict(
         "market": result.market,
         "calculation_method": result.calculation_method,
         "notes": notes,
+        "scenario_value_assumptions": (
+            dict(scenario_value_assumptions)
+            if scenario_value_assumptions is not None
+            else None
+        ),
         "governance_mode": result.governance_mode,
         "governance_dependencies": (
             result.governance_dependencies.to_dict()

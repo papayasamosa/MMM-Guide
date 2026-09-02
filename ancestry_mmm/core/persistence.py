@@ -211,9 +211,10 @@ from .optimization import SpendConstraint
 # Finance-supplied FX rate set and immutable records. 20 -> 21 for the
 # complete optional Candidate A fit-input boundary. 21 -> 22 for the
 # row-aligned, window-gated SEO visibility fit-input boundary. 22 -> 23 for
-# durable governed future-assumption bundles. Older bundles remain importable
+# durable governed future-assumption bundles. 23 -> 24 for governed weekly
+# outcome valuation records. Older bundles remain importable
 # because these fields restore as None until explicitly reviewed.
-PROJECT_BUNDLE_SCHEMA_VERSION = 23
+PROJECT_BUNDLE_SCHEMA_VERSION = 24
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -307,6 +308,7 @@ def export_project(
     fx_rate_set: Optional[dict] = None,
     fx_rate_records: Optional[List[dict]] = None,
     value_mapping: Optional[dict] = None,
+    outcome_valuation_records: Optional[List[dict]] = None,
     causal_graphs: Optional[List[dict]] = None,
     search_objects: Optional[List[dict]] = None,
     search_candidate_a_spec: Optional[dict] = None,
@@ -535,6 +537,10 @@ def export_project(
             (tmp / "config" / "value_mapping.json").write_text(
                 json.dumps(value_mapping, indent=2, default=str)
             )
+        if outcome_valuation_records is not None:
+            (tmp / "config" / "outcome_valuation_records.json").write_text(
+                json.dumps(outcome_valuation_records, indent=2, default=str)
+            )
         # REQ-GRAPH-001: all CausalGraph versions worth keeping - see the
         # module docstring.
         if causal_graphs is not None:
@@ -744,6 +750,8 @@ def export_project(
                 "fx_rate_records": fx_rate_records is not None
                 and bool(fx_rate_records),
                 "value_mapping": value_mapping is not None,
+                "outcome_valuation_records": outcome_valuation_records is not None
+                and bool(outcome_valuation_records),
                 "causal_graphs": causal_graphs is not None and bool(causal_graphs),
                 "search_objects": search_objects is not None and bool(search_objects),
                 "search_candidate_a_spec": search_candidate_a_spec is not None,
@@ -875,6 +883,7 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         "fx_rate_set": None,
         "fx_rate_records": None,
         "value_mapping": None,
+        "outcome_valuation_records": [],
         # REQ-GRAPH-001: None for bundles exported before this capability
         # existed - "no graph yet" is a valid, not-an-error reading, same
         # convention as funnel_links/media_outcome_pathways above.
@@ -1102,6 +1111,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "value_mapping.json").exists():
             result["value_mapping"] = json.loads(
                 (config_dir / "value_mapping.json").read_text()
+            )
+        if (config_dir / "outcome_valuation_records.json").exists():
+            result["outcome_valuation_records"] = json.loads(
+                (config_dir / "outcome_valuation_records.json").read_text()
             )
         if (config_dir / "causal_graphs.json").exists():
             result["causal_graphs"] = json.loads(

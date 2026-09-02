@@ -343,32 +343,45 @@ with SectionCard(
         + "\n\n".join(f"**{m.capitalize()}**: {h}" for m, h in JOIN_MODE_HELP.items()),
     )
 
-    if st.button("Join sources", type="primary"):
-        try:
-            joined, join_diagnostics = join_sources_with_diagnostics(
-                sources, date_col=date_col, market_col=market_col, how=join_mode
-            )
-            set_state("joined_data", joined)
-            set_state("join_mode", join_mode)
-            set_state("join_diagnostics", join_diagnostics.to_dict())
-            set_state("date_col", date_col)
-            set_state("market_col", market_col)
-            clear_model_state()
-            st.success(
-                f"Joined {len(sources)} source(s) into {joined.shape[0]} rows x {joined.shape[1]} columns."
-            )
-            # Overnight UI/UX pass (2026-08-29, UX-003 pattern): without a
-            # rerun, this page's own header status badge (computed earlier in
-            # this same script run) kept showing "Not started" in the same
-            # view as this success message - the same rerun-after-state-
-            # change fix already used a few lines below for "Transformation
-            # added" and applied across ancestry_mmm/pages/01_Data_Upload.py.
-            st.rerun()
-        except ValueError as e:
-            st.error(
-                f"Could not join sources: {e} Check that the selected date/market columns exist in every source."
-            )
+    _inner_join_confirmation = False
+    if join_mode == "inner":
+        st.warning(
+            "An inner join can silently remove weeks or markets when an optional "
+            "source starts later (for example UK GSC from November 2024). It is "
+            "never the official preparation route."
+        )
+        _inner_join_confirmation = st.checkbox(
+            "I understand this is an exploratory join and have reviewed the source coverage.",
+            key="exploratory_inner_join_confirmation",
+        )
 
+    if st.button("Join sources", type="primary"):
+        if join_mode == "inner" and not _inner_join_confirmation:
+            st.error(
+                "Review and explicitly confirm the exploratory inner join before "
+                "running it. Use the recognised standard source-pack preparation "
+                "for official modelling."
+            )
+        else:
+            try:
+                joined, join_diagnostics = join_sources_with_diagnostics(
+                    sources, date_col=date_col, market_col=market_col, how=join_mode
+                )
+                set_state("joined_data", joined)
+                set_state("join_mode", join_mode)
+                set_state("join_purpose", "exploratory_generic_join")
+                set_state("join_diagnostics", join_diagnostics.to_dict())
+                set_state("date_col", date_col)
+                set_state("market_col", market_col)
+                clear_model_state()
+                st.success(
+                    f"Joined {len(sources)} source(s) into {joined.shape[0]} rows x {joined.shape[1]} columns."
+                )
+                st.rerun()
+            except ValueError as e:
+                st.error(
+                    f"Could not join sources: {e} Check that the selected date/market columns exist in every source."
+                )
 joined = get_state("joined_data")
 if joined is None:
     st.info("Join your sources above to continue.")
