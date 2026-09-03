@@ -38,6 +38,7 @@ Durability commits created on this branch:
 - `060a8120` - Persist governed valuation and future assumptions
 - `a5e1456f` - Cover exploratory join confirmation in the AppTests
 - `5525138d` - Finalize production onboarding handoff and validation evidence
+- `f43b4e0e` - Record onboarding PR publication
 - The final PR-publication documentation-only commit follows these commits;
   its exact SHA is the final branch HEAD reported in the delivery summary.
 
@@ -348,3 +349,66 @@ windowed reduced-form visibility-to-final-outcome effect.
 6. Review the prepared frame, model specification and pre-fit checks. Only
    after explicit owner approval of this package may the next agent start a
    production fit. No production data or production fit is present here.
+
+### Plain-English requests for missing inputs
+
+Send real values only through the application upload path after the package is
+approved. The schemas below use angle-bracket placeholders to show the shape;
+placeholders are not accepted data and no business value is implied.
+
+- **Core outcomes:** send one governed weekly row per market and the approved
+  outcome dictionary. Example: `period_start,market,FH_New_GSA,DNA_CrossSell_GSA,Winback_GSA` followed by a row shaped like `<YYYY-MM-DD>,<UK>,<count>,<count>,<count>`. Include the approved definition/version, date and cohort basis, maturity, exclusions, reconciliation source and owner. If the approved first-fit outcome is not GSA, replace the outcome columns with the approved source columns; do not assume NBT.
+- **Activity/media:** send tidy-long rows shaped like
+  `period_start,market,activity_id,<declared_measure_columns>` and an
+  `activity_dictionary` row identifying channel, platform, campaign type,
+  intent, funnel stage, product, model-input measure/unit/kind, spend/currency
+  fields, effective dates and eligibility. Example row:
+  `<YYYY-MM-DD>,<UK>,<activity-id>,<model-input>`.
+- **Context and controls:** send tidy-long rows
+  `period_start,market,variable_id,value,native_frequency` plus dictionary
+  metadata for class, role, source, scope, unit and effective dates. Example:
+  `<YYYY-MM-DD>,<UK>,<variable-id>,<value>,<weekly-or-approved-native-frequency>`.
+- **Segmentation:** add separate approved outcome columns/dictionary rows for
+  Family History New, DNA cross-sell and Winback. DNA composition may be
+  `New Customer` and `Existing Family History Customer`; do not send or expect
+  self-activated/gifted/unactivated splits without a separate approval.
+- **FH LTR/DNA valuation:** send aggregate weekly records with
+  `valuation_kind,market,week,segment,denominator_outcome_id,quality_status,segment_dimension,aggregate_value,currency,source,source_version,schema_version,horizon_months`. FH LTR needs the approved 48-month horizon; DNA revenue leaves that field blank. Example:
+  `<fh_ltr>,<UK>,<YYYY-MM-DD>,<segment>,<outcome-id>,<quality>,<dimension>,<aggregate-value>,<GBP>,<source>,<version>,<schema>,<48>`.
+- **Paid Search and Candidate A:** send the approved Brand/Non-Brand
+  dictionary classification, then Candidate A metadata (query-set ID, exact
+  terms, geography, category, property, extraction date, range and sigma) and
+  weekly `week,raw_index` observations. Separately send Candidate A/Search
+  rows `period_start,market,paid_search_delivery,paid_search_cap,organic_search_capture,direct_navigation_capture` plus explicit Search object IDs, units, scale, provenance and upstream mapping. Do not derive cap from spend or fill missing rows with zero.
+- **Search capacity:** send governed historical cap-hit evidence including
+  binding and non-binding weeks, with the cap unit, rule version, source and
+  future cap decisions. A cap is a limit, not realised spend or delivery.
+- **SEO/GSC:** send available rows
+  `market,week,dimension_label,position,impressions[,clicks]` from the GSC
+  positional-visibility source. The available UK window starts around
+  2024-11-11; do not create earlier SEO rows. The full MMM history remains in
+  the fit, with earlier SEO cells inactive under the approved partial-window
+  policy. Clicks are diagnostic-only for the current reduced-form release.
+- **Promotions/events:** send governed promotion/control columns and event
+  metadata `event_id,event_name,start_date,end_date`, with response-definition
+  and moderation meaning. No named-event values are invented.
+- **Experiments:** send experiment ID/version, activity/channel, market scope,
+  start/end, design, outcome/effect, uncertainty, applicability and
+  compatibility metadata. The record must identify the explicit calibration
+  target (for example `direct:<channel>:<outcome_id>`); no experiment result is
+  assumed.
+- **Finance FX:** send the Finance-approved annual rate-set records with
+  source/target currency, rate date/value, frequency or financial year,
+  method, provider, version, approval metadata and all required pairs. No FX
+  value is present in this branch.
+- **Future value mappings:** send the approved forward outcome-value mapping
+  and DNA value mode/values only when expected monetary scenario outcomes are
+  required. Demand, seasonality, baseline and controls are generated through
+  governed system/model roles and are not manual upload fields.
+- **Optimisation:** send channel/market/period bounds, locked cells, fixed
+  totals, movement limits, floors and explicit Search caps, with units matching
+  the activity contract. These are constraints, never realised spend.
+- **Profit:** send the approved profit definition plus COGS/margin/contribution
+  inputs with currency, source/version and matching market/outcome/time
+  coverage. Until then, `maximise_profit` remains unavailable and no profit
+  proxy is used.
