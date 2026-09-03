@@ -21,6 +21,7 @@ from ancestry_mmm.core.search_capacity import (
     SearchCapacityValidationError,
     validate_candidate_a_spec,
 )
+from ancestry_mmm.core.search_objects import SearchObjectDefinition
 
 
 CANDIDATE_A_UPLOAD_COLUMNS = (
@@ -34,7 +35,9 @@ CANDIDATE_A_UPLOAD_COLUMNS = (
 
 
 def _number_column(frame: pd.DataFrame, name: str) -> np.ndarray:
-    values = pd.to_numeric(frame[name], errors="coerce").to_numpy(dtype=float)
+    values: np.ndarray = np.asarray(
+        pd.to_numeric(frame[name], errors="coerce").to_numpy(dtype=float)
+    )
     if not np.all(np.isfinite(values)):
         raise SearchCapacityValidationError(
             f"Candidate A upload field {name!r} contains blank or non-numeric values"
@@ -81,7 +84,7 @@ def build_candidate_a_fit_inputs_from_frame(
     model_frame: Mapping[str, Any],
     spec: SearchCandidateASpec,
     demand_channel_names: Sequence[str],
-    search_objects: Sequence[object | Mapping[str, Any]],
+    search_objects: Sequence[SearchObjectDefinition | Mapping[str, Any]],
     google_trends_anchor: GoogleTrendsAnchorFitInputs | None = None,
 ) -> CandidateASearchFitInputs:
     """Validate and align an uploaded Candidate A observation table.

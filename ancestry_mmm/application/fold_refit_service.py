@@ -433,9 +433,7 @@ def fit_fold_with_real_model(
             list(search_objects)
             if search_objects is not None
             else (
-                candidate_train_inputs.search_objects
-                if candidate_train_inputs
-                else None
+                candidate_train_inputs.search_objects if candidate_train_inputs else ()
             )
         ),
         candidate_a_fit_inputs=candidate_train_inputs,
