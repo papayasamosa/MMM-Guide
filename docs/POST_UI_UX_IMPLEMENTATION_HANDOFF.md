@@ -16,14 +16,15 @@ replace the approved implementation brief, decision records, or the
 - **Scope:** production-data onboarding integration only. Decisions 1-19 and
   the approved post-UI/UX implementation were inherited; no production data
   has been imported and no production MMM fit has been run.
-- **Final validated implementation/test HEAD:**
-  `a5e1456f` (`test: cover exploratory join confirmation`). The final
-  documentation commit follows this validated code/test state; the final
-  branch HEAD and push state are recorded in the durability list and delivery
-  summary.
-- **Pushed:** yes; `agent/production-data-onboarding` is published on
-  `origin`. Pull request [#350](https://github.com/papayasamosa/Media-Mix-Lab/pull/350)
-  is open against `main` and has not been merged.
+- **Latest locally validated source/test HEAD:**
+  `0aa08ddb` (`fix: satisfy onboarding type boundaries`). The complete
+  repository suite was already green on the preceding onboarding code/test
+  state; this type-only boundary correction was then covered by the focused
+  Search/model/fold run and local mypy. Exact final-head CI remains pending
+  until the pushed SHA is checked.
+- **Pushed:** pending for the source/type correction and this handoff update;
+  Pull request [#350](https://github.com/papayasamosa/Media-Mix-Lab/pull/350)
+  remains open against `main` and must not be merged as part of this audit.
 - `.mcp.json`, `.playwright-mcp/`, `designs/`, `tools/`, local logs, caches,
   and machine-specific files remain deliberately outside the commits.
 
@@ -39,8 +40,10 @@ Durability commits created on this branch:
 - `a5e1456f` - Cover exploratory join confirmation in the AppTests
 - `5525138d` - Finalize production onboarding handoff and validation evidence
 - `f43b4e0e` - Record onboarding PR publication
-- The final PR-publication documentation-only commit follows these commits;
-  its exact SHA is the final branch HEAD reported in the delivery summary.
+- `551d6e8b` - Add onboarding input examples
+- `0aa08ddb` - Satisfy onboarding type boundaries
+- The final handoff update records the exact-head CI result after the branch is
+  pushed and validated.
 
 ## 2. Decision 1-19 status
 
@@ -175,13 +178,9 @@ the evidence rather than treating a partial sample as a pass.
 
 - Exact long named-event NUTS recovery: **4 passed in 4709.86s
   (1:18:29)**.
-- Complete repository PR CI on exact implementation SHA
-  `af3d192346851d3d9210ed2723600f38be07f93d`: **run 33611093424 passed**.
-  Python 3.11 and 3.12 tests passed with their coverage gates; Compile +
-  Import, Mypy, Ruff, Bandit, pip-audit, bundle round-trip, Streamlit
-  AppTest, browser lifecycle, Requirements index, and Windows tooling all
-  passed. Manual-only recovery gate checks were intentionally skipped in that
-  pull-request run.
+- The merged post-UI/UX implementation was inherited from `main` at
+  `980af30f6b923df206d97709a005e78437dd8115`; its approved PR #349 final SHA
+  and CI evidence are not recreated by this onboarding branch.
 - Affected-path recovery on the same SHA: manual workflow **run 33611176082**
   **passed**. Candidate A posterior recovery, named-event
   integration/response evidence, deterministic attribution recovery, browser
@@ -208,7 +207,8 @@ the evidence rather than treating a partial sample as a pass.
   evidence only; it is not production-data evidence and did not run a
   production fit.
 - The exact final blocking CI-equivalent command was run against the validated
-  implementation/test state above and exited successfully: **4,811 passed, 2
+  onboarding implementation/test state before the type-boundary correction and
+  exited successfully: **4,811 passed, 2
   skipped in 28,271.92s (7:51:11)**, coverage **87.86%**, exit 0. The initial
   rerun exposed three stale Transform Pipeline AppTest interactions after the
   explicit exploratory-inner-join confirmation was added; those tests were
@@ -217,6 +217,12 @@ the evidence rather than treating a partial sample as a pass.
   ```powershell
   .venv\Scripts\python.exe -m pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py --ignore=ancestry_mmm/tests/test_official_lifecycle_browser.py --ignore=ancestry_mmm/tests/test_causal_graph_editor_browser.py --ignore=ancestry_mmm/tests/test_search_candidate_a_recovery_posterior.py --ignore=ancestry_mmm/tests/test_fold_refit_service_recovery.py --ignore=ancestry_mmm/tests/test_named_event_response_recovery_posterior.py --cov --cov-report=term-missing:skip-covered --cov-fail-under=75
   ```
+
+- Post-correction focused validation on `0aa08ddb`: **49 passed in 2746.41s
+  (0:45:46)** across Search capacity, model fitting, and fold-refit tests;
+  local application mypy reports **no issues in 24 source files**. The exact
+  pushed branch-head repository CI result is intentionally not claimed until
+  the final SHA's workflow completes.
 
 - Ruff check: clean for `ancestry_mmm` and `scripts`.
 - Ruff format check: clean after formatting the touched Python files.
