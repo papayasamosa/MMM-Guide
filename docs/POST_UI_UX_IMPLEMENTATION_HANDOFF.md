@@ -21,7 +21,9 @@ replace the approved implementation brief, decision records, or the
   documentation commit follows this validated code/test state; the final
   branch HEAD and push state are recorded in the durability list and delivery
   summary.
-- **Pushed:** pending the final scoped commits and PR publication.
+- **Pushed:** yes; `agent/production-data-onboarding` is published on
+  `origin`. Pull request [#350](https://github.com/papayasamosa/Media-Mix-Lab/pull/350)
+  is open against `main` and has not been merged.
 - `.mcp.json`, `.playwright-mcp/`, `designs/`, `tools/`, local logs, caches,
   and machine-specific files remain deliberately outside the commits.
 
@@ -35,8 +37,9 @@ Durability commits created on this branch:
 - `18252a94` - Add governed Candidate A onboarding boundaries
 - `060a8120` - Persist governed valuation and future assumptions
 - `a5e1456f` - Cover exploratory join confirmation in the AppTests
-- The final handoff documentation commit follows these validated commits;
-  its exact SHA and final branch HEAD are recorded in the delivery summary.
+- `5525138d` - Finalize production onboarding handoff and validation evidence
+- The final PR-publication documentation-only commit follows these commits;
+  its exact SHA is the final branch HEAD reported in the delivery summary.
 
 ## 2. Decision 1-19 status
 
