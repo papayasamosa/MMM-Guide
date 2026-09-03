@@ -131,6 +131,12 @@ def test_adopted_mixed_frequency_inputs_show_the_frequency_blocker():
 
 def test_after_join_shows_diagnostics_panel_as_a_distinct_section():
     at = _run_at(raw_sources=_matching_sources())
+    confirmation = next(
+        cb
+        for cb in at.checkbox
+        if cb.label.startswith("I understand this is an exploratory join")
+    )
+    confirmation.check().run()
     join_button = next(b for b in at.button if b.label == "Join sources")
     join_button.click().run()
     assert not at.exception, f"join click raised: {at.exception}"
