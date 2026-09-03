@@ -865,6 +865,7 @@ if st.button("Build export bundle", type="primary"):
             fx_rate_set=get_state("fx_rate_set"),
             fx_rate_records=get_state("fx_rate_records"),
             value_mapping=get_state("value_mapping"),
+            outcome_valuation_records=get_state("outcome_valuation_records") or [],
             # REQ-GRAPH-001 work package (graph portability): every saved
             # graph version plus the current live (possibly unsaved) graph -
             # see graph_versions_for_export's docstring.
@@ -886,6 +887,14 @@ if st.button("Build export bundle", type="primary"):
                 get_state("candidate_a_fit_inputs").to_dict()
                 if hasattr(get_state("candidate_a_fit_inputs"), "to_dict")
                 else get_state("candidate_a_fit_inputs")
+            ),
+            search_candidate_a_spec=get_state("search_candidate_a_spec")
+            or (
+                get_state("candidate_a_fit_inputs").get("spec")
+                if isinstance(get_state("candidate_a_fit_inputs"), dict)
+                else get_state("candidate_a_fit_inputs").spec.to_dict()
+                if get_state("candidate_a_fit_inputs") is not None
+                else None
             ),
             # REQ-COVERAGE-001 S3: the full append-only immutable
             # SourceVersion history - never only the latest per source_id,
@@ -1230,12 +1239,17 @@ if uploaded_zip is not None and st.button("Import bundle"):
                 for defn in current_search_object_versions(_resolved_search_objects)
             ],
         )
+        set_state("search_candidate_a_spec", imported.get("search_candidate_a_spec"))
         set_state("google_trends_anchor", imported.get("google_trends_anchor"))
         set_state("seo_fit_inputs", imported.get("seo_fit_inputs"))
         set_state(
             "future_assumption_bundles", imported.get("future_assumption_bundles")
         )
         set_state("candidate_a_fit_inputs", imported.get("candidate_a_fit_inputs"))
+        set_state(
+            "outcome_valuation_records",
+            imported.get("outcome_valuation_records") or [],
+        )
         for _search_object_warning in _search_object_warnings:
             st.warning(_search_object_warning)
         # REQ-COVERAGE-001 S3: restore the quarantine-checked immutable

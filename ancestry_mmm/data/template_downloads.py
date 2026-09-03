@@ -37,6 +37,30 @@ _DOMAIN_FILENAMES = {
     DOMAIN_CONTEXT_AND_EXTERNAL_FACTORS: "ancestry-mmm-context-and-external-factors-template.xlsx",
     DOMAIN_EXPERIMENT_EVIDENCE: "ancestry-mmm-experiment-evidence-template.xlsx",
 }
+OUTCOME_VALUATION_TEMPLATE_FILENAME = "ancestry-mmm-outcome-valuation-template.xlsx"
+OUTCOME_VALUATION_COLUMNS = (
+    "valuation_kind",
+    "market",
+    "week",
+    "segment",
+    "denominator_outcome_id",
+    "quality_status",
+    "segment_dimension",
+    "aggregate_value",
+    "currency",
+    "source",
+    "source_version",
+    "schema_version",
+    "horizon_months",
+)
+CANDIDATE_A_UPLOAD_COLUMNS = (
+    "period_start",
+    "market",
+    "paid_search_delivery",
+    "paid_search_cap",
+    "organic_search_capture",
+    "direct_navigation_capture",
+)
 
 
 def standard_template_filename(logical_domain: str) -> str:
@@ -48,6 +72,11 @@ def standard_template_filename(logical_domain: str) -> str:
         raise ValueError(
             f"unsupported standard logical domain {logical_domain!r}"
         ) from exc
+
+
+def outcome_valuation_template_filename() -> str:
+    """Return the blank governed weekly valuation template filename."""
+    return OUTCOME_VALUATION_TEMPLATE_FILENAME
 
 
 def _write_workbook(tables: dict[str, pd.DataFrame]) -> bytes:
@@ -342,9 +371,54 @@ def build_standard_template(logical_domain: str) -> bytes:
     return _write_workbook(tables)
 
 
+def build_outcome_valuation_template() -> bytes:
+    """Build a blank valuation workbook; no synthetic monetary values."""
+    return _write_workbook(
+        {
+            "valuation_data": pd.DataFrame(columns=OUTCOME_VALUATION_COLUMNS),
+            "README": pd.DataFrame(
+                {
+                    "instruction": [
+                        "Replace this blank template with governed Finance/Analytics records.",
+                        "Do not copy historical realised values as future assumptions.",
+                        "FH LTR rows require horizon_months=48; DNA revenue rows leave it blank.",
+                    ]
+                }
+            ),
+        }
+    )
+
+
+def build_candidate_a_template() -> bytes:
+    """Build a blank Candidate A observation workbook."""
+    return _write_workbook(
+        {
+            "candidate_a_observations": pd.DataFrame(
+                columns=CANDIDATE_A_UPLOAD_COLUMNS
+            ),
+            "README": pd.DataFrame(
+                {
+                    "instruction": [
+                        "Replace this blank template with governed weekly Search observations.",
+                        "One row is required for every prepared model period and market.",
+                        "paid_search_cap is in the approved cap unit; do not derive it from spend.",
+                        "Do not fill missing observations with zero.",
+                    ]
+                }
+            ),
+        }
+    )
+
+
 __all__ = [
     "OUTCOMES_TEMPLATE_SCHEMA_VERSION",
+    "OUTCOME_VALUATION_COLUMNS",
+    "CANDIDATE_A_UPLOAD_COLUMNS",
+    "OUTCOME_VALUATION_TEMPLATE_FILENAME",
     "TEMPLATE_MIME_TYPE",
+    "build_outcome_valuation_template",
+    "build_candidate_a_template",
     "build_standard_template",
+    "outcome_valuation_template_filename",
     "standard_template_filename",
 ]

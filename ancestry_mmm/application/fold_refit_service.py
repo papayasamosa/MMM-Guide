@@ -39,16 +39,13 @@ selection loop `leakage_safe_expanding_window_backtest` uses internally
 both already public), so the real fit happens exactly once per accepted
 fold and the resulting `results_df` row shape stays identical.
 
-Candidate A: out of scope. `application.model_fit_service.build_model_for_
-spec` is called here without a `causal_graph`, which deterministically
-resolves to the ordinary engine (`resolve_engine`'s own contract - a graph
-is required to route anywhere else) - this mirrors the Diagnostics page's
-existing backtest, which explicitly refuses to run at all when the
-project's fitted engine is Candidate A (no fold has the Search
-observations needed to rebuild its demand/capture chain). Callers of this
-module must apply that same guard before invoking it for a Candidate
-A-engine project; this module has no way to detect that from `df`/`spec`
-alone.
+Candidate A is supported when the caller supplies the fit-pinned Search
+observation payload and approved Search-object mapping. The fold helper
+slices those rows by exact `(period, market)` identity and passes the fold's
+cap-aware Search inputs into the same production model builder. Legacy
+array-only Candidate A payloads fail closed because their row ordering cannot
+be proven safe for a fold. Ordinary projects continue to use the unchanged
+non-Search path.
 
 Work Package 1 part 2 (`Media-Mix-Lab: Coding LLM Next Steps After PR
 #286`) added `run_leakage_safe_fold_refit_from_sources`: unlike
@@ -130,6 +127,10 @@ from ancestry_mmm.core.predict import (
 )
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.search_objects import SearchObjectDefinition
+from ancestry_mmm.core.search_capacity import (
+    CandidateASearchFitInputs,
+    slice_candidate_a_fit_inputs,
+)
 from ancestry_mmm.core.structural_stability import FoldParameterSnapshot
 from ancestry_mmm.core.uncertainty import sample_draw_indices
 from ancestry_mmm.core.validation_folds import (
@@ -299,6 +300,10 @@ def fit_fold_with_real_model(
             Optional[NamedEventFitInputs],
         ]
     ] = None,
+    candidate_a_fit_inputs: Optional[CandidateASearchFitInputs] = None,
+    search_objects: Optional[
+        Sequence[SearchObjectDefinition | Mapping[str, Any]]
+    ] = None,
 ) -> FoldRefitOutcome:
     """Refit the real production model on `train_df`, evaluate it on
     `test_df`, and extract a genuine `FoldParameterSnapshot` - the same
@@ -365,6 +370,19 @@ def fit_fold_with_real_model(
     resolved_activity_definitions = (
         list(activity_definitions) if activity_definitions is not None else None
     )
+    candidate_train_inputs = None
+    candidate_test_inputs = None
+    if candidate_a_fit_inputs is not None:
+        candidate_train_inputs = slice_candidate_a_fit_inputs(
+            candidate_a_fit_inputs,
+            periods=pd.to_datetime(train_df[spec.date_col]).dt.strftime("%Y-%m-%d"),
+            markets=train_df[spec.market_col].astype(str),
+        )
+        candidate_test_inputs = slice_candidate_a_fit_inputs(
+            candidate_a_fit_inputs,
+            periods=pd.to_datetime(test_df[spec.date_col]).dt.strftime("%Y-%m-%d"),
+            markets=test_df[spec.market_col].astype(str),
+        )
 
     if on_progress_line is not None:
         outcome_cols = (
@@ -411,6 +429,14 @@ def fit_fold_with_real_model(
         dna_outcome_id=resolved_dna_outcome_id,
         direct_dna_outcome_ids=resolved_direct_dna_outcome_ids,
         causal_graph=causal_graph,
+        search_objects=(
+            list(search_objects)
+            if search_objects is not None
+            else (
+                candidate_train_inputs.search_objects if candidate_train_inputs else ()
+            )
+        ),
+        candidate_a_fit_inputs=candidate_train_inputs,
         prior_config=prior_config,
         named_event_fit_inputs=named_event_fit_inputs,
     )
@@ -487,6 +513,11 @@ def fit_fold_with_real_model(
             fit_result.meta,
             shared_point_params,
             named_event_fit_inputs=resolved_named_event_replay_inputs,
+            candidate_a_paid_search_cap=(
+                candidate_test_inputs.paid_search_cap
+                if candidate_test_inputs is not None
+                else None
+            ),
         )
         point_values = _flatten_shared_params(shared_point_params)
 
@@ -610,6 +641,10 @@ def run_leakage_safe_fold_refit(
             Optional[NamedEventFitInputs],
         ]
     ] = None,
+    candidate_a_fit_inputs: Optional[CandidateASearchFitInputs] = None,
+    search_objects: Optional[
+        Sequence[SearchObjectDefinition | Mapping[str, Any]]
+    ] = None,
 ) -> LeakageSafeFoldRefitResult:
     """Leakage-safe, real-PyMC-refit counterpart to `core.validation_
     folds.leakage_safe_expanding_window_backtest`: builds the same typed
@@ -700,6 +735,8 @@ def run_leakage_safe_fold_refit(
             on_progress_line=on_progress_line,
             named_event_fit_inputs=named_event_fit_inputs,
             named_event_replay_inputs_factory=named_event_replay_inputs_factory,
+            candidate_a_fit_inputs=candidate_a_fit_inputs,
+            search_objects=search_objects,
         )
         snapshots.append(outcome.snapshot)
         for oid in outcome.r2_by_outcome:
@@ -761,6 +798,7 @@ def run_leakage_safe_fold_refit_from_sources(
             Optional[NamedEventFitInputs],
         ]
     ] = None,
+    candidate_a_fit_inputs: Optional[CandidateASearchFitInputs] = None,
 ) -> LeakageSafeFoldRefitResult:
     """Point-in-time source reconstruction (REQ-LEAK-001 §"rebuilding the
     full model-ready frame ... per fold", Work Package 1 part 2): unlike
@@ -997,6 +1035,8 @@ def run_leakage_safe_fold_refit_from_sources(
                 else None
             ),
             named_event_replay_inputs_factory=named_event_replay_inputs_factory,
+            candidate_a_fit_inputs=candidate_a_fit_inputs,
+            search_objects=search_objects,
         )
         snapshots.append(outcome.snapshot)
         for oid in outcome.r2_by_outcome:

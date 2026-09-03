@@ -1,6 +1,6 @@
 # Post-UI/UX Implementation Handoff
 
-**Updated:** 2026-09-02
+**Updated:** 2026-09-03
 
 This is the durable continuation record for the approved Decisions 1-19
 implementation work. It records verified repository behaviour; it does not
@@ -10,34 +10,42 @@ replace the approved implementation brief, decision records, or the
 ## 1. Durable repository state
 
 - **Repository:** `papayasamosa/Media-Mix-Lab`
-- **Branch:** `agent/post-ux-business-decisions`
-- **Starting point:** `f5a070faaf6485dd556941d5fe7ca7d2a315653d`
-- **Last verified production implementation HEAD:**
-  `af3d192346851d3d9210ed2723600f38be07f93d`.
-- **Pushed:** yes. The remote branch matched that SHA before this final
-  documentation update. This is the final validated production code HEAD;
-  the documentation-only commit that contains this record is the final branch
-  handoff commit and is reported with its exact SHA in the delivery summary
-  and the post-push CI evidence below.
+- **Branch:** `agent/production-data-onboarding`
+- **Starting point:** merged `main` at
+  `980af30f6b923df206d97709a005e78437dd8115`
+- **Scope:** production-data onboarding integration only. Decisions 1-19 and
+  the approved post-UI/UX implementation were inherited; no production data
+  has been imported and no production MMM fit has been run.
+- **Last CI-validated branch HEAD before this handoff update:**
+  `6a519dd9a66947d7ea3ed03aed3155f25b917efe` (`docs: refresh onboarding
+  validation state`). The source/type correction at `0aa08ddb` was covered by
+  local focused tests and mypy, and that exact pushed HEAD passed the complete
+  repository CI recorded below. This final handoff update is the last commit;
+  its resulting branch SHA is reported in the delivery summary.
+- **Pushed:** yes; `agent/production-data-onboarding` is published on
+  `origin`. Pull request [#350](https://github.com/papayasamosa/Media-Mix-Lab/pull/350)
+  remains open against `main` and has not been merged.
 - `.mcp.json`, `.playwright-mcp/`, `designs/`, `tools/`, local logs, caches,
   and machine-specific files remain deliberately outside the commits.
 
-The implementation starts from the existing branch work. Decisions 1-19 were
-not recreated. This continuation completed application wiring, persistence,
-analyst-facing fail-closed behaviour, tests, and governance updates.
+The implementation starts from the merged branch work. Decisions 1-19 were
+not recreated. This continuation adds the missing analyst-facing production
+input boundaries, exact persistence, Candidate A fold slicing, and explicit
+exploratory-join safety.
 
-Durability commits created in this continuation:
+Durability commits created on this branch:
 
-- `7bc5ab1c` - Complete replay and production planning integration
-- `dafdd7fb` - Wire SEO fitting and durable future assumptions
-- `a57bf9fa` - Record production integration governance updates
-- `87dab168` - Restore export compatibility and format integration
-- `210d0d6d` - Tighten SEO replay typing
-- `b6424fa8` - Reconcile Candidate A mediated attribution
-- `8cceb0bb` - Stabilize CI browser and recovery checks
-- `af3d1923` - Apply CI formatter output
-- The final handoff documentation commit follows these implementation
-  commits; its exact SHA is recorded after the push.
+- `18252a94` - Add governed Candidate A onboarding boundaries
+- `060a8120` - Persist governed valuation and future assumptions
+- `a5e1456f` - Cover exploratory join confirmation in the AppTests
+- `5525138d` - Finalize production onboarding handoff and validation evidence
+- `f43b4e0e` - Record onboarding PR publication
+- `551d6e8b` - Add onboarding input examples
+- `0aa08ddb` - Satisfy onboarding type boundaries
+- `6a519dd9` - Refresh onboarding validation state and exact-head evidence
+- This final handoff update is the last documentation commit; its resulting
+  branch SHA is reported in the delivery summary and must receive the final
+  exact-head CI check.
 
 ## 2. Decision 1-19 status
 
@@ -110,11 +118,11 @@ this handoff.
 | Analyst-facing path | Result |
 |---|---|
 | Model fitting | Model Training validates and passes outcome, SEO, Candidate A, calibration, named-event, and future-role inputs through the application service to the shared and market-specific PyMC builders. Invalid role/source combinations block the fit. |
-| Diagnostics | Fit-pinned SEO/Candidate A/calibration payloads are restored for rebuild; SEO window and contribution diagnostics are visible; Candidate A fold refit/backtest remains explicitly fail-closed because the page does not yet collect per-fold Search observations. |
+| Diagnostics | Fit-pinned SEO/Candidate A/calibration payloads are restored for rebuild; SEO window and contribution diagnostics are visible; Candidate A backtest and historical fold refit now slice the exact fit-pinned Search/Trends rows per fold and fail closed when row identity is absent or incomplete. A real long fold validation has not been run on production data. |
 | Scenario Planner | Sequential weekly is the official default and uses the weekly carry-in replay. Candidate A uses explicit future Search caps and per-draw final-outcome replay. Steady-state is labelled diagnostic/legacy and is blocked for Candidate A. Future-assumption bundles persist with the scenario. |
 | Optimiser | The app-facing Optimiser uses the same sequential weekly kernel as Scenario Planner. Capacity constraints and governed objective preconditions are enforced. Profit remains unavailable without COGS/margin/profit evidence. |
 | Results / response curves | Candidate A Search-mediated and SEO visibility contributions are explicit result/waterfall rows. Official curves require complete replay inputs and explicit caps; monetary curves require valid cost/FX evidence. |
-| Project persistence | Schema migration and round-trip paths preserve SEO fit inputs, Candidate A anchor/replay provenance, calibration provenance, FX sets, future-assumption bundles, scenarios, diagnostics, registries, workflow checkpoints, and fingerprints. |
+| Project persistence | Schema 24 round-trip paths preserve SEO fit inputs, Candidate A anchor/replay provenance and row keys, weekly valuation records, calibration provenance, FX sets, future-assumption bundles, scenarios, diagnostics, registries, workflow checkpoints, and fingerprints. |
 | Exports | Project Export retains the durable bundle as the recovery object, preserves the new config payloads, keeps the ZIP uploader compatible with the existing import journey, and exposes clear missing-evidence messages. |
 
 ### Candidate A attribution audit
@@ -172,18 +180,15 @@ the evidence rather than treating a partial sample as a pass.
 
 - Exact long named-event NUTS recovery: **4 passed in 4709.86s
   (1:18:29)**.
-- Complete repository PR CI on exact implementation SHA
-  `af3d192346851d3d9210ed2723600f38be07f93d`: **run 33611093424 passed**.
-  Python 3.11 and 3.12 tests passed with their coverage gates; Compile +
-  Import, Mypy, Ruff, Bandit, pip-audit, bundle round-trip, Streamlit
-  AppTest, browser lifecycle, Requirements index, and Windows tooling all
-  passed. Manual-only recovery gate checks were intentionally skipped in that
-  pull-request run.
-- Affected-path recovery on the same SHA: manual workflow **run 33611176082**
-  **passed**. Candidate A posterior recovery, named-event
+- The merged post-UI/UX implementation was inherited from `main` at
+  `980af30f6b923df206d97709a005e78437dd8115`; its approved PR #349 final SHA
+  and CI evidence are not recreated by this onboarding branch.
+- Inherited affected-path recovery evidence from the completed post-UI/UX
+  implementation: manual workflow **run 33611176082** **passed**. Candidate A
+  posterior recovery, named-event
   integration/response evidence, deterministic attribution recovery, browser
   lifecycle, Mypy, bundle, tooling, fold-refit recovery, and both Python test
-  jobs passed.
+  jobs passed; it was not recreated merely for this onboarding branch.
 - Candidate A attribution regression suite: **13 passed**; deterministic
   simulation recovery: **6 passed**. The browser lifecycle journey: **5
   passed**. The focused CI-equivalent Mypy checks report no issues; the full
@@ -191,16 +196,51 @@ the evidence rather than treating a partial sample as a pass.
 - Persistence round trip: **227 passed in 78.10s**.
 - Focused replay/SEO/sequential/waterfall boundaries: **129 passed** in the
   earlier focused run, plus the post-format integration run above.
+- Current onboarding/Search boundary suite: **33 passed in 22.91s** without
+  coverage collection. This covers exact Candidate A upload alignment and
+  cap-scale validation, missing-row rejection, fit-pinned fold slicing,
+  valuation parsing and bundle round-trip, scenario-assumption persistence,
+  and blank-template safety.
+- Current persistence/Search/onboarding regression batch: **253 passed in
+  117.51s** without coverage collection.
+- Current affected analyst-facing AppTest batch: **77 passed in 495.95s**
+  without coverage collection after updating the expected template surface.
+- Current synthetic fold/refit/planning batch: **44 passed in 26694.97s
+  (7:24:54)** without coverage collection. This is synthetic affected-path
+  evidence only; it is not production-data evidence and did not run a
+  production fit.
+- The exact final blocking CI-equivalent command was run against the validated
+  onboarding implementation/test state before the type-boundary correction and
+  exited successfully: **4,811 passed, 2
+  skipped in 28,271.92s (7:51:11)**, coverage **87.86%**, exit 0. The initial
+  rerun exposed three stale Transform Pipeline AppTest interactions after the
+  explicit exploratory-inner-join confirmation was added; those tests were
+  updated in `a5e1456f` and the complete command below was then rerun cleanly.
+
+  ```powershell
+  .venv\Scripts\python.exe -m pytest ancestry_mmm/tests/ -q --ignore=ancestry_mmm/tests/test_persistence.py --ignore=ancestry_mmm/tests/test_official_lifecycle_browser.py --ignore=ancestry_mmm/tests/test_causal_graph_editor_browser.py --ignore=ancestry_mmm/tests/test_search_candidate_a_recovery_posterior.py --ignore=ancestry_mmm/tests/test_fold_refit_service_recovery.py --ignore=ancestry_mmm/tests/test_named_event_response_recovery_posterior.py --cov --cov-report=term-missing:skip-covered --cov-fail-under=75
+  ```
+
+- Post-correction focused validation on `0aa08ddb`: **49 passed in 2746.41s
+  (0:45:46)** across Search capacity, model fitting, and fold-refit tests;
+  local application mypy reports **no issues in 24 source files**.
+
+- Complete repository CI on the exact pre-handoff branch HEAD
+  `6a519dd9a66947d7ea3ed03aed3155f25b917efe`: **run 33738759632 passed**.
+  Python 3.11 and 3.12 tests passed with their coverage gates; Compile +
+  Import, Mypy, Ruff, Bandit, pip-audit, bundle round-trip, Streamlit
+  AppTest, browser lifecycle, Requirements index, and Windows tooling all
+  passed. Manual-only recovery jobs were correctly skipped because this
+  onboarding change did not alter recovery mathematics.
+
 - Ruff check: clean for `ancestry_mmm` and `scripts`.
-- Ruff format check: clean; **459 files already formatted** after formatting
-  the 27 touched Python files.
+- Ruff format check: clean after formatting the touched Python files.
 - `python -m compileall -q ancestry_mmm`: clean.
 - Graphify refresh: completed through the required D-drive wrapper; local
   graph output was refreshed and remains ignored development tooling output.
-- Mypy: the new SEO replay typing findings are resolved. A focused run still
-  reports the existing NumPy/ArviZ `Any` and missing-annotation baseline in
-  `predict.py` and `market_specific_predict.py`; no new SEO-specific error
-  remains.
+- Mypy: the exact final-head CI and local application run are clean. The
+  approved full-core debt ratchet remains separate from the application check
+  and retains its approved **225-error ceiling**.
 - Browser smoke: the real Streamlit app reached Fit Model, Model Diagnostics,
   Scenario Planner, and Export & Recovery through the sidebar on an isolated
   local server. No-data states were explicit and the post-navigation browser
@@ -222,8 +262,10 @@ the evidence rather than treating a partial sample as a pass.
    identification design; keep the current reduced-form visibility path and
    its labels distinct. This is not required to release the current reduced-
    form Decision 6 implementation.
-3. Add leakage-safe Candidate A per-fold Search observation collection before
-   enabling Candidate A fold refit/backtest outputs.
+3. Run approved production fold/backtest evidence after the external data is
+  supplied. The synthetic affected-path validation for the new fit-pinned
+  Candidate A row slicing has already passed; the production fold path is
+  wired and fails closed when row identity is absent or incomplete.
 4. Repeat Candidate A recovery and run supplied real-experiment calibration
    validation when external inputs or model changes justify it.
 
@@ -256,8 +298,131 @@ not an unlabelled claim about the reduced-form implementation.
 
 ## 9. Next-agent first task
 
-First verify the pushed final branch SHA and the documentation-triggered CI
-result, then import the first approved external data package supplied by the
-owner and run the corresponding fit/diagnostics/approval path. Do not recreate
-Decisions 1-19 or reopen PathMC. If no external package is available, record a
-scheduled Candidate A recovery result without changing the fail-closed gates.
+First verify the pushed final branch SHA and CI result, then review the
+production onboarding package below with the owner. Do not import production
+data or start a production NUTS fit until that package is explicitly approved.
+
+## 10. Production onboarding package
+
+The following inventory is the contract for the first UK run. The modelling
+window remains the full approved weekly history (approximately July 2023
+through 28 June 2026). No pre-November-2024 GSC values are requested or
+fabricated.
+
+### A. Inputs required for the minimum core count fit
+
+| Input | Exact contract and meaning | Grain, coverage and units | App path/template | Missing impact |
+|---|---|---|---|---|
+| Governed weekly outcome series | The approved outcome to model: GSA, sign-up, Gross Bill Through, Bill Through, or Net Bill Through only after its definition is approved. Standard Outcomes uses wide columns `period_start`, `market`, and one column per approved `source_column`; `outcome_dictionary` defines `outcome_id`, `source_column`, product, metric, segment, definition version, event/date/cohort basis, maturity, exclusions, reconciliation source, owner, unit and aggregation. | One row per market-week; weekly; full model window; non-negative count units. Supply separate FH New, DNA cross-sell and Winback measures where in scope. | Required. Standard upload/import and definition-draft review exist. Template `ancestry-mmm-outcomes-v2-template.xlsx`. | Blocks the core fit if no approved outcome exists. Raw subscriber events are not required; governed weekly upstream outcomes are accepted directly. |
+| Activity/media model inputs | Standard tidy-long `activity_data`: `period_start`, `market`, `activity_id`, plus declared measure columns. `activity_dictionary` must identify channel, platform, campaign type, objective, funnel stage, product, message, ownership, model role, model input column/measure/unit/kind, spend/response fields, currency, effective dates and planning eligibility. | One row per market-week-activity; weekly; unique keys and selected fit coverage. Units are declared per activity: spend, impressions, clicks, GRPs/TVRs or another governed model-input unit. | Required for a media fit. Standard workbook adoption exists. Template `ancestry-mmm-activity-and-media-template.xlsx`. | Blocks a useful media fit if no activity source exists; a missing optional channel only removes that channel. |
+| Context source-pack domain | Standard tidy-long `context_data`: `period_start`, `market`, `variable_id`, `value`, `native_frequency`; `variable_dictionary`: `variable_id`, `variable_class`, `native_frequency`, `role`, source/scope/unit/effective dates. The logical domain is required; an arbitrary context variable is not forced into the model. | Native frequency and coverage explicit. Weekly controls align to the weekly window; monthly/irregular values remain separate unless an approved conversion exists. | Required source-pack domain; standard import/adoption exists. Template `ancestry-mmm-context-and-external-factors-template.xlsx`. | Missing the source-pack domain blocks official preparation. No selected context control does not itself block the model. |
+
+The minimum package is therefore the three standard source domains, at least
+one approved outcome, and the activity/model-input dictionaries needed to
+identify units and taxonomies. It does not require raw subscriber events,
+SEO, Candidate A, FX, valuations, experiments, COGS, or profit optimisation.
+
+### B. Inputs that can be added later to unlock extra features
+
+| Input | Exact fields / grain / validation | Current path/template | Feature unavailable and core-fit impact |
+|---|---|---|---|
+| FH New, DNA cross-sell, Winback segmentation | Separate outcome columns and dictionary rows with explicit `segment_dimension` and `segment`; market-week counts. DNA may be New Customer vs Existing Family History Customer where supported; no self/gifted/unactivated split without approval. | Outcomes workbook and catalogue review. | Missing segment is not fitted/reported; supplied core outcomes can still fit. |
+| FH LTR and DNA revenue valuation | `valuation_kind, market, week, segment, denominator_outcome_id, quality_status, segment_dimension, aggregate_value, currency, source, source_version, schema_version, horizon_months`. FH LTR requires `horizon_months=48`; DNA revenue leaves it blank. Aggregate monetary totals, not per-customer values; non-negative, ISO-3 currency, governed source/version. | Optional Data Sources uploader; blank `ancestry-mmm-outcome-valuation-template.xlsx`; exact records persist in bundle schema 24. | Monetary value/ROI curves unavailable; count fit unaffected. No historical realised value is copied as a future assumption. |
+| Paid Search Brand/Non-Brand taxonomy | Activity dictionary exact identity fields plus approved Brand/Non-Brand intent/campaign classification, model input column/measure/unit and planning eligibility; market-week-activity. | Existing Activity workbook and Activity Mapping page. | Search intent rollups unavailable; other channels can fit. |
+| Google Trends Candidate A anchor | CSV `week, raw_index`, plus approved query-set ID, exact branded terms, geography, category, search property, extraction date, time range and measurement sigma. Relative 0-100 index, not searches/clicks; one unique weekly extraction/query set. | Model Training boundary; persisted metadata and observations. No live values are present. | Candidate A anchor/fit remains fail-closed; ordinary MMM unaffected. |
+| Candidate A Search observations and cap | CSV `period_start, market, paid_search_delivery, paid_search_cap, organic_search_capture, direct_navigation_capture`; explicit Search object IDs, cap unit, cap-to-delivery scale, provenance and approved upstream demand channel mapping. Delivery `<= cap * scale`; no missing/negative cells, no cap-from-spend derivation, no zero-fill. | Model Training importer and blank `ancestry-mmm-candidate-a-observations-template.xlsx`; exact payload and row keys persist. Fold paths slice this pinned payload and anchor without refetching. | Candidate A Search mediation, capacity, official curves, attribution and Search planning unavailable; ordinary core fit unaffected unless Candidate A is selected. |
+| Search capacity/cap evidence | Governed source/provenance and explicit unit/mapping; historical binding and non-binding support; future caps are decisions/constraints, never realised delivery. | Candidate A validation path; no values invented. | Candidate A capacity identification/planning unavailable; core fit unaffected unless Candidate A is selected. |
+| GSC SEO positional visibility | Raw `market, week, dimension_label, position, impressions`, optional `clicks`; positions/impressions valid and non-negative. Impression-weighted visibility is computed. UK begins around week commencing 2024-11-11; earlier cells remain inactive while full MMM history is retained. | Model Training upload and persisted `SeoModelFitInputs`; no pre-November-2024 values requested. | SEO contribution unavailable; core history and fit unaffected. Current effect is reduced-form visibility-to-outcome, not organic-click mediation; clicks are diagnostic-only. |
+| Promotions and named events | Governed promotion/control columns and dates. Context `events` uses `event_id, event_name, start_date, end_date`; family and response-definition metadata are explicit. | Context workbook events sheet and registration/adoption pages; Decision 12 fitting/replay is complete. | Promotion moderation or event response unavailable; core fit can run without optional event evidence. |
+| Experiments/calibration | Experiment ID/version, activity/channel, market scope, start/end, design, outcome/effect, uncertainty, applicability and compatibility metadata. Likelihood target is explicit `direct:<channel>:<outcome_id>`. | Experiment import/adoption/compatibility path. Template `ancestry-mmm-experiment-evidence-template.xlsx`. | Calibration evidence unavailable; base fit unaffected unless a selected calibration use is incomplete/incompatible. |
+| Finance constant-dollar FX | Finance-approved annual rate set and records with source/target currency, rate date/value, frequency/financial year, method, provider, version, approval and pair coverage. | Existing FX upload/validation/versioning and persistence; no Finance values present. | Constant-dollar monetary outputs blocked; count fit unaffected. |
+| Future valuation/value mappings | Per-scenario `ScenarioValueAssumptions`: assumptions ID/source/currency, FH outcome-value mapping, DNA mode and DNA values. | Scenario Planner editor; exact payload is now saved with each scenario and restored. | Expected monetary scenario evaluation unavailable until values exist. Demand, seasonality, baseline and controls come from governed system/model roles, not manual future entry. |
+| Optimisation constraints/capacities | Channel/market/period bounds, locked cells, fixed totals, movement limits, floors and explicit Search caps; units match activity/cap contracts. | Scenario Planner/Optimiser constraint path. | Constrained planning/optimisation limited or unavailable; core fit unaffected. |
+| COGS/margin/profit | Approved profit definition plus COGS/margin/contribution inputs with currency, source/version and matching market/outcome/time coverage. | No ungoverned upload or fallback; `maximise_profit` remains gated. | Profit optimisation unavailable; other approved CPA/ROI/value paths remain separate. |
+
+### C. Deliberately deferred
+
+PathMC adoption, structural SEO `visibility -> organic traffic/clicks ->
+outcome` decomposition, Chronos-2/external forecasting, profit optimisation
+without an approved profit definition, and a generalised G3 capacity
+abstraction remain deferred. The current SEO release is explicitly a
+windowed reduced-form visibility-to-final-outcome effect.
+
+### Import order and onboarding checks
+
+1. Import Outcomes; review definitions, segmentation, maturity and approval.
+2. Import Activity and Media; resolve taxonomy, model-input units, currency/
+   spend mappings and coverage.
+3. Import Context as tidy-long; review frequency and keep events/dictionaries
+   separate.
+4. Run official preparation and coverage validation. Generic inner joins now
+   require an explicit exploratory confirmation and are never the official
+   preparation route.
+5. Add GSC, Trends, Candidate A cap/observations, valuations, FX and experiment
+   evidence one boundary at a time, retaining source/version provenance.
+6. Review the prepared frame, model specification and pre-fit checks. Only
+   after explicit owner approval of this package may the next agent start a
+   production fit. No production data or production fit is present here.
+
+### Plain-English requests for missing inputs
+
+Send real values only through the application upload path after the package is
+approved. The schemas below use angle-bracket placeholders to show the shape;
+placeholders are not accepted data and no business value is implied.
+
+- **Core outcomes:** send one governed weekly row per market and the approved
+  outcome dictionary. Example: `period_start,market,FH_New_GSA,DNA_CrossSell_GSA,Winback_GSA` followed by a row shaped like `<YYYY-MM-DD>,<UK>,<count>,<count>,<count>`. Include the approved definition/version, date and cohort basis, maturity, exclusions, reconciliation source and owner. If the approved first-fit outcome is not GSA, replace the outcome columns with the approved source columns; do not assume NBT.
+- **Activity/media:** send tidy-long rows shaped like
+  `period_start,market,activity_id,<declared_measure_columns>` and an
+  `activity_dictionary` row identifying channel, platform, campaign type,
+  intent, funnel stage, product, model-input measure/unit/kind, spend/currency
+  fields, effective dates and eligibility. Example row:
+  `<YYYY-MM-DD>,<UK>,<activity-id>,<model-input>`.
+- **Context and controls:** send tidy-long rows
+  `period_start,market,variable_id,value,native_frequency` plus dictionary
+  metadata for class, role, source, scope, unit and effective dates. Example:
+  `<YYYY-MM-DD>,<UK>,<variable-id>,<value>,<weekly-or-approved-native-frequency>`.
+- **Segmentation:** add separate approved outcome columns/dictionary rows for
+  Family History New, DNA cross-sell and Winback. DNA composition may be
+  `New Customer` and `Existing Family History Customer`; do not send or expect
+  self-activated/gifted/unactivated splits without a separate approval.
+- **FH LTR/DNA valuation:** send aggregate weekly records with
+  `valuation_kind,market,week,segment,denominator_outcome_id,quality_status,segment_dimension,aggregate_value,currency,source,source_version,schema_version,horizon_months`. FH LTR needs the approved 48-month horizon; DNA revenue leaves that field blank. Example:
+  `<fh_ltr>,<UK>,<YYYY-MM-DD>,<segment>,<outcome-id>,<quality>,<dimension>,<aggregate-value>,<GBP>,<source>,<version>,<schema>,<48>`.
+- **Paid Search and Candidate A:** send the approved Brand/Non-Brand
+  dictionary classification, then Candidate A metadata (query-set ID, exact
+  terms, geography, category, property, extraction date, range and sigma) and
+  weekly `week,raw_index` observations. Separately send Candidate A/Search
+  rows `period_start,market,paid_search_delivery,paid_search_cap,organic_search_capture,direct_navigation_capture` plus explicit Search object IDs, units, scale, provenance and upstream mapping. Do not derive cap from spend or fill missing rows with zero.
+- **Search capacity:** send governed historical cap-hit evidence including
+  binding and non-binding weeks, with the cap unit, rule version, source and
+  future cap decisions. A cap is a limit, not realised spend or delivery.
+- **SEO/GSC:** send available rows
+  `market,week,dimension_label,position,impressions[,clicks]` from the GSC
+  positional-visibility source. The available UK window starts around
+  2024-11-11; do not create earlier SEO rows. The full MMM history remains in
+  the fit, with earlier SEO cells inactive under the approved partial-window
+  policy. Clicks are diagnostic-only for the current reduced-form release.
+- **Promotions/events:** send governed promotion/control columns and event
+  metadata `event_id,event_name,start_date,end_date`, with response-definition
+  and moderation meaning. No named-event values are invented.
+- **Experiments:** send experiment ID/version, activity/channel, market scope,
+  start/end, design, outcome/effect, uncertainty, applicability and
+  compatibility metadata. The record must identify the explicit calibration
+  target (for example `direct:<channel>:<outcome_id>`); no experiment result is
+  assumed.
+- **Finance FX:** send the Finance-approved annual rate-set records with
+  source/target currency, rate date/value, frequency or financial year,
+  method, provider, version, approval metadata and all required pairs. No FX
+  value is present in this branch.
+- **Future value mappings:** send the approved forward outcome-value mapping
+  and DNA value mode/values only when expected monetary scenario outcomes are
+  required. Demand, seasonality, baseline and controls are generated through
+  governed system/model roles and are not manual upload fields.
+- **Optimisation:** send channel/market/period bounds, locked cells, fixed
+  totals, movement limits, floors and explicit Search caps, with units matching
+  the activity contract. These are constraints, never realised spend.
+- **Profit:** send the approved profit definition plus COGS/margin/contribution
+  inputs with currency, source/version and matching market/outcome/time
+  coverage. Until then, `maximise_profit` remains unavailable and no profit
+  proxy is used.

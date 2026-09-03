@@ -60,6 +60,12 @@ def test_join_mode_selectbox_defaults_to_inner():
 
 def test_inner_join_on_matching_dates_shows_no_loss_warning():
     at = _run_at(raw_sources=_matching_sources())
+    confirmation = next(
+        cb
+        for cb in at.checkbox
+        if cb.label.startswith("I understand this is an exploratory join")
+    )
+    confirmation.check().run()
     join_button = next(b for b in at.button if b.label == "Join sources")
     join_button.click().run()
     assert not at.exception, f"join click raised: {at.exception}"
@@ -73,6 +79,12 @@ def test_inner_join_on_matching_dates_shows_no_loss_warning():
 
 def test_inner_join_on_mismatched_dates_shows_a_loss_warning():
     at = _run_at(raw_sources=_mismatched_sources())
+    confirmation = next(
+        cb
+        for cb in at.checkbox
+        if cb.label.startswith("I understand this is an exploratory join")
+    )
+    confirmation.check().run()
     join_button = next(b for b in at.button if b.label == "Join sources")
     join_button.click().run()
     assert not at.exception, f"join click raised: {at.exception}"

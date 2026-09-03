@@ -141,6 +141,7 @@ from ancestry_mmm.core.market_specific_predict import (
 )
 from ancestry_mmm.data import prepare_fh_modeling_frame
 from ancestry_mmm.application.fold_refit_service import (
+    fit_fold_with_real_model,
     run_leakage_safe_fold_refit,
     run_leakage_safe_fold_refit_from_sources,
 )
@@ -273,6 +274,33 @@ def _candidate_a_fit_inputs_for_rebuild():
 
         fit_inputs = replace(fit_inputs, google_trends_anchor=anchor)
     return fit_inputs
+
+
+def _fit_time_causal_graph_for_fold():
+    """Restore the exact graph version consumed by the fitted model."""
+    if not getattr(meta, "causal_graph_id", None):
+        return None
+    matching = next(
+        (
+            graph
+            for graph in (get_state("causal_graph_versions") or [])
+            if graph.get("graph_id") == meta.causal_graph_id
+            and int(graph.get("graph_version", -1)) == meta.causal_graph_version
+        ),
+        None,
+    )
+    if matching is None:
+        raise ValueError(
+            "The exact causal graph version used by this fit is unavailable; "
+            "fold validation cannot use the current live graph as a substitute."
+        )
+    graph = CausalGraph.from_dict(matching)
+    if graph.structural_fingerprint() != meta.causal_graph_structural_fingerprint:
+        raise ValueError(
+            "The saved fit-time causal graph fingerprint no longer matches; "
+            "fold validation is blocked."
+        )
+    return graph
 
 
 def _seo_fit_inputs_for_rebuild():
@@ -2264,27 +2292,53 @@ with st.expander("Out-of-sample accuracy (expanding-window backtest)", expanded=
     if st.button("Run backtest"):
         if diag_artefact is None:
             st.error("Compute the scorecard first.")
-        elif meta is not None and meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
-            # Backtest fold-fitting below never passes a causal_graph at all
-            # (a pre-existing gap affecting every graph-backed fit, not new
-            # here) - for the ordinary engine that silently falls back to the
-            # legacy pathway catalogue, but a Candidate A fit has no legacy-
-            # catalogue equivalent and no fold has the Search observations
-            # needed to rebuild its demand/capture chain. Fail closed with a
-            # specific reason rather than backtest an incomplete model.
-            st.error(
-                "This fit used the Candidate A Search engine. Out-of-sample "
-                "backtesting for Candidate A is not yet implemented - each "
-                "fold would need its own Search observations, and this "
-                "page's backtest does not yet collect them."
-            )
         else:
             spec = ModelSpec.from_dict(get_state("model_spec"))
             df = get_state("transformed_data")
             prior_config = get_state("prior_config")
             dna_lag_weeks = get_state("dna_lag_weeks", 4)
+            _candidate_a_backtest_inputs = None
+            _candidate_a_backtest_graph = None
+            if (
+                meta is not None
+                and meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE
+            ):
+                _candidate_a_backtest_inputs = _candidate_a_fit_inputs_for_rebuild()
+                _candidate_a_backtest_graph = _fit_time_causal_graph_for_fold()
 
             def fit_fold(train_df, test_df):
+                if _candidate_a_backtest_inputs is not None:
+                    candidate_outcome = fit_fold_with_real_model(
+                        train_df,
+                        test_df,
+                        spec,
+                        fold_id="diagnostics_backtest",
+                        model_type=model_type,
+                        dna_lag_weeks=dna_lag_weeks,
+                        outcomes=meta.outcome_catalogue_at_fit,
+                        dna_outcome_id=meta.dna_outcome_id,
+                        direct_dna_outcome_ids=meta.direct_dna_outcome_ids,
+                        causal_graph=_candidate_a_backtest_graph,
+                        media_outcome_pathways=meta.pathway_catalogue_at_fit,
+                        activity_definitions=activity_definitions,
+                        prior_config=prior_config,
+                        draws=int(fold_draws),
+                        tune=int(fold_draws),
+                        chains=2,
+                        cores=1,
+                        candidate_a_fit_inputs=_candidate_a_backtest_inputs,
+                        search_objects=search_objects,
+                        named_event_fit_inputs=_backtest_named_event_fit_inputs(
+                            prepare_fh_modeling_frame(train_df, spec)
+                        ),
+                        named_event_replay_inputs_factory=(
+                            _backtest_named_event_replay_inputs
+                        ),
+                    )
+                    return (
+                        candidate_outcome.r2_by_outcome,
+                        candidate_outcome.mape_by_outcome,
+                    )
                 train_frame = prepare_fh_modeling_frame(train_df, spec)
                 named_event_fit_inputs = _backtest_named_event_fit_inputs(train_frame)
                 if model_type == "market_specific" and len(train_frame["markets"]) >= 2:
@@ -2552,14 +2606,6 @@ with st.expander("Historical validation & structural stability", expanded=False)
     if st.button("Run historical validation & structural stability"):
         if diag_artefact is None:
             st.error("Compute the scorecard first.")
-        elif meta is not None and meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE:
-            # Mirrors the backtest section's own Candidate A guard above: no
-            # fold has the Search observations needed to rebuild its demand/
-            # capture chain.
-            st.error(
-                "This fit used the Candidate A Search engine. Leakage-safe "
-                "fold re-fitting for Candidate A is not yet implemented."
-            )
         elif not coverage_matrix_dict:
             st.error(
                 "No variable coverage matrix is available for this project - "
@@ -2571,6 +2617,14 @@ with st.expander("Historical validation & structural stability", expanded=False)
             hv_coverage_matrix = VariableCoverageMatrix.from_dict(coverage_matrix_dict)
             hv_raw_sources = get_state("raw_sources") or {}
             hv_outcome_definitions = get_state("outcome_definitions") or []
+            hv_candidate_a_fit_inputs = None
+            hv_causal_graph = None
+            if (
+                meta is not None
+                and meta.causal_graph_engine == SEARCH_CANDIDATE_A_ENGINE
+            ):
+                hv_candidate_a_fit_inputs = _candidate_a_fit_inputs_for_rebuild()
+                hv_causal_graph = _fit_time_causal_graph_for_fold()
             # Strongest available reconstruction, never silently downgraded:
             # raw source tables + outcome definitions let each fold rebuild its
             # official preparation fold-locally from the raw sources, governed
@@ -2599,6 +2653,8 @@ with st.expander("Historical validation & structural stability", expanded=False)
                             activity_definitions=get_state("activity_definitions")
                             or [],
                             search_objects=get_state("search_objects") or [],
+                            causal_graph=hv_causal_graph,
+                            candidate_a_fit_inputs=hv_candidate_a_fit_inputs,
                             pipeline_steps=get_state("pipeline_steps") or [],
                             model_type=model_type,
                             n_folds=int(hv_n_folds),
@@ -2631,6 +2687,9 @@ with st.expander("Historical validation & structural stability", expanded=False)
                             min_train_frac=hv_min_train_frac,
                             dna_lag_weeks=get_state("dna_lag_weeks", 4),
                             prior_config=get_state("prior_config"),
+                            causal_graph=hv_causal_graph,
+                            candidate_a_fit_inputs=hv_candidate_a_fit_inputs,
+                            search_objects=get_state("search_objects") or [],
                             draws=int(hv_draws),
                             tune=int(hv_draws),
                             named_event_fit_inputs_factory=(

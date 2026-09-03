@@ -2111,6 +2111,7 @@ if objective == "expected_value" and _target_ids_for_value:
 # Prefer outcome-ID-keyed catalogue weights; fall back to the strict legacy
 # segment-LTV adapter only when catalogue weights don't cover every target.
 value_mapping: OutcomeValueMapping | None = None
+_scenario_value_assumptions: ScenarioValueAssumptions | None = None
 if objective == "expected_value" and value_currency and _target_ids_for_value:
     # WP2G (REQ-ECON-003 Requirement 5): an explicit, analyst-saved
     # forward value assumption for these exact target outcomes takes
@@ -2552,6 +2553,11 @@ def _render_steady_state_manual_tab():
             economics_coverage=predicted["economics_coverage"].iloc[0],
             governance_mode=governance_mode,
             artefact_kind=manual_result.artefact_kind,
+            scenario_value_assumptions=(
+                _scenario_value_assumptions.to_dict()
+                if _scenario_value_assumptions is not None
+                else None
+            ),
             # Persist the exact governance dependencies from the service
             governance_dependencies=gov_deps,
         )
@@ -3018,7 +3024,14 @@ def _render_sequential_manual_tab():
         scenarios = get_state("scenarios") or []
         scenarios.append(
             sequential_scenario_to_dict(
-                seq_scenario_name, result, notes="sequential_weekly manual"
+                seq_scenario_name,
+                result,
+                notes="sequential_weekly manual",
+                scenario_value_assumptions=(
+                    _scenario_value_assumptions.to_dict()
+                    if _scenario_value_assumptions is not None
+                    else None
+                ),
             )
         )
         set_state("scenarios", scenarios)
@@ -3561,6 +3574,11 @@ with tab_constrained:
                 governance_mode=result["governance_mode"],
                 artefact_kind="constrained_optimisation",
                 governance_dependencies=gov_deps,
+                scenario_value_assumptions=(
+                    _scenario_value_assumptions.to_dict()
+                    if _scenario_value_assumptions is not None
+                    else None
+                ),
             )
             s["predicted"] = result["predicted"]
             # Optimiser results retain the ordinary scenario schema because

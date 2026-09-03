@@ -4340,6 +4340,7 @@ def scenario_to_dict(
     # G2A.7a.4: explicit artefact kind and structured governance deps
     artefact_kind: Optional[str] = None,
     governance_dependencies: Optional[ScenarioGovernanceDependencies] = None,
+    scenario_value_assumptions: Optional[Mapping[str, object]] = None,
 ) -> dict:
     objective_payload = (
         planning_objective.to_dict()
@@ -4422,6 +4423,13 @@ def scenario_to_dict(
             else None
         ),
         "economics_coverage": economics_coverage,
+        # WP2G: preserve the exact forward-assumption bundle used for this
+        # scenario.  This is provenance, not a historical-value fallback.
+        "scenario_value_assumptions": (
+            dict(scenario_value_assumptions)
+            if scenario_value_assumptions is not None
+            else None
+        ),
         "governance_mode": governance_mode,
         "governance_dependencies": governance_deps,
         "artefact_kind": resolved_kind,

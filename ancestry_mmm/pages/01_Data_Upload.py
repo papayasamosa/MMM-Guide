@@ -29,6 +29,10 @@ from ancestry_mmm.application.event_service import (
     register_response_definition,
     registry_problems,
 )
+from ancestry_mmm.application.outcome_valuation_input_service import (
+    OUTCOME_VALUATION_UPLOAD_COLUMNS,
+    build_weekly_outcome_valuation_records,
+)
 from ancestry_mmm.core.experiments import (
     EXPERIMENT_DESIGNS,
     ExperimentRecord,
@@ -53,7 +57,9 @@ from ancestry_mmm.components import (
     WarningPanel,
 )
 from ancestry_mmm.data import (
+    OUTCOME_VALUATION_TEMPLATE_FILENAME,
     TEMPLATE_MIME_TYPE,
+    build_outcome_valuation_template,
     build_standard_template,
     load_file_with_source_version,
     load_standard_workbook_with_source_version,
@@ -650,15 +656,84 @@ with tab_upload:
         "Preferred route: add a standard workbook pack. You can add more than one "
         "workbook under a data category; each recognised table remains separate."
     )
+    with st.expander(
+        "Optional weekly outcome valuations (FH LTR / DNA revenue)", expanded=False
+    ):
+        st.caption(
+            "This is a separate governed valuation artifact, not one of the three "
+            "core source categories. Upload exact market-week-segment aggregates "
+            "from Finance/Analytics when available. It does not create or infer "
+            "values and is not required for a count-based first fit."
+        )
+        st.download_button(
+            "Download valuation template",
+            data=build_outcome_valuation_template(),
+            file_name=OUTCOME_VALUATION_TEMPLATE_FILENAME,
+            mime=TEMPLATE_MIME_TYPE,
+            key="download_outcome_valuation_template",
+        )
+        st.caption(
+            "Required columns: "
+            + ", ".join(f"`{column}`" for column in OUTCOME_VALUATION_UPLOAD_COLUMNS)
+        )
+        valuation_upload = st.file_uploader(
+            "Valuation CSV or Excel",
+            type=["csv", "xlsx", "xls", "xlsm"],
+            key="outcome_valuation_upload",
+        )
+        if valuation_upload is not None:
+            if st.button("Validate and load valuations", key="load_outcome_valuations"):
+                try:
+                    valuation_frame, valuation_version, valuation_error = (
+                        load_file_with_source_version(
+                            valuation_upload,
+                            "outcome_valuation",
+                            [
+                                SourceVersion.from_dict(value)
+                                for value in (
+                                    st.session_state.get("source_versions") or []
+                                )
+                            ],
+                        )
+                    )
+                    if valuation_error:
+                        raise ValueError(valuation_error)
+                    records = build_weekly_outcome_valuation_records(
+                        valuation_frame,
+                        outcome_definitions=get_state("outcome_definitions") or [],
+                    )
+                    set_state(
+                        "outcome_valuation_records",
+                        [record.to_dict() for record in records],
+                    )
+                    if valuation_version is not None:
+                        set_state(
+                            "source_versions",
+                            [
+                                *(st.session_state.get("source_versions") or []),
+                                valuation_version.to_dict(),
+                            ],
+                        )
+                    st.success(
+                        f"Loaded {len(records):,} governed valuation record(s). "
+                        "No model fit was started."
+                    )
+                    st.rerun()
+                except (ValueError, TypeError, KeyError) as exc:
+                    st.error(f"Valuation validation failed: {exc}")
+        if get_state("outcome_valuation_records"):
+            st.success(
+                f"Valuation catalogue loaded: {len(get_state('outcome_valuation_records')):,} record(s)."
+            )
     with st.expander("Preferred standard workbook pack", expanded=False):
         st.caption(
             "Use one workbook for each data category. The app reads each sheet "
             "separately, so optional sheets can be removed when they are not available."
         )
         st.markdown(
-            "- Outcomes: `outcomes` and `outcome_dictionary`; `outcome_completeness` is optional.\n"
-            "- Activity and Media: `activity_data` and `activity_dictionary`.\n"
-            "- Context and External Factors: `context_data` and `variable_dictionary`; `events` is optional.\n"
+            "- Outcomes: `outcomes` is a wide weekly measures table; `outcome_dictionary` defines each measure; `outcome_completeness` is optional.\n"
+            "- Activity and Media: `activity_data` is tidy-long by `activity_id`; `activity_dictionary` defines the model-input mapping.\n"
+            "- Context and External Factors: `context_data` is tidy-long by `variable_id`; `variable_dictionary` defines role/frequency; `events` is optional.\n"
             "- Experiment Evidence: `experiment_evidence` is kept as supporting evidence."
         )
         st.info(
