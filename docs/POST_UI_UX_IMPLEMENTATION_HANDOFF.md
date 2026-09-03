@@ -16,15 +16,15 @@ replace the approved implementation brief, decision records, or the
 - **Scope:** production-data onboarding integration only. Decisions 1-19 and
   the approved post-UI/UX implementation were inherited; no production data
   has been imported and no production MMM fit has been run.
-- **Latest locally validated source/test HEAD:**
-  `0aa08ddb` (`fix: satisfy onboarding type boundaries`). The complete
-  repository suite was already green on the preceding onboarding code/test
-  state; this type-only boundary correction was then covered by the focused
-  Search/model/fold run and local mypy. Exact final-head CI remains pending
-  until the pushed SHA is checked.
-- **Pushed:** pending for the source/type correction and this handoff update;
-  Pull request [#350](https://github.com/papayasamosa/Media-Mix-Lab/pull/350)
-  remains open against `main` and must not be merged as part of this audit.
+- **Last CI-validated branch HEAD before this handoff update:**
+  `6a519dd9a66947d7ea3ed03aed3155f25b917efe` (`docs: refresh onboarding
+  validation state`). The source/type correction at `0aa08ddb` was covered by
+  local focused tests and mypy, and that exact pushed HEAD passed the complete
+  repository CI recorded below. This final handoff update is the last commit;
+  its resulting branch SHA is reported in the delivery summary.
+- **Pushed:** yes; `agent/production-data-onboarding` is published on
+  `origin`. Pull request [#350](https://github.com/papayasamosa/Media-Mix-Lab/pull/350)
+  remains open against `main` and has not been merged.
 - `.mcp.json`, `.playwright-mcp/`, `designs/`, `tools/`, local logs, caches,
   and machine-specific files remain deliberately outside the commits.
 
@@ -42,8 +42,10 @@ Durability commits created on this branch:
 - `f43b4e0e` - Record onboarding PR publication
 - `551d6e8b` - Add onboarding input examples
 - `0aa08ddb` - Satisfy onboarding type boundaries
-- The final handoff update records the exact-head CI result after the branch is
-  pushed and validated.
+- `6a519dd9` - Refresh onboarding validation state and exact-head evidence
+- This final handoff update is the last documentation commit; its resulting
+  branch SHA is reported in the delivery summary and must receive the final
+  exact-head CI check.
 
 ## 2. Decision 1-19 status
 
@@ -181,11 +183,12 @@ the evidence rather than treating a partial sample as a pass.
 - The merged post-UI/UX implementation was inherited from `main` at
   `980af30f6b923df206d97709a005e78437dd8115`; its approved PR #349 final SHA
   and CI evidence are not recreated by this onboarding branch.
-- Affected-path recovery on the same SHA: manual workflow **run 33611176082**
-  **passed**. Candidate A posterior recovery, named-event
+- Inherited affected-path recovery evidence from the completed post-UI/UX
+  implementation: manual workflow **run 33611176082** **passed**. Candidate A
+  posterior recovery, named-event
   integration/response evidence, deterministic attribution recovery, browser
   lifecycle, Mypy, bundle, tooling, fold-refit recovery, and both Python test
-  jobs passed.
+  jobs passed; it was not recreated merely for this onboarding branch.
 - Candidate A attribution regression suite: **13 passed**; deterministic
   simulation recovery: **6 passed**. The browser lifecycle journey: **5
   passed**. The focused CI-equivalent Mypy checks report no issues; the full
@@ -220,19 +223,24 @@ the evidence rather than treating a partial sample as a pass.
 
 - Post-correction focused validation on `0aa08ddb`: **49 passed in 2746.41s
   (0:45:46)** across Search capacity, model fitting, and fold-refit tests;
-  local application mypy reports **no issues in 24 source files**. The exact
-  pushed branch-head repository CI result is intentionally not claimed until
-  the final SHA's workflow completes.
+  local application mypy reports **no issues in 24 source files**.
+
+- Complete repository CI on the exact pre-handoff branch HEAD
+  `6a519dd9a66947d7ea3ed03aed3155f25b917efe`: **run 33738759632 passed**.
+  Python 3.11 and 3.12 tests passed with their coverage gates; Compile +
+  Import, Mypy, Ruff, Bandit, pip-audit, bundle round-trip, Streamlit
+  AppTest, browser lifecycle, Requirements index, and Windows tooling all
+  passed. Manual-only recovery jobs were correctly skipped because this
+  onboarding change did not alter recovery mathematics.
 
 - Ruff check: clean for `ancestry_mmm` and `scripts`.
 - Ruff format check: clean after formatting the touched Python files.
 - `python -m compileall -q ancestry_mmm`: clean.
 - Graphify refresh: completed through the required D-drive wrapper; local
   graph output was refreshed and remains ignored development tooling output.
-- Mypy: the new SEO replay typing findings are resolved. A focused run still
-  reports the existing NumPy/ArviZ `Any` and missing-annotation baseline in
-  `predict.py` and `market_specific_predict.py`; no new SEO-specific error
-  remains.
+- Mypy: the exact final-head CI and local application run are clean. The
+  approved full-core debt ratchet remains separate from the application check
+  and retains its approved **225-error ceiling**.
 - Browser smoke: the real Streamlit app reached Fit Model, Model Diagnostics,
   Scenario Planner, and Export & Recovery through the sidebar on an isolated
   local server. No-data states were explicit and the post-navigation browser
