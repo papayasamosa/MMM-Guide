@@ -65,6 +65,7 @@ from ancestry_mmm.core.fingerprint import (
     fingerprint_candidate_a_fit_inputs,
     fingerprint_dataframe,
     fingerprint_model_spec,
+    fingerprint_google_trends_anchor,
 )
 from ancestry_mmm.core.outcomes import (
     outcome_catalogue_fingerprint_payload,
@@ -92,6 +93,7 @@ from ancestry_mmm.core.google_trends_anchor import (
     GoogleTrendsRawObservation,
     UK_BRAND_DEMAND_QUERY_EXPRESSION,
     UK_BRAND_DEMAND_QUERY_SET_ID,
+    UK_BRAND_DEMAND_TERMS,
     compute_anchor_series,
 )
 from ancestry_mmm.core.seo_visibility import (
@@ -391,6 +393,24 @@ def _fit_input_fingerprints_for_current_fit(
     return fingerprints
 
 
+def _current_fit_uses_candidate_a() -> bool:
+    """Identify the engine that produced the current in-session fit."""
+
+    meta = get_state("model_meta")
+    if isinstance(meta, dict):
+        engine = meta.get("causal_graph_engine", "")
+    else:
+        engine = getattr(meta, "causal_graph_engine", "")
+    return (
+        bool(
+            get_state("model_trained")
+            or get_state("model_approval")
+            or get_state("trace") is not None
+        )
+        and engine == SEARCH_CANDIDATE_A_ENGINE
+    )
+
+
 def _canonical_seo_boundary_fingerprint(value) -> str:
     """Hash SEO groups independently of legacy singular/collection shape."""
 
@@ -578,7 +598,7 @@ def _render_google_trends_candidate_a_boundary() -> None:
                 )
             else:
                 try:
-                    trends_frame = pd.read_csv(upload.getvalue())
+                    trends_frame = pd.read_csv(BytesIO(upload.getvalue()))
                     required = {"week", "raw_index"}
                     if not required.issubset(trends_frame.columns):
                         raise ValueError("CSV must contain week and raw_index columns")
@@ -600,6 +620,14 @@ def _render_google_trends_candidate_a_boundary() -> None:
                         search_property=search_property.strip(),
                         extraction_date=extraction_date.strip() or None,
                     )
+                    if (
+                        query_set.query_set_id != UK_BRAND_DEMAND_QUERY_SET_ID
+                        or query_set.branded_terms != UK_BRAND_DEMAND_TERMS
+                    ):
+                        raise ValueError(
+                            "Candidate A requires the approved UK Google Trends "
+                            "query-set ID and exact branded expression."
+                        )
                     raw = [
                         GoogleTrendsRawObservation(
                             query_set_id=query_set.query_set_id,
@@ -623,7 +651,27 @@ def _render_google_trends_candidate_a_boundary() -> None:
                             f"term(s): {', '.join(query_set.duplicate_terms)}. The exact "
                             "term list is preserved and was not deduplicated."
                         )
+                    previous_anchor_payload = get_state("google_trends_anchor")
+                    previous_anchor_fingerprint = (
+                        fingerprint_google_trends_anchor(previous_anchor_payload)
+                        if previous_anchor_payload
+                        else ""
+                    )
+                    next_anchor_fingerprint = fingerprint_google_trends_anchor(anchor)
                     set_state("google_trends_anchor", anchor.to_dict())
+                    if (
+                        previous_anchor_fingerprint != next_anchor_fingerprint
+                        and _current_fit_uses_candidate_a()
+                    ):
+                        clear_model_state()
+                        set_state("scenarios", [])
+                        set_state(
+                            "fit_invalidation_notice",
+                            "The Google Trends Candidate A anchor changed, so the "
+                            "fitted model, approval, diagnostics, curves, and "
+                            "scenarios were cleared. Prepare the modelling frame "
+                            "and refit before relying on it.",
+                        )
                     st.success(
                         "Google Trends anchor validated and attached to the current "
                         "project; it will be included in the next fit and bundle."
@@ -716,7 +764,7 @@ def _render_candidate_a_observation_boundary() -> None:
             disabled=upload is None or spec is None or not demand_channels,
         ):
             try:
-                uploaded = pd.read_csv(upload.getvalue())
+                uploaded = pd.read_csv(BytesIO(upload.getvalue()))
                 fit_inputs = build_candidate_a_fit_inputs_from_frame(
                     uploaded,
                     model_frame=frame,

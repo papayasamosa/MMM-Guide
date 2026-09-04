@@ -16,6 +16,7 @@ import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 from ancestry_mmm.application.fit_job_service import FitJobStore, FitJobSubmission
+from ancestry_mmm.application.model_fit_service import SEARCH_CANDIDATE_A_ENGINE
 from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.search_intent_taxonomy import (
@@ -26,6 +27,13 @@ from ancestry_mmm.core.seo_visibility import (
     GscPositionRow,
     SeoModelFitInputs,
     compute_weekly_positional_visibility_series,
+)
+from ancestry_mmm.core.google_trends_anchor import (
+    GoogleTrendsAnchorFitInputs,
+    GoogleTrendsAnchorObservation,
+    GoogleTrendsQuerySetDefinition,
+    UK_BRAND_DEMAND_QUERY_EXPRESSION,
+    UK_BRAND_DEMAND_QUERY_SET_ID,
 )
 
 st.page_link = lambda *a, **k: None
@@ -265,6 +273,95 @@ def test_changed_seo_boundary_clears_adopted_fit_and_downstream_evidence():
     assert any(
         "SEO visibility boundary changed" in (warning.value or "")
         for warning in at.warning
+    )
+
+
+def _google_trends_anchor(raw_offset: float = 0.0):
+    weeks = [str(pd.Timestamp(week).date()) for week in _frame()["dates"]]
+    query_set = GoogleTrendsQuerySetDefinition(
+        query_set_id=UK_BRAND_DEMAND_QUERY_SET_ID,
+        branded_terms=tuple(UK_BRAND_DEMAND_QUERY_EXPRESSION.split(" + ")),
+        geography="GB",
+        time_range_start=weeks[0],
+        time_range_end=weeks[-1],
+    )
+    observations = tuple(
+        GoogleTrendsAnchorObservation(
+            query_set_id=query_set.query_set_id,
+            week=week,
+            raw_index=40.0 + index + raw_offset,
+            anchor_value=(40.0 + index + raw_offset) / 100.0,
+        )
+        for index, week in enumerate(weeks)
+    )
+    return GoogleTrendsAnchorFitInputs(
+        query_set=query_set,
+        observations=observations,
+        model_weeks=tuple(weeks),
+    )
+
+
+def test_changed_candidate_a_trends_anchor_clears_fit_and_downstream_evidence():
+    at = _run_at(
+        model_trained=True,
+        trace=object(),
+        posterior_params={"old": 1},
+        model_meta=SimpleNamespace(causal_graph_engine=SEARCH_CANDIDATE_A_ENGINE),
+        model_approval={"approved_by": "old reviewer"},
+        google_trends_anchor=_google_trends_anchor().to_dict(),
+        gt_geography="GB",
+    )
+    uploader = next(
+        item for item in at.file_uploader if "Google Trends CSV" in (item.label or "")
+    )
+    rows = "week,raw_index\n" + "\n".join(
+        f"{week},{50 + index}" for index, week in enumerate(_frame()["dates"])
+    )
+    uploader.set_value(("trends.csv", rows.encode(), "text/csv")).run()
+    at = (
+        next(
+            button
+            for button in at.button
+            if button.label == "Validate and load Google Trends anchor"
+        )
+        .click()
+        .run()
+    )
+
+    assert not at.exception, f"Trends upload raised: {at.exception}"
+    assert at.session_state["model_trained"] is False
+    assert at.session_state["trace"] is None
+    assert at.session_state["posterior_params"] is None
+    assert at.session_state["model_approval"] is None
+    assert any(
+        "Google Trends Candidate A anchor changed" in (warning.value or "")
+        for warning in at.warning
+    )
+
+
+def test_non_approved_candidate_a_trends_identity_is_rejected():
+    at = _run_at(gt_query_set_id="ad_hoc_query_set", gt_geography="GB")
+    uploader = next(
+        item for item in at.file_uploader if "Google Trends CSV" in (item.label or "")
+    )
+    rows = "week,raw_index\n" + "\n".join(
+        f"{week},{50 + index}" for index, week in enumerate(_frame()["dates"])
+    )
+    uploader.set_value(("trends.csv", rows.encode(), "text/csv")).run()
+    at = (
+        next(
+            button
+            for button in at.button
+            if button.label == "Validate and load Google Trends anchor"
+        )
+        .click()
+        .run()
+    )
+
+    assert not at.exception, f"Trends validation raised: {at.exception}"
+    assert any(
+        "approved UK Google Trends query-set ID" in (error.value or "")
+        for error in at.error
     )
 
 

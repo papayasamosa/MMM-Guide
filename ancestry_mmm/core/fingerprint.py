@@ -418,6 +418,23 @@ def fingerprint_candidate_a_fit_inputs(fit_inputs: Any) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
+def fingerprint_google_trends_anchor(anchor: Any) -> str:
+    """Return a canonical identity for one governed Google Trends anchor.
+
+    This is used for page-level invalidation when an already fitted Candidate A
+    project replaces its anchor.  It deliberately follows the same explicit
+    serialisation/canonical-JSON contract as the Candidate A fit boundary.
+    """
+
+    if hasattr(anchor, "to_dict"):
+        anchor = anchor.to_dict()
+    elif not isinstance(anchor, Mapping):
+        raise TypeError("Google Trends anchor must be a mapping or expose to_dict().")
+    payload = {"schema_version": 1, "google_trends_anchor": _to_jsonable(anchor)}
+    blob = _canonical_json(payload)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
 def fingerprint_posterior(params: Any) -> str:
     """
     Fingerprint the posterior parameters actually used by the curve bank and

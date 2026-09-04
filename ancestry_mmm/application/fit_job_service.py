@@ -453,27 +453,35 @@ class FitJobStore:
     def reconcile(self) -> List[FitJobRecord]:
         changed: List[FitJobRecord] = []
         for record in self.list(statuses=ACTIVE_JOB_STATES):
-            alive = record.pid is not None and process_is_alive(record.pid)
-            if alive:
-                continue
-            if record.status == "cancel_requested" or self.cancellation_requested(
-                record.job_id
-            ):
-                changed.append(
-                    self.transition(
-                        record.job_id,
-                        "cancelled",
-                        message="Worker is no longer running after cancellation.",
-                    )
+            # ``list`` is only a snapshot.  A worker can reach a terminal
+            # state after it returns that snapshot, so re-read under the same
+            # lock used by worker transitions before checking liveness or
+            # writing an orphan/cancelled state.
+            with self._record_lock(record.job_id):
+                latest = self.get(record.job_id)
+                if latest.status not in ACTIVE_JOB_STATES:
+                    continue
+                alive = latest.pid is not None and process_is_alive(latest.pid)
+                if alive:
+                    continue
+                cancelled = latest.status == "cancel_requested" or (
+                    self.cancellation_requested(latest.job_id)
                 )
-            else:
-                changed.append(
-                    self.transition(
-                        record.job_id,
-                        "orphaned",
-                        message="Fit worker is no longer running and produced no terminal result.",
-                    )
+                status = "cancelled" if cancelled else "orphaned"
+                message = (
+                    "Worker is no longer running after cancellation."
+                    if cancelled
+                    else "Fit worker is no longer running and produced no terminal result."
                 )
+                now = utc_now()
+                latest.status = status
+                latest.finished_at = now
+                if status == "cancelled":
+                    latest.cancelled_at = now
+                latest.error_summary = "" if status == "cancelled" else message
+                latest.progress.message = message
+                latest.progress.last_updated_at = now
+                changed.append(self._save_unlocked(latest))
         return changed
 
 

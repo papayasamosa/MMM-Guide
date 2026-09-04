@@ -169,6 +169,29 @@ def test_request_cancel_does_not_overwrite_worker_success(tmp_path: Path, monkey
     assert restored.error_summary == ""
 
 
+def test_reconcile_rechecks_terminal_state_before_marking_worker_orphaned(
+    tmp_path: Path, monkeypatch
+):
+    store = FitJobStore(tmp_path, "project")
+    record = store.create(_submission(project_id="project"))
+    store.transition(record.job_id, "running")
+    stale = store.get(record.job_id)
+    original_list = store.list
+
+    def list_then_worker_finishes(*, statuses=None):
+        original_list(statuses=statuses)
+        store.transition(record.job_id, "succeeded")
+        return [stale]
+
+    monkeypatch.setattr(store, "list", list_then_worker_finishes)
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service.process_is_alive", lambda pid: False
+    )
+
+    assert store.reconcile() == []
+    assert store.get(record.job_id).status == "succeeded"
+
+
 @pytest.fixture
 def candidate_a_fit_inputs() -> CandidateASearchFitInputs:
     query_set = GoogleTrendsQuerySetDefinition(
