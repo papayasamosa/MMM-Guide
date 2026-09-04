@@ -21,7 +21,6 @@ of scope here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import re
 from typing import Any, Dict, List, Optional, Sequence, cast
 
 import numpy as np
@@ -73,6 +72,7 @@ from .seo_visibility import (
     SeoModelFitInputs,
     SeoModelFitInputsCollection,
     normalise_seo_fit_inputs,
+    seo_group_variable_suffixes,
     seo_fit_inputs_to_dict,
 )
 
@@ -1315,6 +1315,9 @@ def build_fh_hierarchical_model(
             )
 
         seo_groups = normalise_seo_fit_inputs(seo_fit_inputs)
+        seo_group_suffixes = seo_group_variable_suffixes(
+            [seo_group.seo_group_id for seo_group in seo_groups]
+        )
         for group_index, seo_group in enumerate(seo_groups):
             seo_group.validate_frame(
                 markets=[markets[int(index)] for index in market_idx],
@@ -1324,11 +1327,7 @@ def build_fh_hierarchical_model(
                 np.asarray(seo_group.standardized_visibility, dtype=float)
             )
             seo_active = pt.constant(np.asarray(seo_group.active_mask, dtype=float))
-            suffix = (
-                ""
-                if len(seo_groups) == 1
-                else "_" + re.sub(r"[^A-Za-z0-9_]", "_", seo_group.seo_group_id)
-            )
+            suffix = seo_group_suffixes[seo_group.seo_group_id]
             beta_name = f"seo_visibility_beta{suffix}"
             eta_name = f"eta_seo_visibility{suffix}"
             seo_visibility_beta = pm.Normal(

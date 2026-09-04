@@ -382,6 +382,10 @@ def activity_fit_fingerprint(
                 "model_role": definition.model_role,
                 "model_input_column": definition.resolved_model_input_column,
                 "pathway_ids": sorted(definition.pathway_ids),
+                # Search intent classification is part of the governed model
+                # boundary: the selected Search grain can resolve a different
+                # set of input columns after this field changes.
+                "search_intent_group_id": definition.search_intent_group_id,
             }
         )
     payload.sort(key=lambda item: (item["market"], item["activity_id"]))
@@ -632,6 +636,9 @@ _INVALIDATION_MATRIX = {
     "model_role": (True, True, True, True),
     "model_input_column": (True, True, True, True),
     "pathway_ids": (True, True, True, True),
+    # A Search reclassification can move an activity into or out of the
+    # selected Search model grain, changing the columns fitted by the model.
+    "search_intent_group_id": (True, True, True, True),
     # pooling_group_id (REQ-DATAIN-001) is deliberately absent here - it is
     # descriptive/identity metadata never read by modelling code, so
     # editing it must never trigger a refit or rebuild prompt (which would

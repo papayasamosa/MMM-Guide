@@ -50,6 +50,7 @@ from __future__ import annotations
 import math
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass
 from typing import Any, List, Mapping, Optional, Sequence, Tuple, cast
 
@@ -692,6 +693,31 @@ def normalise_seo_fit_inputs(
     raise TypeError("Unsupported SEO fit-input payload.")
 
 
+def seo_group_variable_suffixes(group_ids: Sequence[str]) -> dict[str, str]:
+    """Return deterministic PyMC-name suffixes, rejecting normalized clashes.
+
+    PyMC variable names use a restricted representation of the governed SEO
+    group ID.  Distinct IDs such as ``non-brand`` and ``non.brand`` must not
+    silently register the same variable name in a multi-group model.
+    """
+
+    ids = tuple(str(group_id) for group_id in group_ids)
+    suffixes: dict[str, str] = {}
+    ids_by_suffix: dict[str, str] = {}
+    for group_id in ids:
+        suffix = "" if len(ids) == 1 else "_" + re.sub(r"[^A-Za-z0-9_]", "_", group_id)
+        prior_id = ids_by_suffix.get(suffix)
+        if prior_id is not None and prior_id != group_id:
+            raise ValueError(
+                "SEO group IDs "
+                f"{prior_id!r} and {group_id!r} collide after PyMC "
+                "variable-name normalization."
+            )
+        ids_by_suffix[suffix] = group_id
+        suffixes[group_id] = suffix
+    return suffixes
+
+
 def seo_fit_inputs_to_dict(
     value: Optional[SeoModelFitInputs | SeoModelFitInputsCollection],
 ) -> dict:
@@ -730,6 +756,7 @@ __all__ = [
     "compute_weekly_positional_visibility",
     "compute_weekly_positional_visibility_series",
     "normalise_seo_fit_inputs",
+    "seo_group_variable_suffixes",
     "seo_fit_inputs_fingerprint",
     "seo_fit_inputs_to_dict",
 ]

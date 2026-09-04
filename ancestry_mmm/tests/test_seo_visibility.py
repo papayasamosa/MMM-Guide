@@ -17,6 +17,7 @@ from ancestry_mmm.core.seo_visibility import (
     SeoVisibilityMetricDefinition,
     compute_weekly_positional_visibility,
     compute_weekly_positional_visibility_series,
+    seo_group_variable_suffixes,
     seo_fit_inputs_fingerprint,
 )
 
@@ -26,6 +27,11 @@ def test_empty_seo_configuration_has_no_fingerprint():
 
     assert seo_fit_inputs_fingerprint(None) == ""
     assert seo_fit_inputs_fingerprint({}) == ""
+
+
+def test_seo_group_ids_that_normalize_to_one_pymc_name_fail_closed():
+    with pytest.raises(ValueError, match="collide after PyMC"):
+        seo_group_variable_suffixes(("non-brand", "non.brand"))
 
 
 class TestGscPositionRow:

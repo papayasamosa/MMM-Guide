@@ -500,7 +500,27 @@ def process_is_alive(pid: int) -> bool:
         os.kill(pid, 0)
     except (OSError, ProcessLookupError):
         return False
-    return True
+    # On POSIX, kill(pid, 0) also succeeds for a zombie.  The launcher does
+    # not retain/reap Popen handles across sessions, so inspect procfs when it
+    # is available before treating the PID as a live worker.
+    return _posix_process_state(pid) != "Z"
+
+
+def _posix_process_state(pid: int) -> Optional[str]:
+    """Return Linux procfs' one-letter state for *pid*, when available."""
+
+    if os.name == "nt":
+        return None
+    try:
+        stat = (Path("/proc") / str(pid) / "stat").read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    # The comm field is parenthesized and may itself contain spaces or ')'.
+    closing_paren = stat.rfind(")")
+    if closing_paren < 0:
+        return None
+    fields_after_comm = stat[closing_paren + 2 :].split()
+    return fields_after_comm[0] if fields_after_comm else None
 
 
 class LocalFitJobBackend:

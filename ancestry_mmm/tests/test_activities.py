@@ -113,6 +113,22 @@ def test_monetary_governance_fingerprint_covers_every_economic_input():
         assert monetary_governance_fingerprint(**changed) != original
 
 
+def test_search_intent_reclassification_invalidates_model_and_fit_identity():
+    before = _activity(search_intent_group_id="brand_search")
+    after = _activity(search_intent_group_id="non_brand_search")
+
+    impact = activity_invalidation(before, after)
+
+    assert (
+        impact.refit_model,
+        impact.rebuild_curves,
+        impact.rebuild_economics,
+        impact.rebuild_scenarios,
+    ) == (True, True, True, True)
+    assert "search_intent_group_id" in impact.changed_fields
+    assert activity_fit_fingerprint([before]) != activity_fit_fingerprint([after])
+
+
 # ---------------------------------------------------------------------------
 # REQ-DATAIN-001: pooling_group_id (schema v3)
 # ---------------------------------------------------------------------------

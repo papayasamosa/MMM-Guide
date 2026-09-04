@@ -67,9 +67,9 @@ from .seo_visibility import (
     SeoModelFitInputs,
     SeoModelFitInputsCollection,
     normalise_seo_fit_inputs,
+    seo_group_variable_suffixes,
     seo_fit_inputs_to_dict,
 )
-import re
 
 
 def _market_specific_adstock_and_saturation(
@@ -495,6 +495,9 @@ def build_fh_market_specific_model(
         )
 
         seo_groups = normalise_seo_fit_inputs(seo_fit_inputs)
+        seo_group_suffixes = seo_group_variable_suffixes(
+            [seo_group.seo_group_id for seo_group in seo_groups]
+        )
         for seo_group in seo_groups:
             seo_group.validate_frame(
                 markets=[markets[int(index)] for index in market_idx],
@@ -504,11 +507,7 @@ def build_fh_market_specific_model(
                 np.asarray(seo_group.standardized_visibility, dtype=float)
             )
             seo_active = pt.constant(np.asarray(seo_group.active_mask, dtype=float))
-            suffix = (
-                ""
-                if len(seo_groups) == 1
-                else "_" + re.sub(r"[^A-Za-z0-9_]", "_", seo_group.seo_group_id)
-            )
+            suffix = seo_group_suffixes[seo_group.seo_group_id]
             beta_name = f"seo_visibility_beta{suffix}"
             eta_name = f"eta_seo_visibility{suffix}"
             seo_visibility_beta = pm.Normal(

@@ -16,6 +16,7 @@ from ancestry_mmm.application.fit_job_service import (
     FitJobSubmission,
     LocalFitJobBackend,
     canonical_project_id,
+    process_is_alive,
 )
 from ancestry_mmm.core.fingerprint import fingerprint_candidate_a_fit_inputs
 from ancestry_mmm.core.google_trends_anchor import (
@@ -225,6 +226,19 @@ def test_reconcile_orphans_queued_job_after_pid_hand_off_if_process_is_dead(
 
     assert any(item.job_id == record.job_id for item in recovered)
     assert store.get(record.job_id).status == "orphaned"
+
+
+def test_process_is_alive_rejects_a_posix_zombie(monkeypatch):
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service._posix_process_state",
+        lambda pid: "Z",
+    )
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service.os.kill",
+        lambda pid, signal: None,
+    )
+
+    assert process_is_alive(12345) is False
 
 
 @pytest.fixture
