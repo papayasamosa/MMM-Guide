@@ -179,6 +179,7 @@ from .fingerprint import (
     fingerprint_model_spec,
     fingerprint_posterior,
 )
+from .seo_visibility import seo_fit_inputs_fingerprint
 from .curve_artifact import (
     CurveArtifact,
     CurveArtifactStoreError,
@@ -3425,6 +3426,7 @@ def current_model_identity_fingerprints(
             else None
         ),
         official_preparation_evidence=imported.get("official_preparation_result"),
+        seo_fit_fingerprint=seo_fit_inputs_fingerprint(imported.get("seo_fit_inputs")),
     )
     posterior_fp = fingerprint_posterior(posterior_params)
     return data_fp, spec_fp, posterior_fp

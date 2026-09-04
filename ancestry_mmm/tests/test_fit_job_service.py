@@ -207,6 +207,26 @@ def test_reconcile_does_not_orphan_queued_job_before_pid_is_recorded(
     assert store.get(record.job_id).status == "queued"
 
 
+def test_reconcile_orphans_queued_job_after_pid_hand_off_if_process_is_dead(
+    tmp_path: Path, monkeypatch
+):
+    """A completed launcher hand-off must still participate in liveness checks."""
+
+    store = FitJobStore(tmp_path, "project")
+    record = store.create(_submission(project_id="project"))
+    store.update_process_metadata(
+        record.job_id, pid=12345, process_start_time="started"
+    )
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service.process_is_alive", lambda pid: False
+    )
+
+    recovered = store.reconcile()
+
+    assert any(item.job_id == record.job_id for item in recovered)
+    assert store.get(record.job_id).status == "orphaned"
+
+
 @pytest.fixture
 def candidate_a_fit_inputs() -> CandidateASearchFitInputs:
     query_set = GoogleTrendsQuerySetDefinition(

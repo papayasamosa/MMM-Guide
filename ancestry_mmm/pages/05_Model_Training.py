@@ -1411,6 +1411,15 @@ for _completed_job in _fit_job_backend.store.list(statuses={"succeeded"}):
                 raise ValueError(
                     "Fit artifact is missing its persisted frozen modelling frame."
                 )
+            _fitted_model_spec = _fit_build_kwargs.get("model_spec")
+            if isinstance(_fitted_model_spec, ModelSpec):
+                _fitted_model_spec = _fitted_model_spec.to_dict()
+            elif isinstance(_fitted_model_spec, dict):
+                _fitted_model_spec = ModelSpec.from_dict(_fitted_model_spec).to_dict()
+            else:
+                raise ValueError(
+                    "Fit artifact is missing its persisted frozen model specification."
+                )
             _fitted_channels = list(getattr(_meta, "channels", ()) or ())
             if _fitted_channels and list(_fitted_frame.get("channels") or ()) != (
                 _fitted_channels
@@ -1418,10 +1427,17 @@ for _completed_job in _fit_job_backend.store.list(statuses={"succeeded"}):
                 raise ValueError(
                     "Fit artifact frame channels do not match its persisted model metadata."
                 )
+            if _fitted_channels and list(_fitted_model_spec.get("channels") or []) != (
+                _fitted_channels
+            ):
+                raise ValueError(
+                    "Fit artifact model specification does not match its persisted model metadata."
+                )
             # The worker fits the Search-grain-sliced frame from its immutable
-            # payload.  Restore that exact frame before downstream diagnostics,
-            # curves, and planning replay the posterior; the live session frame
-            # may still be the unsliced preparation frame.
+            # payload. Restore the paired frozen specification and frame before
+            # downstream diagnostics, curves, and planning replay the posterior;
+            # the live session may still contain the unsliced preparation pair.
+            set_state("model_spec", _fitted_model_spec)
             set_state("frame", _fitted_frame)
             set_state("model", None)
             set_state("model_meta", _meta)
@@ -1430,6 +1446,16 @@ for _completed_job in _fit_job_backend.store.list(statuses={"succeeded"}):
             set_state("posterior_params", _posterior_params)
             set_state("model_type", model_type)
             set_state("model_run_id", _record.project_run_id or str(uuid.uuid4()))
+            _fitted_settings = dict(_record.sampler_settings)
+            set_state("mcmc_draws", int(_fitted_settings.get("draws", 1000)))
+            set_state("mcmc_tune", int(_fitted_settings.get("tune", 1000)))
+            set_state("mcmc_chains", int(_fitted_settings.get("chains", 2)))
+            set_state(
+                "mcmc_target_accept",
+                float(_fitted_settings.get("target_accept", 0.9)),
+            )
+            if _record.random_seed is not None:
+                set_state("mcmc_random_seed", int(_record.random_seed))
             set_state("model_approval", None)
             set_state(
                 "migration_review",

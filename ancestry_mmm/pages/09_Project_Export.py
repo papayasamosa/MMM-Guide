@@ -144,6 +144,7 @@ from ancestry_mmm.core.outcomes import (
     outcome_catalogue_fingerprint_payload,
     resolve_outcome_definitions,
 )
+from ancestry_mmm.core.seo_visibility import seo_fit_inputs_fingerprint
 from ancestry_mmm.core.pathways import (
     MediaOutcomePathway,
     pathway_catalogue_fingerprint_payload,
@@ -403,6 +404,10 @@ def _resolve_official_curve_artifact_rows() -> list[dict]:
                     else None
                 ),
                 official_preparation_evidence=get_state("official_preparation_result"),
+                seo_fit_fingerprint=seo_fit_inputs_fingerprint(
+                    get_state("seo_fit_inputs")
+                    or getattr(meta, "seo_fit_inputs_at_fit", None)
+                ),
                 calibration_fit_fingerprint=(
                     getattr(meta, "calibration_fit_fingerprint", "") or None
                 ),

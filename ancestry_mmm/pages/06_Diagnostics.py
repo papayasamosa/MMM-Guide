@@ -136,6 +136,7 @@ from ancestry_mmm.core.google_trends_anchor import GoogleTrendsAnchorFitInputs
 from ancestry_mmm.core.seo_visibility import (
     SeoModelFitInputsCollection,
     normalise_seo_fit_inputs,
+    seo_fit_inputs_fingerprint,
 )
 from ancestry_mmm.core.predict import extract_posterior_params, predict_mu
 from ancestry_mmm.core.market_specific_predict import (
@@ -528,6 +529,9 @@ if model_run_id and posterior_params is not None and model_spec_dict is not None
                 else None
             ),
             official_preparation_evidence=get_state("official_preparation_result"),
+            seo_fit_fingerprint=seo_fit_inputs_fingerprint(
+                _seo_fit_inputs_for_rebuild()
+            ),
             calibration_fit_fingerprint=(
                 getattr(meta, "calibration_fit_fingerprint", "") or None
             ),

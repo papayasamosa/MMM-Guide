@@ -84,6 +84,7 @@ from ancestry_mmm.core.outcomes import (
     resolve_outcome_definitions,
 )
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
+from ancestry_mmm.core.seo_visibility import seo_fit_inputs_fingerprint
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.search_capacity import SEARCH_CANDIDATE_A_ENGINE
 from ancestry_mmm.core.validation_policy import (
@@ -589,6 +590,10 @@ if model_run_id and spec_dict is not None:
                 else None
             ),
             official_preparation_evidence=get_state("official_preparation_result"),
+            seo_fit_fingerprint=seo_fit_inputs_fingerprint(
+                get_state("seo_fit_inputs")
+                or getattr(meta, "seo_fit_inputs_at_fit", None)
+            ),
             calibration_fit_fingerprint=(
                 getattr(meta, "calibration_fit_fingerprint", "") or None
             ),

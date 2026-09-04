@@ -28,3 +28,16 @@ def test_replacement_fit_completes_migration_review_without_dropping_audit_field
     }
     assert updated["model_invalidated"] is True
     assert updated["refit_completed_at"]
+
+
+def test_ordinary_adoption_preserves_absent_or_completed_migration_review():
+    assert migration_review_after_fit_adoption(None, "ordinary-run") is None
+
+    completed = {
+        "migration_review_status": "refit_completed",
+        "migration_reviewed_by": "Migration Reviewer",
+        "replacement_model_run_id": "original-replacement",
+        "refit_completed_at": "2026-07-23T12:00:00+00:00",
+    }
+
+    assert migration_review_after_fit_adoption(completed, "ordinary-run") == completed

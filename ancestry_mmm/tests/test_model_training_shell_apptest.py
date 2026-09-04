@@ -239,6 +239,8 @@ def test_adopting_durable_fit_restores_the_frozen_search_grain_frame(
     frozen_frame = dict(base_frame)
     frozen_frame["channels"] = ["TV"]
     frozen_frame["X_media"] = base_frame["X_media"][:, :1]
+    frozen_spec = _spec_dict()
+    frozen_spec["channels"] = ["TV"]
     store = FitJobStore(tmp_path, project_name)
     record = store.create(
         FitJobSubmission(
@@ -246,12 +248,17 @@ def test_adopting_durable_fit_restores_the_frozen_search_grain_frame(
             project_display_name=project_name,
             engine="pymc",
             model_type="shared",
-            sampler_settings={"draws": 4, "tune": 2, "chains": 1},
+            sampler_settings={
+                "draws": 4,
+                "tune": 2,
+                "chains": 1,
+                "target_accept": 0.83,
+            },
             random_seed=42,
             data_fingerprint="data-fp",
             model_spec_fingerprint="spec-fp",
             fit_input_fingerprints={"seo": "seo-fp", "frame": "data-fp"},
-            build_kwargs={"frame": frozen_frame, "model_spec": {"channels": ["TV"]}},
+            build_kwargs={"frame": frozen_frame, "model_spec": frozen_spec},
         )
     )
     store.transition(record.job_id, "running")
@@ -289,6 +296,12 @@ def test_adopting_durable_fit_restores_the_frozen_search_grain_frame(
     assert not at.exception, f"fit adoption raised: {at.exception}"
     assert at.session_state["frame"]["channels"] == ["TV"]
     assert at.session_state["frame"]["X_media"].shape == (len(base_frame["X_media"]), 1)
+    assert at.session_state["model_spec"]["channels"] == ["TV"]
+    assert at.session_state["mcmc_draws"] == 4
+    assert at.session_state["mcmc_tune"] == 2
+    assert at.session_state["mcmc_chains"] == 1
+    assert at.session_state["mcmc_target_accept"] == 0.83
+    assert at.session_state["mcmc_random_seed"] == 42
 
 
 def test_changed_seo_boundary_clears_adopted_fit_and_downstream_evidence():

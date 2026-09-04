@@ -467,7 +467,7 @@ class FitJobStore:
                 # running) when another session reconciles the queue.  Do not
                 # orphan a valid launch during that interval; submit() will
                 # persist a failed state if Popen itself cannot launch.
-                if latest.status == "queued":
+                if latest.status == "queued" and latest.pid is None:
                     continue
                 alive = latest.pid is not None and process_is_alive(latest.pid)
                 if alive:

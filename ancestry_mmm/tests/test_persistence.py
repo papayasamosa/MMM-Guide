@@ -57,6 +57,12 @@ from ancestry_mmm.core.pathways import (
     ResolvedPathwayMasks,
 )
 from ancestry_mmm.core.scenario_governance import CounterfactualPolicy
+from ancestry_mmm.core.seo_visibility import (
+    SEO_POSITIONAL_VISIBILITY_METRIC,
+    SeoModelFitInputs,
+    SeoPositionalVisibilityObservation,
+    seo_fit_inputs_fingerprint,
+)
 from ancestry_mmm.core.persistence import (
     UnsafeZipEntryError,
     _count_loaded_curve_artifacts,
@@ -3087,6 +3093,8 @@ def _make_trace(
         "market_offset": rng.normal(size=(chains, draws, n_mkt, n_seg)),
         "gamma_fourier": rng.normal(size=(chains, draws, n_fourier, n_seg)),
     }
+    if meta.seo_fit_inputs_at_fit:
+        posterior["seo_visibility_beta"] = rng.normal(size=(chains, draws))
     coords = {
         "channel": meta.channels,
         "outcome": meta.outcome_ids,
@@ -3712,6 +3720,68 @@ class TestVerifyImportedApproval:
         approval, message = verify_imported_approval(imported, reconstructed)
         assert approval is None
         assert "does not match" in message.lower()
+
+    def test_rejected_when_imported_seo_fit_inputs_differ(
+        self, tmp_path, consistent_project
+    ):
+        weeks = [
+            str(value.date())
+            for value in pd.date_range("2024-01-01", periods=8, freq="W")
+        ]
+        seo_inputs = SeoModelFitInputs.from_observations(
+            [
+                SeoPositionalVisibilityObservation(
+                    market="UK",
+                    week=week,
+                    weighted_avg_position=2.0,
+                    visibility_index=0.5,
+                    total_impressions=100.0,
+                    total_clicks=10.0,
+                    ctr=0.1,
+                )
+                for week in weeks
+            ],
+            model_markets=["UK"] * len(weeks),
+            model_weeks=weeks,
+            metric_definition=SEO_POSITIONAL_VISIBILITY_METRIC,
+        )
+        seo_payload = seo_inputs.to_dict()
+        project = dict(consistent_project)
+        project["seo_fit_inputs"] = seo_payload
+        project["model_meta"] = replace(
+            consistent_project["model_meta"],
+            seo_fit_inputs_at_fit=seo_payload,
+        )
+        project["trace"] = _make_trace(project["model_meta"])
+        project["model_approval"] = dict(consistent_project["model_approval"])
+        project["model_approval"]["model_spec_fingerprint"] = fingerprint_model_spec(
+            project["model_spec"],
+            project["prior_config"],
+            project["dna_lag_weeks"],
+            direct_dna_outcome_ids=project["model_meta"].direct_dna_outcome_ids,
+            seo_fit_fingerprint=seo_fit_inputs_fingerprint(seo_inputs),
+        )
+        project["model_approval"]["posterior_fingerprint"] = fingerprint_posterior(
+            extract_posterior_params(project["trace"], project["model_meta"])
+        )
+
+        imported = import_project(
+            export_project(tmp_path / "seo-boundary.zip", **project)
+        )
+        reconstructed = reconstruct_model_state(imported)
+        verified, message = verify_imported_approval(imported, reconstructed)
+        assert verified is not None, message
+
+        changed_seo = dict(imported["seo_fit_inputs"])
+        changed_seo["standardized_visibility"] = list(
+            changed_seo["standardized_visibility"]
+        )
+        changed_seo["standardized_visibility"][0] += 0.25
+        imported["seo_fit_inputs"] = changed_seo
+
+        rejected, rejection_message = verify_imported_approval(imported, reconstructed)
+        assert rejected is None
+        assert "does not match" in rejection_message.lower()
 
     def test_rejected_when_posterior_artefacts_differ(
         self, tmp_path, consistent_meta, consistent_project
