@@ -987,8 +987,7 @@ with st.expander(
         "Choose one Search object at a time. The overview compares saved objects; "
         "the detail form keeps identity, measurement, planning, validity, and review fields readable."
     )
-    search_form = st.form("search_object_detail_form", clear_on_submit=False)
-    with search_form:
+    with st.container(border=True):
         st.markdown("#### Identity and role")
         identity_a, identity_b = st.columns(2)
         search_object_id = identity_a.text_input(
@@ -1101,11 +1100,7 @@ with st.expander(
             "Saving a change creates a new version and retains the previous record."
         )
 
-        # Use the explicit form container so AppTest and rerun boundaries do
-        # not depend on Streamlit's ambient form-context stack.
-        save_search = search_form.form_submit_button(
-            "Save Search setup", type="primary"
-        )
+        save_search = st.button("Save Search setup", type="primary")
 
 if save_search:
     try:
