@@ -6,6 +6,7 @@ catalogue, and the reporting roll-up hierarchy.
 
 import pytest
 
+from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.core.search_intent_taxonomy import (
     APPROVED_MINIMUM_SEARCH_INTENT_GROUPS,
     BRAND_CLASS_BRAND,
@@ -24,6 +25,7 @@ from ancestry_mmm.core.search_intent_taxonomy import (
     new_search_intent_group_version,
     roll_up_paid_search_reporting,
     roll_up_paid_search_reporting_hierarchy,
+    resolve_search_model_input_columns,
     validate_activity_search_taxonomy,
 )
 
@@ -333,4 +335,63 @@ class TestHierarchicalPaidSearchReporting:
         with pytest.raises(ValueError, match="double counting"):
             roll_up_paid_search_reporting_hierarchy(
                 cells, (*APPROVED_MINIMUM_SEARCH_INTENT_GROUPS, child)
+            )
+
+
+def _search_activity(activity_id: str, column: str, group_id: str):
+    return ActivityDefinition(
+        activity_id=activity_id,
+        channel=column,
+        activity_ownership="paid",
+        model_role="intervention",
+        economic_treatment="paid_media_cost",
+        planning_eligibility="excluded",
+        source="test",
+        model_input_column=column,
+        search_intent_group_id=group_id,
+        search_platform=SEARCH_PLATFORM_GOOGLE,
+    )
+
+
+class TestSearchModelInputResolution:
+    def test_selected_grain_is_applied_before_model_construction(self):
+        child = SearchIntentGroup(
+            search_intent_group_id="non_brand_search_genealogy",
+            search_intent_group_name="Genealogy Non-Brand",
+            brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+            parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+        )
+        groups = (*APPROVED_MINIMUM_SEARCH_INTENT_GROUPS, child)
+        activities = [
+            _search_activity("brand", "paid_brand", SEARCH_INTENT_GROUP_ID_BRAND),
+            _search_activity("child", "paid_genealogy", child.search_intent_group_id),
+        ]
+
+        assert resolve_search_model_input_columns(
+            ["paid_brand", "paid_genealogy", "TV"],
+            [SEARCH_INTENT_GROUP_ID_BRAND],
+            groups,
+            activities,
+        ) == ("paid_brand", "TV")
+        assert resolve_search_model_input_columns(
+            ["paid_brand", "paid_genealogy", "TV"],
+            [child.search_intent_group_id],
+            groups,
+            activities,
+        ) == ("paid_genealogy", "TV")
+
+    def test_shared_physical_input_fails_closed_for_mixed_search_grains(self):
+        activities = [
+            _search_activity("brand", "paid_search", SEARCH_INTENT_GROUP_ID_BRAND),
+            _search_activity(
+                "non-brand", "paid_search", SEARCH_INTENT_GROUP_ID_NON_BRAND
+            ),
+        ]
+
+        with pytest.raises(ValueError, match="both selected Search grain"):
+            resolve_search_model_input_columns(
+                ["paid_search", "TV"],
+                [SEARCH_INTENT_GROUP_ID_BRAND],
+                APPROVED_MINIMUM_SEARCH_INTENT_GROUPS,
+                activities,
             )

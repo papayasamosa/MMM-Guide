@@ -3,6 +3,7 @@
 import pandas as pd
 import pytest
 
+from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.application.fx_service import (
     FXUploadValidationError,
     build_manual_fx_rate_set,
@@ -22,6 +23,11 @@ from ancestry_mmm.core.persistence import export_project, import_project
 from ancestry_mmm.core.search_capacity import (
     CandidateASearchFitInputs,
     SearchCandidateASpec,
+)
+from ancestry_mmm.core.search_intent_taxonomy import (
+    NON_BRAND_SEARCH_INTENT_GROUP,
+    SearchIntentGroup,
+    resolve_imported_search_intent_groups,
 )
 
 
@@ -266,6 +272,89 @@ def test_candidate_a_fit_inputs_round_trip_preserves_observed_arrays(tmp_path):
     )
     imported = import_project(bundle)
     assert imported["candidate_a_fit_inputs"] == fit_inputs.to_dict()
+
+
+def test_export_import_restores_custom_search_child_with_governed_parent(
+    tmp_path,
+):
+    """REQ-SEARCH-004: bundle payloads may contain custom children only.
+
+    The clean-project restore boundary must merge repository-approved parents
+    before validating the child's reference, while the separate activity
+    record retains the orthogonal platform axis and its other metadata.
+    """
+
+    custom_group = SearchIntentGroup(
+        search_intent_group_id="non_brand_search_genealogy",
+        search_intent_group_name="Genealogy Non-Brand",
+        brand_class="generic_non_brand",
+        parent_search_intent_group_id="non_brand_search",
+        business_description="Generic genealogy discovery terms.",
+        product_scope="Family History",
+        intent_type="genealogy",
+        owner="Search Governance",
+        approval_status="draft",
+        search_intent_group_version=2,
+    )
+    activity = ActivityDefinition(
+        activity_id="paid-search-genealogy",
+        channel="Paid Search",
+        activity_ownership="paid",
+        model_role="intervention",
+        economic_treatment="paid_media_cost",
+        planning_eligibility="excluded",
+        source="sa360",
+        market="UK",
+        platform="SA360",
+        campaign_type="search",
+        product_advertised="Family History",
+        model_input_column="paid_search_genealogy",
+        search_intent_group_id=custom_group.search_intent_group_id,
+        search_platform="google",
+    )
+    bundle = export_project(
+        tmp_path / "search-child.zip",
+        raw_sources={"joined": pd.DataFrame({"date": ["2026-01-05"]})},
+        transformed_data=None,
+        pipeline_steps=[],
+        model_spec=None,
+        prior_config=None,
+        dna_lag_weeks=4,
+        trace=None,
+        scenarios=[],
+        activity_definitions=[activity.to_dict()],
+        search_intent_groups=[custom_group.to_dict()],
+        search_intent_model_grain=[custom_group.search_intent_group_id],
+    )
+
+    imported = import_project(bundle)
+    restored_groups = resolve_imported_search_intent_groups(
+        imported["search_intent_groups"]
+    )
+    restored_activity = ActivityDefinition.from_dict(
+        imported["activity_definitions"][0]
+    )
+
+    restored_ids = [group.search_intent_group_id for group in restored_groups]
+    assert custom_group.search_intent_group_id in restored_ids
+    assert restored_ids.count("non_brand_search") == 1
+    assert restored_ids.count("brand_search") == 1
+    assert (
+        restored_activity.search_intent_group_id == custom_group.search_intent_group_id
+    )
+    assert restored_activity.search_platform == "google"
+    assert restored_activity.platform == "SA360"
+    assert restored_activity.model_input_column == "paid_search_genealogy"
+    restored_child = next(
+        group
+        for group in restored_groups
+        if group.search_intent_group_id == custom_group.search_intent_group_id
+    )
+    assert restored_child.to_dict() == custom_group.to_dict()
+    assert (
+        restored_child.parent_search_intent_group_id
+        == NON_BRAND_SEARCH_INTENT_GROUP.search_intent_group_id
+    )
 
 
 def test_model_calibration_requires_positive_observed_lift():

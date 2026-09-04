@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, is_dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 import numpy as np
 import pandas as pd
@@ -393,6 +393,29 @@ def _to_jsonable(obj: Any) -> Any:
     if isinstance(obj, (np.integer,)):
         return int(obj)
     return obj
+
+
+def fingerprint_candidate_a_fit_inputs(fit_inputs: Any) -> str:
+    """Fingerprint the complete governed Candidate A fit boundary.
+
+    Candidate A consumes more than the ordinary modelling frame: its
+    persisted Search observations, delivery/capacity/capture arrays, object
+    mappings, specification, row keys, and optional Google Trends anchor all
+    affect the linked posterior.  Use the object's explicit serialisation
+    contract so this identity is independent of object identity, repr(), and
+    dictionary insertion order.
+    """
+
+    if hasattr(fit_inputs, "to_dict"):
+        fit_inputs = fit_inputs.to_dict()
+    elif not isinstance(fit_inputs, Mapping):
+        raise TypeError("Candidate A fit inputs must be a mapping or expose to_dict().")
+    payload = {
+        "schema_version": 1,
+        "candidate_a_fit_inputs": _to_jsonable(fit_inputs),
+    }
+    blob = _canonical_json(payload)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 def fingerprint_posterior(params: Any) -> str:

@@ -3,7 +3,9 @@
 import sys
 import time
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -47,6 +49,7 @@ from ancestry_mmm.application.fit_job_service import (
     FitJobStore,
     FitJobSubmission,
     LocalFitJobBackend,
+    canonical_project_id,
 )
 from ancestry_mmm.core.predict import extract_posterior_params
 from ancestry_mmm.core.market_specific_predict import (
@@ -58,13 +61,21 @@ from ancestry_mmm.core.market_specific_diagnostics import (
 )
 from ancestry_mmm.core.diagnostics import compute_scorecard, prior_predictive_summary
 from ancestry_mmm.core.prefit_run import official_submission_allowed
-from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec
+from ancestry_mmm.core.fingerprint import (
+    fingerprint_candidate_a_fit_inputs,
+    fingerprint_dataframe,
+    fingerprint_model_spec,
+)
 from ancestry_mmm.core.outcomes import (
     outcome_catalogue_fingerprint_payload,
     resolve_outcome_definitions,
 )
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
-from ancestry_mmm.core.activities import activity_fit_fingerprint
+from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
+from ancestry_mmm.core.search_intent_taxonomy import (
+    resolve_imported_search_intent_groups,
+    resolve_search_model_input_columns,
+)
 from ancestry_mmm.core.search_objects import search_object_fit_fingerprint
 from ancestry_mmm.core.search_capacity import (
     CandidateASearchFitInputs,
@@ -144,10 +155,16 @@ render_workspace_note(
     kind="derived",
 )
 
+
 # Durable job state is initialised before the frame gate so a refresh or a
 # browser session loss still exposes active/orphaned/completed jobs.
+def _current_project_display_name() -> str:
+    value = get_state("project_name", "ancestry-fh-uk")
+    return value if isinstance(value, str) and value else "ancestry-fh-uk"
+
+
 _fit_job_backend = LocalFitJobBackend(
-    FitJobStore(project_id=get_state("project_name", "ancestry-fh-uk"))
+    FitJobStore(project_id=canonical_project_id(_current_project_display_name()))
 )
 _fit_job_backend.reconcile_active_jobs()
 
@@ -191,6 +208,11 @@ def _render_durable_fit_jobs() -> None:
 
 
 _render_durable_fit_jobs()
+
+_pending_fit_invalidation_notice = get_state("fit_invalidation_notice")
+if _pending_fit_invalidation_notice:
+    st.warning(_pending_fit_invalidation_notice)
+    set_state("fit_invalidation_notice", None)
 
 frame = get_state("frame")
 spec_dict = get_state("model_spec")
@@ -340,9 +362,94 @@ def _candidate_a_fit_inputs_for_current_frame():
             "The Google Trends Candidate A anchor does not cover the current "
             "model frame; upload one governed extraction for this frame."
         )
-    from dataclasses import replace
-
     return replace(fit_inputs, google_trends_anchor=anchor)
+
+
+def _fit_input_fingerprints_for_current_fit(
+    data_fingerprint: str, *, include_candidate_a: bool
+) -> dict[str, str]:
+    """Return the exact governed input identities required for adoption.
+
+    Candidate A has a linked Search boundary in addition to the ordinary
+    frame and SEO inputs.  Ordinary fits keep the historical identity shape;
+    Candidate A jobs opt into the complete serialized Search/anchor boundary.
+    """
+
+    fingerprints = {
+        "seo": seo_fit_inputs_fingerprint(_seo_fit_inputs_for_current_frame()),
+        "frame": data_fingerprint,
+    }
+    if include_candidate_a:
+        candidate_a_fit_inputs = _candidate_a_fit_inputs_for_current_frame()
+        if candidate_a_fit_inputs is None:
+            raise ValueError(
+                "Candidate A fit adoption requires its governed Search inputs."
+            )
+        fingerprints["candidate_a"] = fingerprint_candidate_a_fit_inputs(
+            candidate_a_fit_inputs
+        )
+    return fingerprints
+
+
+def _canonical_seo_boundary_fingerprint(value) -> str:
+    """Hash SEO groups independently of legacy singular/collection shape."""
+
+    groups = normalise_seo_fit_inputs(value)
+    if not groups:
+        return ""
+    return seo_fit_inputs_fingerprint(SeoModelFitInputsCollection.from_groups(groups))
+
+
+def _fit_spec_and_frame_for_current_search_grain():
+    """Apply the governed Search grain at the engine input boundary."""
+
+    groups = resolve_imported_search_intent_groups(
+        get_state("search_intent_groups") or []
+    )
+    activities = [
+        ActivityDefinition.from_dict(item)
+        for item in (get_state("activity_definitions") or [])
+        if isinstance(item, dict)
+    ]
+    channels = resolve_search_model_input_columns(
+        spec.channels,
+        get_state("search_intent_model_grain") or [],
+        groups,
+        activities,
+    )
+    original_channel_indices = {
+        channel: index for index, channel in enumerate(spec.channels)
+    }
+    original_dna_indices = [
+        int(index)
+        for index in (frame.get("dna_channel_idx") or [])
+        if int(index) < len(spec.channels)
+    ]
+    if not original_dna_indices:
+        original_dna_indices = [
+            original_channel_indices[channel]
+            for channel in spec.dna_channels
+            if channel in original_channel_indices
+        ]
+    fit_spec = replace(
+        spec,
+        channels=list(channels),
+        dna_channels=[
+            spec.channels[index]
+            for index in original_dna_indices
+            if spec.channels[index] in channels
+        ],
+    )
+    channel_indices = [spec.channels.index(channel) for channel in channels]
+    fit_frame = dict(frame)
+    fit_frame["channels"] = list(channels)
+    fit_frame["X_media"] = frame["X_media"][:, channel_indices]
+    fit_frame["dna_channel_idx"] = [
+        channels.index(spec.channels[index])
+        for index in original_dna_indices
+        if spec.channels[index] in channels
+    ]
+    return fit_spec, fit_frame
 
 
 def _calibration_inputs_for_current_fit():
@@ -667,13 +774,16 @@ def _render_seo_visibility_boundary() -> None:
             "spend-based CPA/ROI and optimisation."
         )
         current = get_state("seo_fit_inputs")
+        current_loaded = None
+        current_fingerprint = ""
         if current:
-            loaded = (
+            current_loaded = (
                 current
                 if isinstance(current, (SeoModelFitInputs, SeoModelFitInputsCollection))
                 else SeoModelFitInputsCollection.from_dict(current)
             )
-            groups = normalise_seo_fit_inputs(loaded)
+            current_fingerprint = _canonical_seo_boundary_fingerprint(current_loaded)
+            groups = normalise_seo_fit_inputs(current_loaded)
             observed = int(sum(sum(group.active_mask) for group in groups))
             st.success(
                 f"SEO visibility boundary loaded: {observed} active row(s) across "
@@ -695,7 +805,7 @@ def _render_seo_visibility_boundary() -> None:
                 st.error("Choose a GSC positional-visibility CSV first.")
             else:
                 try:
-                    seo_frame = pd.read_csv(upload.getvalue())
+                    seo_frame = pd.read_csv(BytesIO(upload.getvalue()))
                     base_required = {"market", "week", "impressions"}
                     raw_required = {"dimension_label", "position"}
                     aggregate_required = {"weighted_avg_position"}
@@ -801,8 +911,19 @@ def _render_seo_visibility_boundary() -> None:
                         )
                         total_observations += len(observations)
                     collection = SeoModelFitInputsCollection.from_groups(fit_groups)
-                    set_state("seo_selected_group_ids_text", ",".join(selected_groups))
+                    next_fingerprint = _canonical_seo_boundary_fingerprint(collection)
                     set_state("seo_fit_inputs", collection.to_dict())
+                    if next_fingerprint != current_fingerprint and get_state(
+                        "model_trained"
+                    ):
+                        clear_model_state()
+                        set_state("scenarios", [])
+                        set_state(
+                            "fit_invalidation_notice",
+                            "The SEO visibility boundary changed, so the fitted model, "
+                            "approval, diagnostics, curves, and scenarios were cleared. "
+                            "Prepare the modelling frame and refit before relying on it.",
+                        )
                     st.success(
                         "SEO visibility validated and attached to the next fit. "
                         f"Selected groups: {', '.join(selected_groups)}. "
@@ -818,17 +939,18 @@ _render_seo_visibility_boundary()
 
 def _fit_build_kwargs(build_model_type: str) -> dict:
     """Return the immutable analytical snapshot passed to the worker."""
+    fit_spec, fit_frame = _fit_spec_and_frame_for_current_search_grain()
     prior_config = get_state("prior_config")
     dna_lag_weeks = get_state("dna_lag_weeks", 4)
     direct_dna_outcome_ids = get_state("direct_dna_outcome_ids") or None
     causal_graph = _resolve_causal_graph()
     search_objects = get_state("search_objects") or []
     return {
-        "frame": frame,
-        "model_spec": spec,
+        "frame": fit_frame,
+        "model_spec": fit_spec,
         "model_type": build_model_type,
         "dna_lag_weeks": dna_lag_weeks,
-        "dna_outcome_id": spec.fh_dna_cross_sell_outcome_id,
+        "dna_outcome_id": fit_spec.fh_dna_cross_sell_outcome_id,
         "prior_config": prior_config,
         "direct_dna_outcome_ids": direct_dna_outcome_ids,
         "causal_graph": causal_graph,
@@ -908,13 +1030,14 @@ def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
     every rerun (hashing only, no PyMC model build) purely to detect
     whether the proposal has since changed."""
     causal_graph = _resolve_causal_graph()
+    fit_spec, _fit_frame = _fit_spec_and_frame_for_current_search_grain()
     activity_definitions = get_state("activity_definitions") or []
     search_objects = get_state("search_objects") or []
     coverage_matrix_dict = get_state("variable_coverage_matrix")
     named_event_fit_inputs = _named_event_fit_inputs_for_current_frame()
     calibration_inputs = _calibration_inputs_for_current_fit()
     model_spec_fingerprint = fingerprint_model_spec(
-        spec_dict,
+        fit_spec.to_dict(),
         get_state("prior_config") or {},
         int(get_state("dna_lag_weeks", 4)),
         model_type=fingerprint_model_type,
@@ -938,7 +1061,7 @@ def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
         ),
         search_object_fit_fingerprint=(
             search_object_fit_fingerprint(
-                search_objects, consumed_model_input_columns=spec.channels
+                search_objects, consumed_model_input_columns=fit_spec.channels
             )
             if search_objects
             else None
@@ -1046,9 +1169,10 @@ if st.button("Preview prior predictive (no fitting)"):
     else:
         try:
             with st.spinner("Sampling priors..."):
+                _fit_spec, _fit_frame = _fit_spec_and_frame_for_current_search_grain()
                 preview_result = prior_predictive_summary(
                     preview_model,
-                    frame,
+                    _fit_frame,
                     preview_meta,
                     n_samples=int(preview_n_samples),
                     random_seed=int(preview_seed),
@@ -1196,12 +1320,20 @@ st.caption(
 
 for _completed_job in _fit_job_backend.store.list(statuses={"succeeded"}):
     if _completed_job.adopted_at:
-        continue
-    st.info(
-        f"Fit job `{_completed_job.job_id[:8]}` completed. Review its persisted "
-        "identity before adopting it into the current project."
+        st.info(
+            f"Fit job `{_completed_job.job_id[:8]}` was adopted previously. "
+            "It remains available for fingerprint-verified recovery after a "
+            "session loss."
+        )
+    else:
+        st.info(
+            f"Fit job `{_completed_job.job_id[:8]}` completed. Review its persisted "
+            "identity before adopting it into the current project."
+        )
+    _adoption_label = (
+        "Re-adopt completed fit" if _completed_job.adopted_at else "Adopt completed fit"
     )
-    if st.button("Adopt completed fit", key=f"adopt_fit_job_{_completed_job.job_id}"):
+    if st.button(_adoption_label, key=f"adopt_fit_job_{_completed_job.job_id}"):
         try:
             _current_identity = _proposed_model_fingerprint(model_type)
             _current_data_fp, _current_spec_fp = _current_identity.split(":", 1)
@@ -1209,12 +1341,14 @@ for _completed_job in _fit_job_backend.store.list(statuses={"succeeded"}):
                 _completed_job.job_id,
                 expected_data_fingerprint=_current_data_fp,
                 expected_model_spec_fingerprint=_current_spec_fp,
-                expected_fit_input_fingerprints={
-                    "seo": seo_fit_inputs_fingerprint(
-                        _seo_fit_inputs_for_current_frame()
-                    ),
-                    "frame": _current_data_fp,
-                },
+                expected_fit_input_fingerprints=(
+                    _fit_input_fingerprints_for_current_fit(
+                        _current_data_fp,
+                        include_candidate_a=(
+                            _completed_job.engine == SEARCH_CANDIDATE_A_ENGINE
+                        ),
+                    )
+                ),
             )
             _posterior_params = (
                 extract_market_specific_posterior_params(_trace, _meta)
@@ -1330,13 +1464,16 @@ if (not _official_fit_gate_blocked) and st.button("Build & fit model", type="pri
     _combined_identity = _proposed_model_fingerprint(model_type)
     _data_fingerprint, _model_spec_fingerprint = _combined_identity.split(":", 1)
     try:
+        _project_display_name = _current_project_display_name()
+        _fit_engine = resolve_engine(
+            causal_graph=_resolve_causal_graph(),
+            search_objects=get_state("search_objects") or [],
+        )
         _record = _fit_job_backend.submit(
             FitJobSubmission(
-                project_id=get_state("project_name", "ancestry-fh-uk"),
-                engine=resolve_engine(
-                    causal_graph=_resolve_causal_graph(),
-                    search_objects=get_state("search_objects") or [],
-                ),
+                project_id=canonical_project_id(_project_display_name),
+                project_display_name=_project_display_name,
+                engine=_fit_engine,
                 model_type=model_type,
                 sampler_settings={
                     "draws": int(mcmc_draws),
@@ -1347,12 +1484,10 @@ if (not _official_fit_gate_blocked) and st.button("Build & fit model", type="pri
                 random_seed=int(get_state("mcmc_random_seed", 42)),
                 data_fingerprint=_data_fingerprint,
                 model_spec_fingerprint=_model_spec_fingerprint,
-                fit_input_fingerprints={
-                    "seo": seo_fit_inputs_fingerprint(
-                        _seo_fit_inputs_for_current_frame()
-                    ),
-                    "frame": _data_fingerprint,
-                },
+                fit_input_fingerprints=_fit_input_fingerprints_for_current_fit(
+                    _data_fingerprint,
+                    include_candidate_a=(_fit_engine == SEARCH_CANDIDATE_A_ENGINE),
+                ),
                 project_run_id=str(uuid.uuid4()),
                 build_kwargs=_fit_build_kwargs(model_type),
             )

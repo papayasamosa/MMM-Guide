@@ -304,7 +304,23 @@ try:
 except ValueError as exc:
     st.error(f"Search model grain is invalid: {exc}")
 else:
+    _grain_changed = tuple(_resolved_model_grain) != _saved_model_grain
     set_state("search_intent_model_grain", list(_resolved_model_grain))
+    if _grain_changed and get_state("model_trained"):
+        clear_model_state()
+        set_state("scenarios", [])
+        set_state(
+            "activity_mapping_notice",
+            {
+                "kind": "warning",
+                "message": (
+                    "The Search model/reporting grain changed, so the fitted model, "
+                    "approval, curves, and scenarios were invalidated. Refit before "
+                    "relying on the updated grain."
+                ),
+            },
+        )
+        st.rerun()
     st.caption(
         "The selected grain is explicit and persisted. Deeper-child economics, "
         "planning, and optimisation remain unavailable until that child has its "

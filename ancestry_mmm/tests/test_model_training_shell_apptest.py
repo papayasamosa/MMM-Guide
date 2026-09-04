@@ -8,13 +8,25 @@ changed here - this is presentation only.
 """
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
+from ancestry_mmm.application.fit_job_service import FitJobStore, FitJobSubmission
+from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.core.schema import ModelSpec
+from ancestry_mmm.core.search_intent_taxonomy import (
+    SEARCH_INTENT_GROUP_ID_BRAND,
+    SEARCH_INTENT_GROUP_ID_NON_BRAND,
+)
+from ancestry_mmm.core.seo_visibility import (
+    GscPositionRow,
+    SeoModelFitInputs,
+    compute_weekly_positional_visibility_series,
+)
 
 st.page_link = lambda *a, **k: None
 
@@ -173,3 +185,171 @@ def test_progress_display_never_shows_a_percentage_before_any_real_progress_repo
     assert "min(1.0, progress.completed_steps / progress.total_steps)" in source
     assert "completed_steps" in source
     assert "total_steps" in source
+
+
+def test_adopted_durable_fit_remains_available_for_fingerprint_verified_recovery(
+    monkeypatch, tmp_path
+):
+    """A refreshed session must still expose an already-adopted job."""
+
+    project_name = "UK Production 2026"
+    monkeypatch.setenv("ANCESTRY_MMM_FIT_JOB_ROOT", str(tmp_path))
+    store = FitJobStore(tmp_path, project_name)
+    record = store.create(
+        FitJobSubmission(
+            project_id=project_name,
+            project_display_name=project_name,
+            engine="pymc",
+            model_type="shared",
+            sampler_settings={"draws": 4, "tune": 2, "chains": 1},
+            random_seed=42,
+            data_fingerprint="data-fp",
+            model_spec_fingerprint="spec-fp",
+            fit_input_fingerprints={"seo": "seo-fp", "frame": "frame-fp"},
+            build_kwargs={"frame": {"values": [1]}, "model_spec": {"x": 1}},
+        )
+    )
+    store.transition(record.job_id, "running")
+    store.transition(record.job_id, "succeeded")
+    store.mark_adopted(record.job_id, "old-session-run")
+
+    at = _run_at(project_name=project_name)
+
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any(button.label == "Re-adopt completed fit" for button in at.button)
+
+
+def test_changed_seo_boundary_clears_adopted_fit_and_downstream_evidence():
+    """Replacing SEO observations cannot leave a stale posterior approved."""
+
+    weeks = [str(pd.Timestamp(week).date()) for week in _frame()["dates"]]
+    existing_seo = SeoModelFitInputs.from_observations(
+        compute_weekly_positional_visibility_series(
+            {("UK", week): [GscPositionRow("ancestry", 1.0, 100.0)] for week in weeks}
+        ),
+        model_markets=["UK"] * len(weeks),
+        model_weeks=weeks,
+    )
+    at = _run_at(
+        model_trained=True,
+        model_type="shared",
+        model_run_id="old-run",
+        trace=object(),
+        posterior_params={"old": 1},
+        model_approval={"approved_by": "old reviewer"},
+        seo_fit_inputs=existing_seo.to_dict(),
+    )
+    uploader = next(
+        item for item in at.file_uploader if "GSC CSV" in (item.label or "")
+    )
+    rows = [
+        "market,week,impressions,dimension_label,position",
+        *(
+            f"UK,{pd.Timestamp(week).date()},100,ancestry,{1 if index % 2 == 0 else 2}"
+            for index, week in enumerate(_frame()["dates"])
+        ),
+    ]
+    uploader.set_value(("gsc.csv", "\n".join(rows).encode(), "text/csv")).run()
+    next(
+        button
+        for button in at.button
+        if button.label == "Validate and load SEO visibility"
+    ).click().run()
+
+    assert not at.exception, f"SEO upload raised: {at.exception}"
+    assert "seo_fit_inputs" in at.session_state, [error.value for error in at.error]
+    assert at.session_state["model_trained"] is False
+    assert at.session_state["trace"] is None
+    assert at.session_state["posterior_params"] is None
+    assert at.session_state["model_approval"] is None
+    assert any(
+        "SEO visibility boundary changed" in (warning.value or "")
+        for warning in at.warning
+    )
+
+
+def test_search_model_grain_reaches_the_proposed_model_builder(monkeypatch):
+    """The selected Search grain changes the physical fit input boundary."""
+
+    base = _frame()
+    values = np.column_stack((base["X_media"], base["X_media"][:, :1] * 0.5))
+    base["X_media"] = values
+    base["channels"] = ["PaidBrand", "PaidNonBrand", "TV"]
+    base["df"] = base["df"].copy()
+    base["df"]["PaidBrand"] = values[:, 0]
+    base["df"]["PaidNonBrand"] = values[:, 1]
+    base["df"]["TV"] = values[:, 2]
+    spec = ModelSpec(
+        date_col="date",
+        market_col="market",
+        markets=["UK"],
+        segment_outcomes={"New": OUTCOME_ID},
+        channels=base["channels"],
+    ).to_dict()
+    activities = [
+        ActivityDefinition(
+            activity_id="paid-brand",
+            channel="PaidBrand",
+            activity_ownership="paid",
+            model_role="intervention",
+            economic_treatment="paid_media_cost",
+            planning_eligibility="excluded",
+            source="test",
+            model_input_column="PaidBrand",
+            search_intent_group_id=SEARCH_INTENT_GROUP_ID_BRAND,
+            search_platform="google",
+        ).to_dict(),
+        ActivityDefinition(
+            activity_id="paid-non-brand",
+            channel="PaidNonBrand",
+            activity_ownership="paid",
+            model_role="intervention",
+            economic_treatment="paid_media_cost",
+            planning_eligibility="excluded",
+            source="test",
+            model_input_column="PaidNonBrand",
+            search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+            search_platform="google",
+        ).to_dict(),
+    ]
+    captured = {}
+
+    def fake_build_model_for_spec(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(model=object(), meta={})
+
+    import ancestry_mmm.application.model_fit_service as fit_service
+    import ancestry_mmm.core.diagnostics as diagnostics
+
+    monkeypatch.setattr(fit_service, "build_model_for_spec", fake_build_model_for_spec)
+    monkeypatch.setattr(
+        diagnostics,
+        "prior_predictive_summary",
+        lambda *args, **kwargs: {
+            "n_samples": kwargs["n_samples"],
+            "random_seed": kwargs["random_seed"],
+            "rows": [],
+            "warnings": [],
+        },
+    )
+
+    at = _run_at(
+        frame=base,
+        model_spec=spec,
+        activity_definitions=activities,
+        search_intent_model_grain=[SEARCH_INTENT_GROUP_ID_BRAND],
+    )
+    at = (
+        next(
+            button
+            for button in at.button
+            if button.label == "Preview prior predictive (no fitting)"
+        )
+        .click()
+        .run()
+    )
+
+    assert not at.exception, f"preview raised: {at.exception}"
+    assert captured["model_spec"].channels == ["PaidBrand", "TV"]
+    assert captured["frame"]["channels"] == ["PaidBrand", "TV"]
+    assert captured["frame"]["X_media"].shape == (len(base["X_media"]), 2)

@@ -244,6 +244,32 @@ def governed_search_intent_groups(
     return tuple(sorted(by_id.values(), key=lambda group: group.search_intent_group_id))
 
 
+def resolve_imported_search_intent_groups(
+    values: Sequence[SearchIntentGroup | Mapping[str, Any]],
+) -> Tuple[SearchIntentGroup, ...]:
+    """Restore imported custom groups on top of repository-approved parents.
+
+    Project bundles intentionally persist custom children only.  The approved
+    Brand and Non-Brand parents are repository authority and are merged before
+    parent/child validation, so a valid child is not quarantined merely
+    because its approved parent was omitted from the bundle.
+    """
+
+    imported: list[SearchIntentGroup] = []
+    for value in values:
+        if isinstance(value, SearchIntentGroup):
+            imported.append(value)
+        elif isinstance(value, Mapping):
+            imported.append(SearchIntentGroup.from_dict(value))
+    custom_groups = tuple(
+        group
+        for group in imported
+        if group.search_intent_group_id
+        not in {SEARCH_INTENT_GROUP_ID_BRAND, SEARCH_INTENT_GROUP_ID_NON_BRAND}
+    )
+    return governed_search_intent_groups(custom_groups)
+
+
 def resolve_search_intent_model_grain(
     requested_group_ids: Sequence[str],
     groups: Sequence[SearchIntentGroup],
@@ -279,6 +305,72 @@ def resolve_search_intent_model_grain(
             f"together: {', '.join(overlap)}"
         )
     return requested
+
+
+def resolve_search_model_input_columns(
+    model_input_columns: Sequence[str],
+    requested_group_ids: Sequence[str],
+    groups: Sequence[SearchIntentGroup],
+    activity_definitions: Sequence[Any] = (),
+) -> Tuple[str, ...]:
+    """Resolve fitted model inputs for one explicit Search grain.
+
+    ``ModelSpec.channels`` is the engine's physical input boundary, while
+    ``ActivityDefinition.search_intent_group_id`` is the governed Search
+    taxonomy reference.  This adapter applies the latter to the former before
+    model construction.  A physical input shared by selected and unselected
+    Search groups is rejected because the current engine boundary cannot
+    represent a market-specific split of one column without double counting.
+    Non-Search or unclassified inputs remain in the fit.
+    """
+
+    catalogue = governed_search_intent_groups(groups)
+    selected = set(resolve_search_intent_model_grain(requested_group_ids, catalogue))
+    known_ids = {group.search_intent_group_id for group in catalogue}
+    input_groups: Dict[str, set[str]] = {}
+    for activity in activity_definitions:
+        if isinstance(activity, Mapping):
+            input_column = str(
+                activity.get("model_input_column") or activity.get("channel") or ""
+            )
+            group_id = activity.get("search_intent_group_id")
+        else:
+            input_column = str(
+                getattr(activity, "resolved_model_input_column", "") or ""
+            )
+            group_id = getattr(activity, "search_intent_group_id", None)
+        if not input_column or input_column not in model_input_columns or not group_id:
+            continue
+        group_id = str(group_id)
+        if group_id not in known_ids:
+            raise ValueError(
+                f"Activity input '{input_column}' references unknown Search intent "
+                f"group '{group_id}'."
+            )
+        input_groups.setdefault(input_column, set()).add(group_id)
+
+    resolved: list[str] = []
+    for column in model_input_columns:
+        groups_for_input = input_groups.get(column)
+        if not groups_for_input:
+            resolved.append(column)
+            continue
+        selected_groups = groups_for_input & selected
+        unselected_groups = groups_for_input - selected
+        if selected_groups and unselected_groups:
+            raise ValueError(
+                f"Model input '{column}' is mapped to both selected Search grain "
+                f"{sorted(selected_groups)} and unselected grain "
+                f"{sorted(unselected_groups)}; split the physical inputs before fitting."
+            )
+        if selected_groups:
+            resolved.append(column)
+    if not resolved:
+        raise ValueError(
+            "The selected Search model grain does not resolve to any model input "
+            "column."
+        )
+    return tuple(resolved)
 
 
 # ---------------------------------------------------------------------------

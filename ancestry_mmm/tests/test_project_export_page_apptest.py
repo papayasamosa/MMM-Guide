@@ -32,6 +32,7 @@ import pandas as pd
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
+from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.core.curve_artifact import (
     CurveArtifactMetadata,
     compute_curve_artifact_fingerprints,
@@ -43,6 +44,7 @@ from ancestry_mmm.core.persistence import (
     import_project,
     resolve_imported_causal_graphs,
 )
+from ancestry_mmm.core.search_intent_taxonomy import SearchIntentGroup
 from ancestry_mmm.tests.support.lifecycle_fixture import (
     UNRELATED_ARTIFACT_ID,
     build_lifecycle_project,
@@ -233,6 +235,90 @@ def test_import_bundle_transactionally_replaces_the_destination_artifact_store(
     assert UNRELATED_ARTIFACT_ID not in replaced_ids
     assert replaced_ids == {"lifecycle-model-input", "lifecycle-monetary"}
     assert any("Restored 2 Planning Curve(s)" in (s.value or "") for s in at.success)
+
+
+def test_import_restores_custom_search_child_under_approved_parent(
+    monkeypatch, tmp_path
+):
+    """REQ-SEARCH-004: exercise the real clean-session import path."""
+
+    export_root = tmp_path / "exports"
+    artifact_root = tmp_path / "artifact-root"
+
+    import ancestry_mmm.utils as utils_pkg
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(utils_pkg, "PROJECT_EXPORT_ROOT", export_root)
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", artifact_root)
+
+    child = SearchIntentGroup(
+        search_intent_group_id="non_brand_search_genealogy",
+        search_intent_group_name="Genealogy Non-Brand",
+        brand_class="generic_non_brand",
+        parent_search_intent_group_id="non_brand_search",
+        business_description="Generic genealogy discovery terms.",
+        product_scope="Family History",
+        intent_type="genealogy",
+        owner="Search Governance",
+        search_intent_group_version=2,
+    )
+    activity = ActivityDefinition(
+        activity_id="paid-search-genealogy",
+        channel="Paid Search",
+        activity_ownership="paid",
+        model_role="intervention",
+        economic_treatment="paid_media_cost",
+        planning_eligibility="excluded",
+        source="sa360",
+        market="UK",
+        platform="SA360",
+        campaign_type="search",
+        product_advertised="Family History",
+        model_input_column="paid_search_genealogy",
+        search_intent_group_id=child.search_intent_group_id,
+        search_platform="google",
+    )
+    bundle_path = export_project(
+        tmp_path / "custom-search-child.zip",
+        raw_sources={},
+        transformed_data=None,
+        pipeline_steps=[],
+        model_spec=None,
+        prior_config=None,
+        dna_lag_weeks=0,
+        trace=None,
+        scenarios=[],
+        activity_definitions=[activity.to_dict()],
+        search_intent_groups=[child.to_dict()],
+        search_intent_model_grain=[child.search_intent_group_id],
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.session_state["project_name"] = "UK Production 2026"
+    at.file_uploader[0].set_value(
+        (bundle_path.name, bundle_path.read_bytes(), "application/zip")
+    ).run()
+    next(
+        button for button in at.button if button.label == "Import bundle"
+    ).click().run()
+    assert not at.exception, f"import click raised: {at.exception}"
+
+    groups = at.session_state["search_intent_groups"]
+    group_ids = [group["search_intent_group_id"] for group in groups]
+    assert group_ids.count("non_brand_search") == 1
+    assert group_ids.count("brand_search") == 1
+    assert child.search_intent_group_id in group_ids
+    assert not any(
+        "Search intent taxonomy was quarantined" in (w.value or "") for w in at.warning
+    )
+    assert at.session_state["activity_definitions"][0]["search_platform"] == "google"
+    assert at.session_state["activity_definitions"][0]["platform"] == "SA360"
+    assert (
+        at.session_state["activity_definitions"][0]["model_input_column"]
+        == "paid_search_genealogy"
+    )
 
 
 def test_import_clears_stale_cached_optimiser_results(monkeypatch, tmp_path):

@@ -128,10 +128,8 @@ from ancestry_mmm.core.search_objects import (
     search_object_versions_for_export,
 )
 from ancestry_mmm.core.search_intent_taxonomy import (
-    SearchIntentGroup,
-    governed_search_intent_groups,
+    resolve_imported_search_intent_groups,
     resolve_search_intent_model_grain,
-    validate_search_intent_group_catalogue,
 )
 from ancestry_mmm.core.coverage import (
     VariableCoverageMatrix,
@@ -1267,23 +1265,9 @@ if uploaded_zip is not None and st.button("Import bundle"):
         # module; malformed children are quarantined and named.
         _raw_search_intent_groups = imported.get("search_intent_groups") or []
         try:
-            _persisted_search_intent_groups = tuple(
-                SearchIntentGroup.from_dict(item)
-                for item in _raw_search_intent_groups
-                if isinstance(item, dict)
+            _governed_groups = resolve_imported_search_intent_groups(
+                _raw_search_intent_groups
             )
-            _taxonomy_issues = validate_search_intent_group_catalogue(
-                _persisted_search_intent_groups
-            )
-            if _taxonomy_issues:
-                raise ValueError("; ".join(_taxonomy_issues))
-            _custom_search_groups = tuple(
-                group
-                for group in _persisted_search_intent_groups
-                if group.search_intent_group_id
-                not in {"brand_search", "non_brand_search"}
-            )
-            _governed_groups = governed_search_intent_groups(_custom_search_groups)
             set_state(
                 "search_intent_groups",
                 [group.to_dict() for group in _governed_groups],

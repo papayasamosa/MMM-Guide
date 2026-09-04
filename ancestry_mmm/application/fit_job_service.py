@@ -20,10 +20,21 @@ import re
 import subprocess
 import sys
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, cast
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    cast,
+)
 
 
 FIT_JOB_SCHEMA_VERSION = 1
@@ -48,6 +59,19 @@ _ALLOWED_TRANSITIONS = {
     "orphaned": set(),
 }
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
+
+
+def canonical_project_id(project_name: str) -> str:
+    """Return the stable filesystem/job identifier for a display name.
+
+    Project names are user-facing values and may contain whitespace or
+    punctuation.  Durable storage uses this one canonical representation;
+    the original value can still be retained on the job record for display.
+    """
+
+    if not isinstance(project_name, str):
+        raise TypeError("project_name must be a string")
+    return _SAFE_NAME.sub("_", project_name).strip("._") or "default"
 
 
 def utc_now() -> str:
@@ -130,6 +154,7 @@ class FitJobRecord:
     cancelled_at: Optional[str] = None
     adopted_at: Optional[str] = None
     adopted_model_run_id: Optional[str] = None
+    project_display_name: str = ""
 
     def __post_init__(self) -> None:
         if self.status not in JOB_STATES:
@@ -166,6 +191,7 @@ class FitJobSubmission:
     fit_input_fingerprints: Mapping[str, str]
     build_kwargs: Mapping[str, Any]
     project_run_id: Optional[str] = None
+    project_display_name: Optional[str] = None
 
 
 class FitJobStore:
@@ -176,7 +202,7 @@ class FitJobStore:
         self.root = Path(
             root or configured_root or Path(__file__).resolve().parents[1] / ".fit_jobs"
         )
-        self.project_id = _SAFE_NAME.sub("_", project_id).strip("._") or "default"
+        self.project_id = canonical_project_id(project_id)
         self.project_root = self.root / self.project_id
         self.project_root.mkdir(parents=True, exist_ok=True)
 
@@ -193,6 +219,52 @@ class FitJobStore:
 
     def _record_path(self, job_id: str) -> Path:
         return self.job_dir(job_id) / "job.json"
+
+    @contextmanager
+    def _record_lock(self, job_id: str) -> Iterator[None]:
+        """Lock one job record across the parent and worker processes.
+
+        JSON replacement is atomic, but a read/modify/write sequence is not.
+        The worker and the launcher therefore use a small per-job advisory
+        lock whenever they update the persisted record.  The lock file is
+        deliberately separate from ``job.json`` so replacing the JSON cannot
+        invalidate the lock held by another process.
+        """
+
+        lock_path = self.job_dir(job_id) / ".record.lock"
+        with lock_path.open("a+b") as handle:
+            if lock_path.stat().st_size == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                getattr(msvcrt, "locking")(
+                    handle.fileno(), getattr(msvcrt, "LK_LOCK"), 1
+                )
+            else:
+                import fcntl
+
+                getattr(fcntl, "flock")(handle.fileno(), getattr(fcntl, "LOCK_EX"))
+            try:
+                yield
+            finally:
+                if os.name == "nt":
+                    import msvcrt
+
+                    handle.seek(0)
+                    getattr(msvcrt, "locking")(
+                        handle.fileno(), getattr(msvcrt, "LK_UNLCK"), 1
+                    )
+                else:
+                    import fcntl
+
+                    getattr(fcntl, "flock")(handle.fileno(), getattr(fcntl, "LOCK_UN"))
+
+    def _save_unlocked(self, record: FitJobRecord) -> FitJobRecord:
+        _atomic_json(self._record_path(record.job_id), record.to_dict())
+        return record
 
     def get(self, job_id: str) -> FitJobRecord:
         path = self._record_path(job_id)
@@ -215,7 +287,7 @@ class FitJobStore:
         return sorted(records, key=lambda item: item.created_at, reverse=True)
 
     def create(self, submission: FitJobSubmission) -> FitJobRecord:
-        if submission.project_id != self.project_id:
+        if canonical_project_id(submission.project_id) != self.project_id:
             raise ValueError("FitJobStore project_id does not match submission.")
         job_id = str(uuid.uuid4())
         directory = self.job_dir(job_id)
@@ -250,6 +322,8 @@ class FitJobStore:
                 )
                 * int(submission.sampler_settings.get("chains", 1)),
             ),
+            project_display_name=submission.project_display_name
+            or submission.project_id,
         )
         _atomic_json(directory / "job.json", record.to_dict())
         _atomic_json(
@@ -264,46 +338,73 @@ class FitJobStore:
         return record
 
     def save(self, record: FitJobRecord) -> FitJobRecord:
-        _atomic_json(self._record_path(record.job_id), record.to_dict())
-        return record
+        with self._record_lock(record.job_id):
+            return self._save_unlocked(record)
 
     def transition(
         self, job_id: str, status: str, *, message: str = ""
     ) -> FitJobRecord:
         if status not in JOB_STATES:
             raise ValueError(f"Unknown fit-job state: {status}")
-        record = self.get(job_id)
-        if (
-            status != record.status
-            and status not in _ALLOWED_TRANSITIONS[record.status]
-        ):
-            raise ValueError(f"Invalid fit-job transition {record.status} -> {status}.")
-        now = utc_now()
-        record.status = status
-        if status == "running" and record.started_at is None:
-            record.started_at = now
-            record.progress.started_at = now
-        if status in TERMINAL_JOB_STATES:
-            record.finished_at = now
-        if status == "cancel_requested":
-            record.cancellation_requested_at = record.cancellation_requested_at or now
-        if status == "cancelled":
-            record.cancelled_at = now
-        if message:
-            record.progress.message = message
-            if status in {"failed", "orphaned"}:
-                record.error_summary = message
-        record.progress.last_updated_at = now
-        return self.save(record)
+        with self._record_lock(job_id):
+            record = self.get(job_id)
+            if (
+                status != record.status
+                and status not in _ALLOWED_TRANSITIONS[record.status]
+            ):
+                raise ValueError(
+                    f"Invalid fit-job transition {record.status} -> {status}."
+                )
+            now = utc_now()
+            record.status = status
+            if status == "running" and record.started_at is None:
+                record.started_at = now
+                record.progress.started_at = now
+            if status in TERMINAL_JOB_STATES:
+                record.finished_at = now
+            if status == "cancel_requested":
+                record.cancellation_requested_at = (
+                    record.cancellation_requested_at or now
+                )
+            if status == "cancelled":
+                record.cancelled_at = now
+            if message:
+                record.progress.message = message
+                if status in {"failed", "orphaned"}:
+                    record.error_summary = message
+            record.progress.last_updated_at = now
+            return self._save_unlocked(record)
 
     def update_progress(self, job_id: str, **updates: Any) -> FitJobRecord:
-        record = self.get(job_id)
-        for key, value in updates.items():
-            if key not in FitJobProgress.__dataclass_fields__:
-                raise ValueError(f"Unknown fit progress field: {key}")
-            setattr(record.progress, key, value)
-        record.progress.last_updated_at = utc_now()
-        return self.save(record)
+        with self._record_lock(job_id):
+            record = self.get(job_id)
+            for key, value in updates.items():
+                if key not in FitJobProgress.__dataclass_fields__:
+                    raise ValueError(f"Unknown fit progress field: {key}")
+                setattr(record.progress, key, value)
+            record.progress.last_updated_at = utc_now()
+            return self._save_unlocked(record)
+
+    def update_process_metadata(
+        self,
+        job_id: str,
+        *,
+        pid: int,
+        process_start_time: Optional[str] = None,
+    ) -> FitJobRecord:
+        """Record launcher metadata without overwriting worker state.
+
+        The record is reloaded while holding the same lock used by worker
+        transitions and progress updates.  This makes the post-launch PID
+        write a targeted update of the latest record rather than a save of the
+        queued object returned by ``create``.
+        """
+
+        with self._record_lock(job_id):
+            record = self.get(job_id)
+            record.pid = int(pid)
+            record.process_start_time = process_start_time or utc_now()
+            return self._save_unlocked(record)
 
     def append_log(self, job_id: str, message: str) -> None:
         record = self.get(job_id)
@@ -315,14 +416,22 @@ class FitJobStore:
     def request_cancel(
         self, job_id: str, reason: str = "Cancellation requested by analyst."
     ) -> FitJobRecord:
-        record = self.get(job_id)
-        if record.status not in {"queued", "running", "cancel_requested"}:
-            return record
-        marker = self.job_dir(job_id) / "cancel.request"
-        marker.write_text(reason, encoding="utf-8")
-        record.cancellation_reason = reason
-        self.save(record)
-        return self.transition(job_id, "cancel_requested", message=reason)
+        with self._record_lock(job_id):
+            record = self.get(job_id)
+            if record.status not in {"queued", "running", "cancel_requested"}:
+                return record
+            marker = self.job_dir(job_id) / "cancel.request"
+            marker.write_text(reason, encoding="utf-8")
+            now = utc_now()
+            record.cancellation_reason = reason
+            if record.status != "cancel_requested":
+                record.status = "cancel_requested"
+                record.cancellation_requested_at = (
+                    record.cancellation_requested_at or now
+                )
+            record.progress.message = reason
+            record.progress.last_updated_at = now
+            return self._save_unlocked(record)
 
     def cancellation_requested(self, job_id: str) -> bool:
         return (self.job_dir(job_id) / "cancel.request").exists()
@@ -333,12 +442,13 @@ class FitJobStore:
             return cast(dict[str, Any], pickle.load(handle))
 
     def mark_adopted(self, job_id: str, model_run_id: str) -> FitJobRecord:
-        record = self.get(job_id)
-        if record.status != "succeeded":
-            raise ValueError("Only a succeeded fit job can be adopted.")
-        record.adopted_at = utc_now()
-        record.adopted_model_run_id = model_run_id
-        return self.save(record)
+        with self._record_lock(job_id):
+            record = self.get(job_id)
+            if record.status != "succeeded":
+                raise ValueError("Only a succeeded fit job can be adopted.")
+            record.adopted_at = utc_now()
+            record.adopted_model_run_id = model_run_id
+            return self._save_unlocked(record)
 
     def reconcile(self) -> List[FitJobRecord]:
         changed: List[FitJobRecord] = []
@@ -418,9 +528,11 @@ class LocalFitJobBackend:
             raise
         finally:
             log_handle.close()
-        record.pid = int(process.pid)
-        record.process_start_time = utc_now()
-        return self.store.save(record)
+        return self.store.update_process_metadata(
+            record.job_id,
+            pid=int(process.pid),
+            process_start_time=utc_now(),
+        )
 
     def reconcile_active_jobs(self) -> list[FitJobRecord]:
         return self.store.reconcile()
@@ -521,6 +633,7 @@ __all__ = [
     "FitJobSubmission",
     "JOB_STATES",
     "LocalFitJobBackend",
+    "canonical_project_id",
     "process_is_alive",
     "utc_now",
 ]
