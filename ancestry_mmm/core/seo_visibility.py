@@ -706,6 +706,8 @@ def seo_fit_inputs_to_dict(
 def seo_fit_inputs_fingerprint(
     value: Optional[SeoModelFitInputs | SeoModelFitInputsCollection],
 ) -> str:
+    if value is None or (isinstance(value, Mapping) and not value):
+        return ""
     payload = seo_fit_inputs_to_dict(value)
     if not payload:
         return ""

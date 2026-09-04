@@ -17,7 +17,15 @@ from ancestry_mmm.core.seo_visibility import (
     SeoVisibilityMetricDefinition,
     compute_weekly_positional_visibility,
     compute_weekly_positional_visibility_series,
+    seo_fit_inputs_fingerprint,
 )
+
+
+def test_empty_seo_configuration_has_no_fingerprint():
+    """Identity callers may pass the session state's empty mapping."""
+
+    assert seo_fit_inputs_fingerprint(None) == ""
+    assert seo_fit_inputs_fingerprint({}) == ""
 
 
 class TestGscPositionRow:
