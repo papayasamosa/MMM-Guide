@@ -1092,15 +1092,13 @@ with st.expander(
             "Approved on", value=_search_text(detail.approved_at)
         )
 
-        with st.expander("Technical details", expanded=False):
-            source = st.text_input(
-                "Source / provenance", value=_search_text(detail.source)
-            )
-            grain = st.text_input("Data grain", value=_search_text(detail.grain))
-            st.caption(
-                f"Current saved version: {detail.search_object_version}. "
-                "Saving a change creates a new version and retains the previous record."
-            )
+        st.markdown("#### Technical details")
+        source = st.text_input("Source / provenance", value=_search_text(detail.source))
+        grain = st.text_input("Data grain", value=_search_text(detail.grain))
+        st.caption(
+            f"Current saved version: {detail.search_object_version}. "
+            "Saving a change creates a new version and retains the previous record."
+        )
 
         save_search = st.form_submit_button("Save Search setup", type="primary")
 
