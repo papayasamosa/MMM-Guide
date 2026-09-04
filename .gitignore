@@ -71,6 +71,7 @@ htmlcov/
 
 # Model outputs
 *.pkl
+ancestry_mmm/.fit_jobs/
 *.joblib
 traces/
 

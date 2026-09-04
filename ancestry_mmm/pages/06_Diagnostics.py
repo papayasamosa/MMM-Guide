@@ -133,7 +133,10 @@ from ancestry_mmm.core.search_capacity import (
     CandidateASearchFitInputs,
 )
 from ancestry_mmm.core.google_trends_anchor import GoogleTrendsAnchorFitInputs
-from ancestry_mmm.core.seo_visibility import SeoModelFitInputs
+from ancestry_mmm.core.seo_visibility import (
+    SeoModelFitInputsCollection,
+    normalise_seo_fit_inputs,
+)
 from ancestry_mmm.core.predict import extract_posterior_params, predict_mu
 from ancestry_mmm.core.market_specific_predict import (
     extract_market_specific_posterior_params,
@@ -307,18 +310,19 @@ def _seo_fit_inputs_for_rebuild():
     payload = get_state("seo_fit_inputs")
     if payload is None:
         if getattr(meta, "seo_fit_inputs_at_fit", None):
-            return SeoModelFitInputs.from_dict(meta.seo_fit_inputs_at_fit)
+            payload = meta.seo_fit_inputs_at_fit
+        else:
+            return None
+    fit_groups = normalise_seo_fit_inputs(payload)
+    if not fit_groups:
         return None
-    fit_inputs = (
-        payload
-        if isinstance(payload, SeoModelFitInputs)
-        else SeoModelFitInputs.from_dict(payload)
-    )
-    fit_inputs.validate_frame(
-        markets=[frame["markets"][int(index)] for index in frame["market_idx"]],
-        weeks=[str(pd.Timestamp(value).date()) for value in frame["dates"]],
-    )
-    return fit_inputs
+    markets = [frame["markets"][int(index)] for index in frame["market_idx"]]
+    weeks = [str(pd.Timestamp(value).date()) for value in frame["dates"]]
+    for fit_inputs in fit_groups:
+        fit_inputs.validate_frame(markets=markets, weeks=weeks)
+    if len(fit_groups) == 1:
+        return fit_groups[0]
+    return SeoModelFitInputsCollection.from_groups(fit_groups)
 
 
 def _calibration_inputs_for_rebuild():
@@ -1590,27 +1594,32 @@ if scorecard:
             )
         else:
             try:
-                seo_fit_inputs = SeoModelFitInputs.from_dict(seo_payload)
+                seo_fit_inputs = normalise_seo_fit_inputs(seo_payload)
             except (TypeError, ValueError, KeyError) as exc:
                 st.error(f"Persisted SEO fit metadata is invalid: {exc}")
             else:
                 seo_rows = []
-                for market, window in sorted(seo_fit_inputs.window_by_market.items()):
-                    market_mask = np.asarray(
-                        [value == market for value in seo_fit_inputs.model_markets],
-                        dtype=bool,
-                    )
-                    active_mask = np.asarray(seo_fit_inputs.active_mask, dtype=float)
-                    seo_rows.append(
-                        {
-                            "market": market,
-                            "valid_start": window.start_week,
-                            "valid_end": window.end_week,
-                            "weeks_observed": window.weeks_observed,
-                            "model_weeks": int(market_mask.sum()),
-                            "active_weeks": int(np.sum(active_mask[market_mask] > 0)),
-                        }
-                    )
+                for group in seo_fit_inputs:
+                    for market, window in sorted(group.window_by_market.items()):
+                        market_mask = np.asarray(
+                            [value == market for value in group.model_markets],
+                            dtype=bool,
+                        )
+                        active_mask = np.asarray(group.active_mask, dtype=float)
+                        seo_rows.append(
+                            {
+                                "seo_group_id": group.seo_group_id,
+                                "seo_group_name": group.seo_group_name,
+                                "market": market,
+                                "valid_start": window.start_week,
+                                "valid_end": window.end_week,
+                                "weeks_observed": window.weeks_observed,
+                                "model_weeks": int(market_mask.sum()),
+                                "active_weeks": int(
+                                    np.sum(active_mask[market_mask] > 0)
+                                ),
+                            }
+                        )
                 if seo_rows:
                     st.dataframe(
                         pd.DataFrame(seo_rows),
@@ -1618,18 +1627,22 @@ if scorecard:
                         column_config=dataframe_column_config(pd.DataFrame(seo_rows)),
                     )
                 st.write(
-                    {
-                        "metric": seo_fit_inputs.metric_definition.metric_name,
-                        "pathway": seo_fit_inputs.pathway_id,
-                        "standardization_center": seo_fit_inputs.standardization_center,
-                        "standardization_scale": seo_fit_inputs.standardization_scale,
-                        "active_rows": int(
-                            np.sum(np.asarray(seo_fit_inputs.active_mask) > 0)
-                        ),
-                        "inactive_rows": int(
-                            np.sum(np.asarray(seo_fit_inputs.active_mask) == 0)
-                        ),
-                    }
+                    [
+                        {
+                            "seo_group_id": group.seo_group_id,
+                            "metric": group.metric_definition.metric_name,
+                            "pathway": group.pathway_id,
+                            "standardization_center": group.standardization_center,
+                            "standardization_scale": group.standardization_scale,
+                            "active_rows": int(
+                                np.sum(np.asarray(group.active_mask) > 0)
+                            ),
+                            "inactive_rows": int(
+                                np.sum(np.asarray(group.active_mask) == 0)
+                            ),
+                        }
+                        for group in seo_fit_inputs
+                    ]
                 )
                 if use_gate["blocking_reasons"]:
                     for reason in use_gate["blocking_reasons"]:
@@ -1934,6 +1947,11 @@ elif _policy_config_error is not None:
     )
 else:
     with st.form("approve_model_form"):
+        st.caption(
+            "This approval is owned by the analyst or model technical approver. "
+            "Wider stakeholder review may be recorded in Notes, but it is optional "
+            "metadata and never a substitute for the technical approval."
+        )
         approved_by = st.text_input("Approved by (name) *")
         diagnostics_accepted = st.multiselect(
             "Diagnostics reviewed before approving",

@@ -8853,3 +8853,16 @@ an explicit governed forward value mapping. The application optimiser now
 defaults to sequential weekly T1/O1 evaluation; steady-state is labelled
 diagnostic/legacy, while profit optimisation remains unavailable without an
 approved COGS/margin definition. PathMC remains deferred.
+
+## 2026-09-04 current UK production KPI and durable-fit implementation brief
+
+The current UK production authority is now recorded as `REQ-NBT-004`: the
+supplied canonical Net Bill Through outcomes for Family History New, DNA
+cross-sell, and Winback. GSA remains a distinct secondary/context measure;
+there is no NBT/GSA reconstruction or conversion, and the historical-test
+14-day completeness rule is not a production default. Production maturity and
+completeness are governed by the supplied source metadata.
+
+This decision is intentionally scoped to the current UK production onboarding
+path. It does not replace the versioned outcome-definition registry or make NBT
+a global default for unrelated projects.

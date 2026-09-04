@@ -165,17 +165,11 @@ def test_completed_fit_card_reflects_real_approval_state():
 
 def test_progress_display_never_shows_a_percentage_before_any_real_progress_report():
     """Root brief rule: no fake progress animation implying sampling
-    progress the backend cannot genuinely report. The page's progress bar
-    is only ever updated from progress_state['done']/['total'], which
-    fit_model's real progress_callback populates - confirmed here by static
-    inspection that no other progress_bar.progress(...) call feeds it a
-    time-based or otherwise fabricated fraction."""
+    progress the backend cannot genuinely report. The page's durable-job
+    progress bar is derived only from persisted completed/total steps; the
+    worker populates those fields from fit_model's real progress callback."""
     source = PAGE.read_text(encoding="utf-8")
-    assert "progress_bar.progress(frac)" in source
-    assert (
-        'frac = min(1.0, progress_state["done"] / max(progress_state["total"], 1))'
-        in source
-    )
-    # No second, independent progress source (e.g. a hardcoded sleep-based
-    # counter) exists anywhere else in the file.
-    assert source.count("progress_bar.progress(") == 2  # 0.0 init + real frac update
+    assert "st.progress(fraction)" in source
+    assert "min(1.0, progress.completed_steps / progress.total_steps)" in source
+    assert "completed_steps" in source
+    assert "total_steps" in source

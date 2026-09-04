@@ -67,17 +67,17 @@ class TestSearchSeoGranularityOverlayReconciled:
             record_path = REPO_ROOT / req["record_path"]
             assert record_path.exists(), f"missing record file: {record_path}"
 
-    def test_req_search_004_indexed_and_classified_incomplete(self):
-        self._assert_gap_row_classified_incomplete("REQ-SEARCH-004")
+    def test_req_search_004_indexed_and_classified_partial(self):
+        self._assert_gap_row_classified_partial("REQ-SEARCH-004")
 
-    def test_req_search_005_indexed_and_classified_incomplete(self):
-        self._assert_gap_row_classified_incomplete("REQ-SEARCH-005")
+    def test_req_search_005_indexed_and_classified_partial(self):
+        self._assert_gap_row_classified_partial("REQ-SEARCH-005")
 
-    def test_req_seo_001_indexed_and_classified_incomplete(self):
-        self._assert_gap_row_classified_incomplete("REQ-SEO-001")
+    def test_req_seo_001_indexed_and_classified_partial(self):
+        self._assert_gap_row_classified_partial("REQ-SEO-001")
 
     @staticmethod
-    def _assert_gap_row_classified_incomplete(requirement_id: str) -> None:
+    def _assert_gap_row_classified_partial(requirement_id: str) -> None:
         content = AUTHORITY_PATH.read_text()
         gaps_section = content.split(
             "## Current implementation gaps requiring decision records", 1
@@ -86,9 +86,9 @@ class TestSearchSeoGranularityOverlayReconciled:
         own_rows = [row for row in gap_rows if requirement_id in row[0]]
         assert own_rows, f"no implementation-gaps row references {requirement_id}"
         for row in own_rows:
-            assert row[1] == "Requirement exists but capability incomplete", (
+            assert row[1] == "Requirement exists and is partially implemented", (
                 f"{requirement_id}'s own capability row is classified "
-                f"{row[1]!r}, expected 'Requirement exists but capability incomplete': {row}"
+                f"{row[1]!r}, expected 'Requirement exists and is partially implemented': {row}"
             )
 
     def test_all_three_records_named_in_implemented_section(self):

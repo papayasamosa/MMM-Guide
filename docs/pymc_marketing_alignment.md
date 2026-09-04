@@ -1,7 +1,7 @@
 # PyMC Marketing alignment
 
-Status: G2A.5 / Candidate A Search engine plus observed-mediator historical
-capability and raw-PyMC lift-test adapter, reviewed 2026-09-01.
+Status: UK production decisions / durable fit continuation, reviewed
+2026-09-04.
 
 The product claim is: **Built in PyMC and informed by PyMC Marketing.**
 
@@ -33,6 +33,13 @@ Official references inspected for this alignment:
 - [budget optimizer](https://www.pymc-marketing.io/en/stable/api/generated/pymc_marketing.mmm.budget_optimizer.html)
 - [allocation assessment and risk-aware utilities](https://www.pymc-marketing.io/en/stable/notebooks/mmm/mmm_allocation_assessment.html)
 - [lift-test calibration](https://www.pymc-marketing.io/en/stable/api/generated/pymc_marketing.mmm.lift_test.html)
+
+The implementation review also inspected the pinned public sources at
+PyMC-Marketing 0.19.4 (`pymc_marketing.mmm.mmm.MMM`, including its
+multidimensional panel dimensions) and PyMC 5.28.5 (`pm.sample`, NUTS
+callbacks, and `pymc.distributions.Censored`). These references were used for
+the grouped-dimension and worker-callback design; custom Ancestry contracts
+remain explicitly marked as extensions below.
 
 Context7's official PyMC-Marketing documentation was also queried for the
 lift-test API. The indexed reference was `/pymc-labs/pymc-marketing` version
@@ -70,6 +77,8 @@ estimand or production engine.
 | Search mediation/capacity | PyMC `Censored`/`NegativeBinomial` primitives and PyMC-Marketing MMM transformations | `core.search_capacity` Candidate A linked latent-demand, hard-cap, capture-reconciliation and outcome-scale counterfactual contract; typed graph compiler extension | Custom linked PyMC engine; not native PyMC-Marketing. Candidate C is diagnostic-only, Candidate B is deferred, and Search planning/optimisation remain disabled |
 | Observed Search mediation | PyMC `NegativeBinomial` likelihoods and named dimensions | `core.search_preparation` and `core.observed_mediation` retain separate FH/DNA spend and click identities, explicit coverage/structural-zero evidence, mediator-specific transform namespaces, and graph validation before the observed delivery model is built | Custom PyMC capability; not PyMC-Marketing-native. It does not fabricate branded demand, cap, organic/direct capture, or spend/delivery equivalence; historical use remains validation/sensitivity-only until identification and source gates pass |
 | Sequential simulation | `GeometricAdstock`'s finite `l_max`-truncated convolution; forward-simulation notebooks prime that window by prepending `l_max` "warm-up" periods into the same array (no explicit carry-in state parameter) | `core.sequential_simulation`: an explicit `initial_state` carry-in scalar threaded through the repository's own already-divergent infinite-horizon recursive `geometric_adstock` (see the "Adstock normalization" row above), reconstructed from real historical media, never a warm-up-window prepend | Intentional divergence, consistent with the pre-existing infinite-horizon adstock divergence already recorded above - a warm-up-prepend would truncate the decay to a finite window not present in what was actually fit. Numerical equivalence with the existing batch replay is tested directly (`test_sequential_simulation.py::TestGoldenEquivalence`) |
+| Named dimensions for grouped SEO | PyMC-Marketing `MMM` public multidimensional API and PyMC named-dimension model pattern, pinned at PyMC Marketing 0.19.4 / PyMC 5.28.5 | `core.seo_visibility.SeoModelFitInputsCollection` plus one explicitly named additive coefficient per selected SEO group, with group-specific masks/windows and persisted fit metadata | Custom extension: PyMC-Marketing has no governed GSC Brand/Non-Brand onboarding contract or approved SEO cost model; the implementation follows the upstream named-dimension principle and keeps SEO outside spend economics |
+| Durable local fit jobs | PyMC's public `pm.sample` / NUTS callback surface, PyMC 5.28.5 | `application.fit_job_service` and `fit_job_worker` snapshot the existing `build_model_for_spec` + `fit_model` call, persist state/progress/PID/fingerprints, validate ArviZ artifacts, and require explicit adoption | Application orchestration around the approved PyMC engine; not a PyMC-Marketing capability and no model algebra is duplicated |
 
 ## Media input and money
 

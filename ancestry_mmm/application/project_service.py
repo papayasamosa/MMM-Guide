@@ -73,6 +73,9 @@ class ProjectExportInput:
     search_candidate_a_spec: Optional[dict] = None
     causal_graphs: Optional[List[dict]] = None
     search_objects: Optional[List[dict]] = None
+    search_intent_groups: Optional[List[dict]] = None
+    search_intent_group_versions: Optional[List[dict]] = None
+    search_intent_model_grain: Optional[List[str]] = None
     source_versions: Optional[List[dict]] = None
     source_definitions: Optional[List[dict]] = None
     variable_coverage_matrices: Optional[List[dict]] = None
@@ -203,6 +206,9 @@ class ProjectService:
                 search_candidate_a_spec=exp_input.search_candidate_a_spec,
                 causal_graphs=exp_input.causal_graphs,
                 search_objects=exp_input.search_objects,
+                search_intent_groups=exp_input.search_intent_groups,
+                search_intent_group_versions=exp_input.search_intent_group_versions,
+                search_intent_model_grain=exp_input.search_intent_model_grain,
                 source_versions=exp_input.source_versions,
                 source_definitions=exp_input.source_definitions,
                 variable_coverage_matrices=exp_input.variable_coverage_matrices,

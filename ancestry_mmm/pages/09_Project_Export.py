@@ -127,6 +127,12 @@ from ancestry_mmm.core.search_objects import (
     search_object_fit_fingerprint,
     search_object_versions_for_export,
 )
+from ancestry_mmm.core.search_intent_taxonomy import (
+    SearchIntentGroup,
+    governed_search_intent_groups,
+    resolve_search_intent_model_grain,
+    validate_search_intent_group_catalogue,
+)
 from ancestry_mmm.core.coverage import (
     VariableCoverageMatrix,
     current_variable_coverage_matrix_from_resolved_versions,
@@ -183,6 +189,9 @@ _CONTAINS_LABELS = {
     "value_mapping": "Outcome value mapping",
     "causal_graphs": "Causal graph versions",
     "search_objects": "Search definitions and versions",
+    "search_intent_groups": "Search intent taxonomy",
+    "search_intent_group_versions": "Search intent taxonomy versions",
+    "search_intent_model_grain": "Search intent model grain",
     "source_versions": "Source file version history",
     "source_definitions": "Source categories and roles",
     "variable_coverage_matrices": "Coverage and frequency review history",
@@ -661,6 +670,13 @@ with SectionCard(
         "Finance approval is recorded."
     ),
 ):
+    st.caption(
+        "UK reporting convention for an approved currency view: source GBP is "
+        "translated to USD using `USD = GBP × approved GBP-to-USD rate`, by "
+        "calendar year (January–December). No live-rate fallback is used; a "
+        "pending or unapproved rate set cannot drive official reporting. NBT "
+        "count fitting is unaffected by FX readiness."
+    )
     _fx_current = get_state("fx_rate_set")
     if _fx_current:
         st.caption(
@@ -880,6 +896,10 @@ if st.button("Build export bundle", type="primary"):
                 current_definitions=get_state("search_objects") or [],
                 version_history=get_state("search_object_versions"),
             ),
+            search_intent_groups=get_state("search_intent_groups") or [],
+            search_intent_group_versions=get_state("search_intent_group_versions")
+            or [],
+            search_intent_model_grain=get_state("search_intent_model_grain") or [],
             google_trends_anchor=get_state("google_trends_anchor"),
             seo_fit_inputs=get_state("seo_fit_inputs"),
             future_assumption_bundles=get_state("future_assumption_bundles"),
@@ -1242,6 +1262,52 @@ if uploaded_zip is not None and st.button("Import bundle"):
         set_state("search_candidate_a_spec", imported.get("search_candidate_a_spec"))
         set_state("google_trends_anchor", imported.get("google_trends_anchor"))
         set_state("seo_fit_inputs", imported.get("seo_fit_inputs"))
+        # REQ-SEARCH-004/005: restore only valid, explicitly persisted custom
+        # taxonomy records. The approved minimum is supplied by the taxonomy
+        # module; malformed children are quarantined and named.
+        _raw_search_intent_groups = imported.get("search_intent_groups") or []
+        try:
+            _persisted_search_intent_groups = tuple(
+                SearchIntentGroup.from_dict(item)
+                for item in _raw_search_intent_groups
+                if isinstance(item, dict)
+            )
+            _taxonomy_issues = validate_search_intent_group_catalogue(
+                _persisted_search_intent_groups
+            )
+            if _taxonomy_issues:
+                raise ValueError("; ".join(_taxonomy_issues))
+            _custom_search_groups = tuple(
+                group
+                for group in _persisted_search_intent_groups
+                if group.search_intent_group_id
+                not in {"brand_search", "non_brand_search"}
+            )
+            _governed_groups = governed_search_intent_groups(_custom_search_groups)
+            set_state(
+                "search_intent_groups",
+                [group.to_dict() for group in _governed_groups],
+            )
+            set_state(
+                "search_intent_group_versions",
+                imported.get("search_intent_group_versions") or [],
+            )
+            set_state(
+                "search_intent_model_grain",
+                list(
+                    resolve_search_intent_model_grain(
+                        imported.get("search_intent_model_grain") or (),
+                        _governed_groups,
+                    )
+                ),
+            )
+        except (TypeError, ValueError) as _taxonomy_exc:
+            set_state("search_intent_groups", [])
+            set_state("search_intent_group_versions", [])
+            set_state("search_intent_model_grain", [])
+            st.warning(
+                f"Persisted Search intent taxonomy was quarantined: {_taxonomy_exc}"
+            )
         set_state(
             "future_assumption_bundles", imported.get("future_assumption_bundles")
         )

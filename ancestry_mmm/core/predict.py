@@ -27,6 +27,7 @@ from typing import Dict, List, Optional, Protocol
 import numpy as np
 import pandas as pd
 import arviz as az
+import re
 
 from .transformations import (
     apply_media_input_scale,
@@ -139,6 +140,7 @@ class FHPosteriorParams:
     # predictor.  It is kept draw-aligned with the rest of this object so the
     # gated treatment contributes uncertainty to every fitted-frame replay.
     seo_visibility_beta: Optional[np.ndarray] = None
+    seo_visibility_betas: Dict[str, np.ndarray] = field(default_factory=dict)
 
 
 def extract_event_coefs(
@@ -314,13 +316,30 @@ def extract_posterior_params(
             trace, meta, at=at
         )
     seo_visibility_beta = None
-    if getattr(meta, "seo_fit_inputs_at_fit", None):
-        if "seo_visibility_beta" not in post:
-            raise CandidateAReplayNotSupportedError(
-                "This fit records SEO visibility inputs but its trace is missing "
-                "seo_visibility_beta; SEO replay is unavailable."
+    seo_visibility_betas: Dict[str, np.ndarray] = {}
+    seo_payload = getattr(meta, "seo_fit_inputs_at_fit", None) or {}
+    if seo_payload:
+        group_payloads = (
+            list(seo_payload.get("groups") or ())
+            if "groups" in seo_payload
+            else [seo_payload]
+        )
+        for group_payload in group_payloads:
+            group_id = str(group_payload.get("seo_group_id") or "seo_visibility")
+            suffix = (
+                ""
+                if len(group_payloads) == 1
+                else "_" + re.sub(r"[^A-Za-z0-9_]", "_", group_id)
             )
-        seo_visibility_beta = np.asarray(_reduce(post["seo_visibility_beta"]).values)
+            variable = f"seo_visibility_beta{suffix}"
+            if variable not in post:
+                raise CandidateAReplayNotSupportedError(
+                    f"This fit records SEO group '{group_id}' but its trace is missing "
+                    f"{variable}; SEO replay is unavailable."
+                )
+            seo_visibility_betas[group_id] = np.asarray(_reduce(post[variable]).values)
+        if len(seo_visibility_betas) == 1:
+            seo_visibility_beta = next(iter(seo_visibility_betas.values()))
 
     return FHPosteriorParams(
         decay_rate=decay_rate,
@@ -339,6 +358,7 @@ def extract_posterior_params(
         event_coefs=event_coefs,
         candidate_a_replay_params=candidate_a_replay_params,
         seo_visibility_beta=seo_visibility_beta,
+        seo_visibility_betas=seo_visibility_betas,
     )
 
 
@@ -388,6 +408,7 @@ class _HasSeoVisibilityBeta(Protocol):
     """Structural type for posterior objects that carry SEO replay draws."""
 
     seo_visibility_beta: Optional[np.ndarray]
+    seo_visibility_betas: Dict[str, np.ndarray]
 
 
 def _named_event_eta_contribution(
@@ -594,59 +615,75 @@ def _seo_eta_contribution(
     payload = getattr(meta, "seo_fit_inputs_at_fit", None) or {}
     if not payload:
         return np.zeros((n_obs, len(meta.outcome_ids)), dtype=float)
-    if params.seo_visibility_beta is None:
+    group_payloads = (
+        list(payload.get("groups") or ()) if "groups" in payload else [payload]
+    )
+    betas = getattr(params, "seo_visibility_betas", {}) or {}
+    if not betas and params.seo_visibility_beta is not None:
+        betas = {
+            str(
+                group_payloads[0].get("seo_group_id") or "seo_visibility"
+            ): params.seo_visibility_beta
+        }
+    if len(betas) != len(group_payloads):
         raise CandidateAReplayNotSupportedError(
-            "SEO visibility was consumed by this fit but no posterior SEO "
-            "coefficient is available for replay."
+            "SEO visibility was consumed by this fit but not every posterior "
+            "SEO group coefficient is available for replay."
         )
     if (explicit_values is None) != (explicit_active_mask is None):
         raise CandidateAReplayNotSupportedError(
             "SEO replay requires both visibility values and their active mask."
         )
-    if explicit_values is None:
-        row_markets = tuple(
-            meta.markets[int(index)] for index in np.asarray(frame["market_idx"])
-        )
-        row_weeks = tuple(
-            str(pd.Timestamp(value).date()) for value in frame.get("dates", ())
-        )
-        if (
-            tuple(payload.get("model_markets") or ()) != row_markets
-            or tuple(payload.get("model_weeks") or ()) != row_weeks
-        ):
-            if allow_reference_for_future:
-                return np.broadcast_to(
-                    _seo_reference_eta_contribution(meta, params),
-                    (n_obs, len(meta.outcome_ids)),
-                ).copy()
-            raise CandidateAReplayNotSupportedError(
-                "SEO replay requires the exact fitted SEO window or an explicit "
-                "row-aligned SEO predictor; future SEO intervention values are "
-                "not approved for planning."
+    row_markets = tuple(
+        meta.markets[int(index)] for index in np.asarray(frame["market_idx"])
+    )
+    row_weeks = tuple(
+        str(pd.Timestamp(value).date()) for value in frame.get("dates", ())
+    )
+    contributions = np.zeros((n_obs, len(meta.outcome_ids)), dtype=float)
+    for group_payload in group_payloads:
+        group_id = str(group_payload.get("seo_group_id") or "seo_visibility")
+        if explicit_values is None:
+            if (
+                tuple(group_payload.get("model_markets") or ()) != row_markets
+                or tuple(group_payload.get("model_weeks") or ()) != row_weeks
+            ):
+                if allow_reference_for_future:
+                    return np.broadcast_to(
+                        _seo_reference_eta_contribution(meta, params),
+                        (n_obs, len(meta.outcome_ids)),
+                    ).copy()
+                raise CandidateAReplayNotSupportedError(
+                    "SEO replay requires the exact fitted SEO window or an explicit "
+                    "row-aligned SEO predictor; future SEO intervention values are "
+                    "not approved for planning."
+                )
+            values = np.asarray(
+                group_payload.get("standardized_visibility") or (), dtype=float
             )
-        values = np.asarray(payload.get("standardized_visibility") or (), dtype=float)
-        active = np.asarray(payload.get("active_mask") or (), dtype=float)
-    else:
-        values = np.asarray(explicit_values, dtype=float)
-        active = np.asarray(explicit_active_mask, dtype=float)
-    if values.shape != (n_obs,) or active.shape != (n_obs,):
-        raise CandidateAReplayNotSupportedError(
-            "SEO replay values and active mask must have one value per row."
-        )
-    if not np.all(np.isfinite(values)) or not np.all(np.isfinite(active)):
-        raise CandidateAReplayNotSupportedError(
-            "SEO replay values and active mask must be finite."
-        )
-    if np.any((active != 0) & (active != 1)):
-        raise CandidateAReplayNotSupportedError(
-            "SEO replay active mask must contain only zero or one."
-        )
-    beta = np.asarray(params.seo_visibility_beta, dtype=float)
-    if beta.shape != (len(meta.outcome_ids),):
-        raise CandidateAReplayNotSupportedError(
-            "SEO replay posterior coefficient shape does not match outcomes."
-        )
-    return values[:, None] * active[:, None] * beta[None, :]
+            active = np.asarray(group_payload.get("active_mask") or (), dtype=float)
+        else:
+            values = np.asarray(explicit_values, dtype=float)
+            active = np.asarray(explicit_active_mask, dtype=float)
+        if values.shape != (n_obs,) or active.shape != (n_obs,):
+            raise CandidateAReplayNotSupportedError(
+                "SEO replay values and active mask must have one value per row."
+            )
+        if not np.all(np.isfinite(values)) or not np.all(np.isfinite(active)):
+            raise CandidateAReplayNotSupportedError(
+                "SEO replay values and active mask must be finite."
+            )
+        if np.any((active != 0) & (active != 1)):
+            raise CandidateAReplayNotSupportedError(
+                "SEO replay active mask must contain only zero or one."
+            )
+        beta = np.asarray(betas[group_id], dtype=float)
+        if beta.shape != (len(meta.outcome_ids),):
+            raise CandidateAReplayNotSupportedError(
+                "SEO replay posterior coefficient shape does not match outcomes."
+            )
+        contributions += values[:, None] * active[:, None] * beta[None, :]
+    return contributions
 
 
 def _seo_reference_eta_contribution(meta: FHModelMeta, params) -> np.ndarray:
@@ -658,17 +695,37 @@ def _seo_reference_eta_contribution(meta: FHModelMeta, params) -> np.ndarray:
     """
 
     payload = getattr(meta, "seo_fit_inputs_at_fit", None) or {}
-    beta = getattr(params, "seo_visibility_beta", None)
-    if not payload or beta is None:
+    if not payload:
         return np.zeros(len(meta.outcome_ids), dtype=float)
-    values = np.asarray(payload.get("standardized_visibility") or (), dtype=float)
-    active = np.asarray(payload.get("active_mask") or (), dtype=float)
-    if values.shape != active.shape or not values.size or not np.any(active > 0):
-        raise CandidateAReplayNotSupportedError(
-            "SEO steady-state replay has no valid observed reference state."
+    group_payloads = (
+        list(payload.get("groups") or ()) if "groups" in payload else [payload]
+    )
+    betas = getattr(params, "seo_visibility_betas", {}) or {}
+    if not betas and getattr(params, "seo_visibility_beta", None) is not None:
+        betas = {
+            str(
+                group_payloads[0].get("seo_group_id") or "seo_visibility"
+            ): params.seo_visibility_beta
+        }
+    result = np.zeros(len(meta.outcome_ids), dtype=float)
+    for group_payload in group_payloads:
+        group_id = str(group_payload.get("seo_group_id") or "seo_visibility")
+        values = np.asarray(
+            group_payload.get("standardized_visibility") or (), dtype=float
         )
-    reference = float(np.mean(values[active > 0]))
-    return reference * np.asarray(beta, dtype=float)
+        active = np.asarray(group_payload.get("active_mask") or (), dtype=float)
+        beta = betas.get(group_id)
+        if (
+            beta is None
+            or values.shape != active.shape
+            or not values.size
+            or not np.any(active > 0)
+        ):
+            raise CandidateAReplayNotSupportedError(
+                "SEO steady-state replay has no valid observed reference state."
+            )
+        result += float(np.mean(values[active > 0])) * np.asarray(beta, dtype=float)
+    return result
 
 
 class _HasPathwayStrength(Protocol):

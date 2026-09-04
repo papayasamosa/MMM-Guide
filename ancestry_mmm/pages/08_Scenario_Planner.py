@@ -1825,6 +1825,11 @@ objective_display_kind = st.radio(
     format_func=lambda x: _objective_labels[x],
     help=FIELD_HELP["ltv"],
 )
+st.caption(
+    "Profit optimisation is fail-closed until a governed margin/COGS definition "
+    "and approved value mapping are available. This does not block ordinary UK "
+    "NBT onboarding or count-based planning."
+)
 # REQ-OPT-001 Requirement 1 (Decision 16): maximise_revenue/maximise_profit/
 # maximise_roi/minimise_cpa all resolve to the same governed value/return
 # definition as the existing "expected_value" objective (core.

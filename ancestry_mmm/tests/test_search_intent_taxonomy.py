@@ -23,6 +23,7 @@ from ancestry_mmm.core.search_intent_taxonomy import (
     SearchReportingCell,
     new_search_intent_group_version,
     roll_up_paid_search_reporting,
+    roll_up_paid_search_reporting_hierarchy,
     validate_activity_search_taxonomy,
 )
 
@@ -132,11 +133,13 @@ class _FakeActivity:
         search_intent_group_id=None,
         search_platform="",
         campaign_type="",
+        planning_eligibility="excluded",
     ):
         self.activity_id = activity_id
         self.search_intent_group_id = search_intent_group_id
         self.search_platform = search_platform
         self.campaign_type = campaign_type
+        self.planning_eligibility = planning_eligibility
 
 
 class TestValidateActivitySearchTaxonomy:
@@ -182,6 +185,27 @@ class TestValidateActivitySearchTaxonomy:
         reference."""
         activities = [_FakeActivity("x", campaign_type="pmax")]
         assert validate_activity_search_taxonomy(activities) == []
+
+    def test_deeper_child_cannot_be_marked_optimisable(self):
+        child = SearchIntentGroup(
+            search_intent_group_id="non_brand_generic_keywords",
+            search_intent_group_name="Non-Brand: Generic Keywords",
+            brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+            parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+        )
+        activity = _FakeActivity(
+            "child",
+            child.search_intent_group_id,
+            SEARCH_PLATFORM_GOOGLE,
+            planning_eligibility="optimisable",
+        )
+        issues = validate_activity_search_taxonomy(
+            [activity], (*APPROVED_MINIMUM_SEARCH_INTENT_GROUPS, child)
+        )
+        assert any(
+            "child economics and planning remain unavailable" in issue
+            for issue in issues
+        )
 
 
 class TestPaidSearchReportingRollup:
@@ -288,3 +312,25 @@ class TestPlatformAxisIsOrthogonal:
         value like 'google_brand'."""
         for platform in SEARCH_PLATFORMS:
             assert "brand" not in platform
+
+
+class TestHierarchicalPaidSearchReporting:
+    def test_parent_and_child_inputs_fail_closed_to_prevent_double_counting(self):
+        child = SearchIntentGroup(
+            search_intent_group_id="non_brand_generic_keywords",
+            search_intent_group_name="Non-Brand: Generic Keywords",
+            brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+            parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+        )
+        cells = [
+            SearchReportingCell(
+                SEARCH_INTENT_GROUP_ID_NON_BRAND, SEARCH_PLATFORM_GOOGLE, 100.0
+            ),
+            SearchReportingCell(
+                child.search_intent_group_id, SEARCH_PLATFORM_GOOGLE, 25.0
+            ),
+        ]
+        with pytest.raises(ValueError, match="double counting"):
+            roll_up_paid_search_reporting_hierarchy(
+                cells, (*APPROVED_MINIMUM_SEARCH_INTENT_GROUPS, child)
+            )

@@ -95,6 +95,14 @@ GOOGLE_TRENDS_ANCHOR_DISCLAIMER = (
     "count of searches, clicks, or any other absolute quantity."
 )
 
+# Approved UK Brand Demand anchor expression. The repeated ``ancestry`` is
+# intentional and must survive validation/provenance unchanged.
+UK_BRAND_DEMAND_QUERY_SET_ID = "uk_brand_demand_v1"
+UK_BRAND_DEMAND_QUERY_EXPRESSION = (
+    "ancestry + ancestory + ancestery + ansectry + anscestry + ancestry"
+)
+UK_BRAND_DEMAND_TERMS = tuple(UK_BRAND_DEMAND_QUERY_EXPRESSION.split(" + "))
+
 
 @dataclass(frozen=True)
 class GoogleTrendsQuerySetDefinition:
@@ -150,6 +158,21 @@ class GoogleTrendsQuerySetDefinition:
                 "GoogleTrendsQuerySetDefinition.time_range_end must not "
                 "precede time_range_start."
             )
+
+    @property
+    def query_expression(self) -> str:
+        """Return the exact supplied expression, including duplicates."""
+        return " + ".join(self.branded_terms)
+
+    @property
+    def duplicate_terms(self) -> Tuple[str, ...]:
+        seen: set[str] = set()
+        duplicates: list[str] = []
+        for term in self.branded_terms:
+            if term in seen and term not in duplicates:
+                duplicates.append(term)
+            seen.add(term)
+        return tuple(duplicates)
 
     def to_dict(self) -> dict:
         payload = asdict(self)

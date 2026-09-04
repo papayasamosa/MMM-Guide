@@ -130,6 +130,7 @@ def fingerprint_model_spec(
     official_preparation_evidence: Optional[Dict[str, Any]] = None,
     named_event_fit_fingerprint: Optional[str] = None,
     calibration_fit_fingerprint: Optional[str] = None,
+    seo_fit_fingerprint: Optional[str] = None,
 ) -> str:
     """
     Fingerprint the full set of inputs that determine how the model is
@@ -372,6 +373,8 @@ def fingerprint_model_spec(
     # exact experiment rows and target outcomes they consumed.
     if calibration_fit_fingerprint:
         payload["calibration_fit_fingerprint"] = calibration_fit_fingerprint
+    if seo_fit_fingerprint:
+        payload["seo_fit_fingerprint"] = seo_fit_fingerprint
     blob = _canonical_json(payload)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 

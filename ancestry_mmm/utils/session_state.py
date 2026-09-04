@@ -129,6 +129,12 @@ def init_session_state():
         # "causal_graph"/"causal_graph_versions" below.
         "search_objects": [],
         "search_object_versions": [],
+        # REQ-SEARCH-004/005: explicit user-defined intent-group lineage.
+        # The approved minimum Brand/Non-Brand records live in core; this
+        # list stores only project-specific deeper children and their drafts.
+        "search_intent_groups": [],
+        "search_intent_group_versions": [],
+        "search_intent_model_grain": [],
         # Optional Candidate A identity restored separately from its
         # observations so the analyst can attach a new exact observation
         # upload without inventing a Search object mapping.
@@ -200,6 +206,9 @@ def init_session_state():
         "mcmc_tune": DEFAULT_PARAMS["mcmc_tune"],
         "mcmc_chains": DEFAULT_PARAMS["mcmc_chains"],
         "mcmc_target_accept": DEFAULT_PARAMS["mcmc_target_accept"],
+        # Durable fit identity: the worker records this seed with the
+        # sampler settings so a completed artifact is reproducible/auditable.
+        "mcmc_random_seed": 42,
         # "shared" (Model A, core.hierarchical_model) or "market_specific"
         # (Model C, core.market_specific_model) - a user preference like the
         # priors above, not a per-fit artifact, so clear_model_state() does

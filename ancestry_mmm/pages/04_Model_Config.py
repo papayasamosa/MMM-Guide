@@ -498,7 +498,7 @@ with SectionCard(
         st.caption(
             "Reasonable defaults are pre-filled. Increase draws/tune for a more reliable fit; reduce them for a quicker check."
         )
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5 = st.columns(5)
         mcmc_draws = c1.number_input(
             "Draws",
             min_value=200,
@@ -529,6 +529,14 @@ with SectionCard(
             float(get_state("mcmc_target_accept", 0.9)),
             0.01,
             key="mcmc_target_accept_input",
+        )
+        mcmc_random_seed = c5.number_input(
+            "Random seed",
+            min_value=0,
+            max_value=2**31 - 1,
+            value=int(get_state("mcmc_random_seed", 42)),
+            step=1,
+            key="mcmc_random_seed_input",
         )
 
     render_decision_help(
@@ -923,6 +931,7 @@ else:
             set_state("mcmc_tune", int(mcmc_tune))
             set_state("mcmc_chains", int(mcmc_chains))
             set_state("mcmc_target_accept", float(mcmc_target_accept))
+            set_state("mcmc_random_seed", int(mcmc_random_seed))
             set_state("model_type", model_type)
             set_state("direct_dna_outcome_ids", list(dna_kit_outcomes.keys()))
             set_state(

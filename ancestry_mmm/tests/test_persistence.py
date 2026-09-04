@@ -1659,6 +1659,40 @@ def test_export_then_import_search_objects_round_trip(tmp_path, sample_project):
     assert objects[0]["search_object_id"] == "uk_paid_search_spend"
 
 
+def test_export_then_import_search_intent_taxonomy_round_trip(tmp_path, sample_project):
+    """REQ-SEARCH-004/005: explicit Search taxonomy state and version history
+    remain durable without being folded into Search object definitions."""
+    from ancestry_mmm.core.search_intent_taxonomy import (
+        BRAND_SEARCH_INTENT_GROUP,
+        NON_BRAND_SEARCH_INTENT_GROUP,
+        SearchIntentGroup,
+    )
+
+    child = SearchIntentGroup(
+        search_intent_group_id="non_brand_genealogy",
+        search_intent_group_name="Genealogy",
+        brand_class="generic_non_brand",
+        parent_search_intent_group_id="non_brand_search",
+    )
+    project = dict(sample_project)
+    project["search_intent_groups"] = [
+        BRAND_SEARCH_INTENT_GROUP.to_dict(),
+        NON_BRAND_SEARCH_INTENT_GROUP.to_dict(),
+        child.to_dict(),
+    ]
+    project["search_intent_group_versions"] = [child.to_dict()]
+    project["search_intent_model_grain"] = ["non_brand_genealogy"]
+
+    imported = import_project(export_project(tmp_path / "taxonomy.zip", **project))
+
+    assert (
+        imported["search_intent_groups"][2]["search_intent_group_id"]
+        == "non_brand_genealogy"
+    )
+    assert imported["search_intent_group_versions"] == [child.to_dict()]
+    assert imported["search_intent_model_grain"] == ["non_brand_genealogy"]
+
+
 def test_export_then_import_candidate_a_search_configuration_round_trip(
     tmp_path, sample_project
 ):

@@ -13,8 +13,10 @@ LLM Next Steps 2026-08-27`.
 ## Approval and traceability
 
 Approved for implementation by the task-specific implementation brief
-cited above (2026-08-28). Target-state architecture contract only. It
-extends the existing single-valued eligibility pattern
+cited above (2026-08-28). The current implementation adds explicit
+parent/child model-grain selection, ragged reporting, and fail-closed child
+planning validation while preserving the existing single-valued eligibility
+pattern
 (`ActivityDefinition.planning_eligibility`, `REQ-SEARCH-001` §9's
 `optimisable`/never-`optimisable` rule) to a governed, market x
 search-route x platform x parent-activity record carrying six
@@ -29,10 +31,12 @@ replaces, for the six original Search objects).
 
 ## Capability status
 
-Zero implementation. Neither the granularity-capability record shape nor
-any per-axis eligibility flag exists in `core.search_objects` or
-`core.activities` today; only the existing single-valued
-`planning_eligibility` enum exists.
+Partial implementation. Explicit parent/child model-grain selection,
+ragged reporting, and the child planning/economics fail-closed boundary are
+implemented. The full six-axis capability record and any evidence threshold
+that could promote a child to economics, planning, or optimisation remain
+unimplemented; only the existing single-valued `planning_eligibility` enum
+is otherwise available.
 
 ## Requirement
 
@@ -134,3 +138,10 @@ Modelling / Platform engineering
 ## Approval date
 
 2026-08-28
+
+## Implementation update, 2026-09-04
+
+Explicit parent/child model-grain selection, parent/child double-fit
+prevention, ragged reporting, and the default-excluded deeper-child planning/
+economics boundary are implemented. The full market × route × platform
+multi-axis capability registry and evidence thresholds remain decision-required.

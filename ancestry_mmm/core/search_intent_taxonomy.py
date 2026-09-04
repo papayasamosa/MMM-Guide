@@ -19,15 +19,12 @@ This module implements the Phase B work the `REQ-SEARCH-004` addendum
    accepted as a pre-computed input (Decision 4: "the business must
    never manually add detailed categories to obtain a parent total").
 
-Explicitly NOT built here (per the addendum's own scope, and Decision 2's
-"D4 remains open" instruction): any deeper Non-Brand keyword/search-term
-group, or the evidence threshold that would promote one to separately
-reportable. `SearchIntentGroup.parent_search_intent_group_id` already
-supports a future group nesting under Non-Brand without a schema change
-when that threshold work (reusing `REQ-VAL-001`'s per-artefact
-threshold-policy-record mechanism) is eventually done - this module does
-not anticipate that by inventing a third hierarchy level or a numeric
-threshold now.
+The approved reporting content remains the two top-level Brand and
+Non-Brand groups. This module now permits explicitly supplied deeper
+Non-Brand draft groups, as requested by the current implementation brief,
+but does not approve, auto-invent, auto-fit, or promote them. The evidence
+threshold that would make a child separately reportable remains open; this
+module does not invent a numeric threshold or a third hierarchy level.
 
 PMax, Demand Gen, and YouTube are confirmed excluded from this taxonomy
 (Decision 2: "do not classify them as PPC simply because of the source
@@ -154,8 +151,9 @@ def new_search_intent_group_version(
 
 # ---------------------------------------------------------------------------
 # Approved minimum taxonomy content (REQ-SEARCH-004 addendum, 2026-08-30,
-# Decision 2). Two top-level governed groups only - this is the entire
-# approved content; a deeper split remains open (D4).
+# Decision 2). Two top-level governed groups are the approved content;
+# explicitly supplied deeper draft children may be added without changing
+# that minimum.
 # ---------------------------------------------------------------------------
 
 SEARCH_INTENT_GROUP_ID_BRAND = "brand_search"
@@ -193,9 +191,99 @@ APPROVED_MINIMUM_SEARCH_INTENT_GROUPS: Tuple[SearchIntentGroup, ...] = (
 )
 
 
+def validate_search_intent_group_catalogue(
+    groups: Sequence[SearchIntentGroup],
+) -> List[str]:
+    """Validate an explicit parent/child taxonomy without inventing groups."""
+    issues: List[str] = []
+    by_id: Dict[str, SearchIntentGroup] = {}
+    for group in groups:
+        if group.search_intent_group_id in by_id:
+            issues.append(
+                f"Duplicate search intent group id '{group.search_intent_group_id}'."
+            )
+        by_id[group.search_intent_group_id] = group
+    for group in groups:
+        parent = group.parent_search_intent_group_id
+        if parent and parent not in by_id:
+            issues.append(
+                f"Search intent group '{group.search_intent_group_id}' references unknown parent '{parent}'."
+            )
+        if parent and parent != SEARCH_INTENT_GROUP_ID_NON_BRAND:
+            issues.append(
+                f"Deeper search intent group '{group.search_intent_group_id}' must be governed under Non-Brand Search."
+            )
+    for group in groups:
+        seen = {group.search_intent_group_id}
+        parent = group.parent_search_intent_group_id
+        while parent:
+            if parent in seen:
+                issues.append(f"Search intent group parent cycle includes '{parent}'.")
+                break
+            seen.add(parent)
+            ancestor = by_id.get(parent)
+            parent = (
+                ancestor.parent_search_intent_group_id if ancestor is not None else None
+            )
+    return issues
+
+
+def governed_search_intent_groups(
+    additional_groups: Sequence[SearchIntentGroup] = (),
+) -> Tuple[SearchIntentGroup, ...]:
+    """Merge the approved minimum with explicitly supplied governed children."""
+    by_id = {
+        group.search_intent_group_id: group
+        for group in APPROVED_MINIMUM_SEARCH_INTENT_GROUPS
+    }
+    for group in additional_groups:
+        by_id[group.search_intent_group_id] = group
+    issues = validate_search_intent_group_catalogue(tuple(by_id.values()))
+    if issues:
+        raise ValueError("Invalid search intent taxonomy: " + "; ".join(issues))
+    return tuple(sorted(by_id.values(), key=lambda group: group.search_intent_group_id))
+
+
+def resolve_search_intent_model_grain(
+    requested_group_ids: Sequence[str],
+    groups: Sequence[SearchIntentGroup],
+) -> Tuple[str, ...]:
+    """Resolve an explicit Search model grain without parent/child double fit.
+
+    An empty selection means the approved parent grain. A deeper child is
+    usable only when it is selected explicitly; selecting both that child and
+    its parent is rejected. This helper does not infer child economics or
+    planning eligibility from taxonomy membership.
+    """
+    catalogue = governed_search_intent_groups(groups)
+    by_id = {group.search_intent_group_id: group for group in catalogue}
+    requested = tuple(
+        dict.fromkeys(
+            str(value).strip() for value in requested_group_ids if str(value).strip()
+        )
+    )
+    unknown = sorted(set(requested) - set(by_id))
+    if unknown:
+        raise ValueError(f"Unknown Search model-grain group(s): {', '.join(unknown)}")
+    if not requested:
+        return (SEARCH_INTENT_GROUP_ID_BRAND, SEARCH_INTENT_GROUP_ID_NON_BRAND)
+    parents = {
+        group.parent_search_intent_group_id
+        for group in (by_id[group_id] for group_id in requested)
+        if group.parent_search_intent_group_id
+    }
+    overlap = sorted(set(requested) & parents)
+    if overlap:
+        raise ValueError(
+            "Search model grain cannot select a parent and its deeper child "
+            f"together: {', '.join(overlap)}"
+        )
+    return requested
+
+
 # ---------------------------------------------------------------------------
-# Platform axis (orthogonal to intent group; Phase B implementation work
-# named, but not done, by the REQ-SEARCH-004 addendum).
+# Platform axis (orthogonal to intent group; Google/Bing are the governed
+# current values).
 # ---------------------------------------------------------------------------
 
 SEARCH_PLATFORM_GOOGLE = "google"
@@ -229,9 +317,13 @@ def validate_activity_search_taxonomy(
       `NON_PAID_SEARCH_CAMPAIGN_TYPES` must not also carry a
       `search_intent_group_id` or `search_platform` (Decision 2's PMax/
       Demand Gen/YouTube exclusion).
+    - A deeper Non-Brand child cannot be marked `optimisable` until it has
+      child-level observed and governed cost support.
     """
     issues: List[str] = []
-    group_ids = {g.search_intent_group_id for g in groups}
+    catalogue = governed_search_intent_groups(groups)
+    by_id = {g.search_intent_group_id: g for g in catalogue}
+    group_ids = set(by_id)
 
     for activity in activities:
         activity_id = _attr(activity, "activity_id", "<unknown>")
@@ -244,6 +336,18 @@ def validate_activity_search_taxonomy(
                 f"Activity '{activity_id}' references unknown "
                 f"search_intent_group_id '{group_id}' - not in the supplied "
                 "governed taxonomy."
+            )
+        referenced_group = by_id.get(group_id) if group_id else None
+        if (
+            referenced_group is not None
+            and referenced_group.parent_search_intent_group_id is not None
+            and _attr(activity, "planning_eligibility", "excluded") == "optimisable"
+        ):
+            issues.append(
+                f"Activity '{activity_id}' references deeper Search intent group "
+                f"'{group_id}' but is marked optimisable. Deeper child economics "
+                "and planning remain unavailable until child-level observed and "
+                "governed cost evidence is supplied."
             )
         if platform and platform not in SEARCH_PLATFORMS:
             issues.append(
@@ -370,3 +474,73 @@ def roll_up_paid_search_reporting(
         )
 
     return PaidSearchReportingRollup(**totals)
+
+
+def roll_up_paid_search_reporting_hierarchy(
+    cells: Sequence[SearchReportingCell],
+    groups: Sequence[SearchIntentGroup],
+) -> dict:
+    """Roll up ragged parent/child intent coverage without parent duplication.
+
+    The existing ``PaidSearchReportingRollup`` remains the stable four-leaf
+    API.  This general form is used when explicitly governed deeper
+    Non-Brand children are present; economics/planning eligibility is not
+    inferred from their existence.
+    """
+    catalogue = governed_search_intent_groups(groups)
+    by_id = {group.search_intent_group_id: group for group in catalogue}
+    leaf_totals: Dict[Tuple[str, str], float] = {}
+    supplied_by_platform: Dict[str, set[str]] = {}
+    for cell in cells:
+        if cell.search_intent_group_id not in by_id:
+            raise ValueError(
+                f"Unknown governed Search intent group '{cell.search_intent_group_id}'."
+            )
+        if cell.platform not in SEARCH_PLATFORMS:
+            raise ValueError(f"Unknown Search platform '{cell.platform}'.")
+        supplied_by_platform.setdefault(cell.platform, set()).add(
+            cell.search_intent_group_id
+        )
+        key = (cell.search_intent_group_id, cell.platform)
+        leaf_totals[key] = leaf_totals.get(key, 0.0) + float(cell.value)
+    for platform, supplied_ids in supplied_by_platform.items():
+        for parent in by_id.values():
+            child_ids = {
+                group.search_intent_group_id
+                for group in by_id.values()
+                if group.parent_search_intent_group_id == parent.search_intent_group_id
+            }
+            overlap = sorted({parent.search_intent_group_id} & supplied_ids)
+            if overlap and child_ids & supplied_ids:
+                raise ValueError(
+                    f"Search hierarchy input for platform '{platform}' contains "
+                    f"parent '{parent.search_intent_group_id}' and child group(s) "
+                    f"{sorted(child_ids & supplied_ids)}; provide one governed "
+                    "model/reporting grain to prevent double counting."
+                )
+    group_totals: Dict[str, float] = {
+        group.search_intent_group_id: 0.0 for group in catalogue
+    }
+    for (group_id, _platform), value in leaf_totals.items():
+        current: Optional[str] = group_id
+        while current is not None:
+            group = by_id.get(current)
+            if group is None:
+                break
+            group_totals[current] += value
+            current = group.parent_search_intent_group_id
+    non_brand_children = [
+        group.search_intent_group_id
+        for group in catalogue
+        if group.parent_search_intent_group_id == SEARCH_INTENT_GROUP_ID_NON_BRAND
+    ]
+    return {
+        "leaves": {
+            f"{group_id}:{platform}": value
+            for (group_id, platform), value in sorted(leaf_totals.items())
+        },
+        "groups": group_totals,
+        "total_paid_search": group_totals[SEARCH_INTENT_GROUP_ID_BRAND]
+        + group_totals[SEARCH_INTENT_GROUP_ID_NON_BRAND],
+        "non_brand_children": non_brand_children,
+    }

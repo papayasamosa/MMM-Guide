@@ -17,13 +17,13 @@ section.
 ## Approval and traceability
 
 Approved for implementation by the task-specific implementation brief
-cited above (2026-08-28). Target-state architecture contract only. It
-extends `REQ-SEARCH-001`'s object-separation, versioning, persistence,
-and validation pattern to a governed Search-intent taxonomy and raw
-paid-term/organic-query mapping layer. It does not select any taxonomy
-content, mapping-confidence/coverage threshold, or statistical treatment
-of intent-group parameters — see
-`docs/wp1_search_seo_granularity_decision_package.md`.
+cited above (2026-08-28). The current implementation covers the approved
+Brand/Non-Brand taxonomy, versioned deeper Non-Brand draft records,
+orthogonal Google/Bing platform classification, parent/child reporting
+roll-ups, explicit model-grain selection, activity validation, and bundle
+persistence. Raw paid-term/organic-query mapping, mapping-confidence
+thresholds, and any statistical treatment of intent-group parameters remain
+deferred — see `docs/wp1_search_seo_granularity_decision_package.md`.
 
 Depends on `REQ-SEARCH-001` (the seven governed Search objects this
 taxonomy layer references, never replaces) and `REQ-GRAPH-001` (no new
@@ -31,11 +31,13 @@ graph node/edge role is required — see Requirement 5).
 
 ## Capability status
 
-Zero implementation. `core.search_objects.SearchObjectDefinition` has no
-`search_intent_group_id`, parent/child field, or taxonomy reference.
-`core.activities.ActivityDefinition` has no `search_intent_group_id`
-field despite Part 5 §11.2 listing it. No taxonomy, mapping, or
-lineage record exists anywhere in this repository.
+Partial implementation. `core.search_intent_taxonomy` provides the approved
+minimum records, immutable versioning helper, explicit deeper-child
+catalogue, platform axis, roll-up helpers, and model-grain resolver;
+`core.activities.ActivityDefinition` and the Channel/Media Units page expose
+governed references and bundle persistence. Raw term/query mapping and any
+evidence threshold for separately reportable intent groups remain
+unimplemented and must not be inferred.
 
 ## Requirement
 
@@ -177,6 +179,15 @@ All items under "Out of scope" above, tracked by
 ## Owner
 
 Modelling / Platform engineering
+
+## Implementation update, 2026-09-04
+
+The approved minimum Brand/Non-Brand taxonomy, immutable `SearchIntentGroup`
+records, explicit deeper Non-Brand draft-child UI, ActivityDefinition lineage,
+platform-axis validation, ragged parent roll-ups, explicit model-grain
+selection, and project-bundle persistence are implemented. Raw term/query
+mapping and promotion thresholds remain open; no deeper child is invented or
+automatically fitted.
 
 ## Approval date
 

@@ -1056,6 +1056,57 @@ class TestSeoVisibilityModelIntegration:
         assert "eta_seo_visibility" in model.named_vars
         assert meta.seo_fit_inputs_at_fit == seo_inputs.to_dict()
 
+    def test_multiple_selected_seo_groups_have_separate_fitted_terms(self):
+        from ancestry_mmm.core.hierarchical_model import build_fh_hierarchical_model
+        from ancestry_mmm.core.schema import ModelSpec
+        from ancestry_mmm.core.seo_visibility import (
+            GscPositionRow,
+            SeoModelFitInputs,
+            SeoModelFitInputsCollection,
+            compute_weekly_positional_visibility,
+        )
+
+        frame = TestSingleChannelSingleMarketSurvivesPmDraw._single_channel_single_market_frame()
+        weeks = ("2025-01-06", "2025-01-13", "2025-01-20")
+        frame["dates"] = pd.to_datetime(weeks)
+        spec = ModelSpec(
+            date_col="date",
+            market_col="market",
+            markets=["UK"],
+            segment_outcomes={"New": "fh_new_gsa"},
+            channels=["TV"],
+        )
+        groups = []
+        for group_id, position in (("brand", 2.0), ("non_brand", 6.0)):
+            observations = [
+                compute_weekly_positional_visibility(
+                    [GscPositionRow(group_id, position, 100.0)],
+                    market="UK",
+                    week=week,
+                    seo_group_id=group_id,
+                )
+                for week in weeks
+            ]
+            groups.append(
+                SeoModelFitInputs.from_observations(
+                    observations,
+                    model_markets=("UK", "UK", "UK"),
+                    model_weeks=weeks,
+                    seo_group_id=group_id,
+                )
+            )
+
+        collection = SeoModelFitInputsCollection.from_groups(groups)
+        model, meta = build_fh_hierarchical_model(
+            frame, spec, seo_fit_inputs=collection
+        )
+
+        assert "seo_visibility_beta_brand" in model.named_vars
+        assert "seo_visibility_beta_non_brand" in model.named_vars
+        assert "eta_seo_visibility_brand" in model.named_vars
+        assert "eta_seo_visibility_non_brand" in model.named_vars
+        assert meta.seo_fit_inputs_at_fit == collection.to_dict()
+
 
 class TestResolveDirectDnaOutcomeIds:
     OUTCOME_IDS = [

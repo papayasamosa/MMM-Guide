@@ -84,9 +84,18 @@ Bundle layout (a single zip):
                                           for every bundle exported before this
                                           capability existed, and for any current
                                           project with no Search objects governed
-                                          yet - "none governed yet" is a valid,
-                                          not-an-error reading (see
-                                          resolve_imported_search_objects below).
+                                           yet - "none governed yet" is a valid,
+                                           not-an-error reading (see
+                                           resolve_imported_search_objects below).
+    config/search_intent_groups.json   - REQ-SEARCH-004/005: the governed
+                                          Brand/Non-Brand taxonomy and any
+                                          explicitly supplied deeper children.
+                                          Missing files never authorize an
+                                          invented child or approval.
+    config/search_intent_group_versions.json - immutable taxonomy version
+                                          history, when supplied.
+    config/search_intent_model_grain.json - explicit selected Search model
+                                          grain; absent means approved parents.
     config/candidate_a_fit_inputs.json - REQ-SEARCH-002: the complete
                                           validated Candidate A observation
                                           boundary used for fitting, including
@@ -212,9 +221,11 @@ from .optimization import SpendConstraint
 # complete optional Candidate A fit-input boundary. 21 -> 22 for the
 # row-aligned, window-gated SEO visibility fit-input boundary. 22 -> 23 for
 # durable governed future-assumption bundles. 23 -> 24 for governed weekly
-# outcome valuation records. Older bundles remain importable
+# outcome valuation records. 24 -> 25 for the versioned Search intent
+# taxonomy and its persisted history. 25 -> 26 for the explicit Search
+# model/reporting grain. Older bundles remain importable
 # because these fields restore as None until explicitly reviewed.
-PROJECT_BUNDLE_SCHEMA_VERSION = 24
+PROJECT_BUNDLE_SCHEMA_VERSION = 26
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -311,6 +322,9 @@ def export_project(
     outcome_valuation_records: Optional[List[dict]] = None,
     causal_graphs: Optional[List[dict]] = None,
     search_objects: Optional[List[dict]] = None,
+    search_intent_groups: Optional[List[dict]] = None,
+    search_intent_group_versions: Optional[List[dict]] = None,
+    search_intent_model_grain: Optional[List[str]] = None,
     search_candidate_a_spec: Optional[dict] = None,
     candidate_a_fit_inputs: Optional[dict] = None,
     search_identification_report: Optional[dict] = None,
@@ -554,6 +568,21 @@ def export_project(
             (tmp / "config" / "search_objects.json").write_text(
                 json.dumps(search_objects, indent=2, default=str)
             )
+        # REQ-SEARCH-004/005: persist the governed taxonomy separately from
+        # Search object definitions. A missing file is a legacy/no-custom-
+        # taxonomy state, not permission to infer or fit additional groups.
+        if search_intent_groups is not None:
+            (tmp / "config" / "search_intent_groups.json").write_text(
+                json.dumps(search_intent_groups, indent=2, default=str)
+            )
+        if search_intent_group_versions is not None:
+            (tmp / "config" / "search_intent_group_versions.json").write_text(
+                json.dumps(search_intent_group_versions, indent=2, default=str)
+            )
+        if search_intent_model_grain is not None:
+            (tmp / "config" / "search_intent_model_grain.json").write_text(
+                json.dumps(search_intent_model_grain, indent=2, default=str)
+            )
         # REQ-SEARCH-002: Candidate A's typed formulation and identification
         # evidence travel with the governed Search objects. Missing files are
         # a legacy/no-engine state, never an implicit approval.
@@ -754,6 +783,12 @@ def export_project(
                 and bool(outcome_valuation_records),
                 "causal_graphs": causal_graphs is not None and bool(causal_graphs),
                 "search_objects": search_objects is not None and bool(search_objects),
+                "search_intent_groups": search_intent_groups is not None
+                and bool(search_intent_groups),
+                "search_intent_group_versions": search_intent_group_versions is not None
+                and bool(search_intent_group_versions),
+                "search_intent_model_grain": search_intent_model_grain is not None
+                and bool(search_intent_model_grain),
                 "search_candidate_a_spec": search_candidate_a_spec is not None,
                 "candidate_a_fit_inputs": candidate_a_fit_inputs is not None,
                 "search_identification_report": search_identification_report
@@ -892,6 +927,12 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # existed - "no Search objects governed yet" is a valid,
         # not-an-error reading, same convention as causal_graphs above.
         "search_objects": None,
+        # REQ-SEARCH-004/005: absent for bundles exported before the governed
+        # custom taxonomy existed. The page restores the approved minimum
+        # separately and never fabricates persisted children.
+        "search_intent_groups": None,
+        "search_intent_group_versions": None,
+        "search_intent_model_grain": None,
         # REQ-SEARCH-002: None for bundles exported before Candidate A. The
         # absence is not approval and must keep official Search use blocked.
         "search_candidate_a_spec": None,
@@ -1123,6 +1164,18 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "search_objects.json").exists():
             result["search_objects"] = json.loads(
                 (config_dir / "search_objects.json").read_text()
+            )
+        if (config_dir / "search_intent_groups.json").exists():
+            result["search_intent_groups"] = json.loads(
+                (config_dir / "search_intent_groups.json").read_text()
+            )
+        if (config_dir / "search_intent_group_versions.json").exists():
+            result["search_intent_group_versions"] = json.loads(
+                (config_dir / "search_intent_group_versions.json").read_text()
+            )
+        if (config_dir / "search_intent_model_grain.json").exists():
+            result["search_intent_model_grain"] = json.loads(
+                (config_dir / "search_intent_model_grain.json").read_text()
             )
         if (config_dir / "search_candidate_a_spec.json").exists():
             result["search_candidate_a_spec"] = json.loads(
