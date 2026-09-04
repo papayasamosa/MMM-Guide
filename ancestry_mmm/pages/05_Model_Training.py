@@ -4,7 +4,6 @@ import sys
 import time
 import uuid
 from dataclasses import replace
-from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 
@@ -86,6 +85,9 @@ from ancestry_mmm.core.search_capacity import (
 from ancestry_mmm.application.candidate_a_input_service import (
     CANDIDATE_A_UPLOAD_COLUMNS,
     build_candidate_a_fit_inputs_from_frame,
+)
+from ancestry_mmm.application.migration_review_service import (
+    migration_review_after_fit_adoption,
 )
 from ancestry_mmm.core.google_trends_anchor import (
     GoogleTrendsAnchorFitInputs,
@@ -1403,6 +1405,24 @@ for _completed_job in _fit_job_backend.store.list(statuses={"succeeded"}):
                 if model_type == "market_specific"
                 else extract_posterior_params(_trace, _meta)
             )
+            _fit_build_kwargs = _fit_job_backend.store.load_build_kwargs(_record.job_id)
+            _fitted_frame = _fit_build_kwargs.get("frame")
+            if not isinstance(_fitted_frame, dict):
+                raise ValueError(
+                    "Fit artifact is missing its persisted frozen modelling frame."
+                )
+            _fitted_channels = list(getattr(_meta, "channels", ()) or ())
+            if _fitted_channels and list(_fitted_frame.get("channels") or ()) != (
+                _fitted_channels
+            ):
+                raise ValueError(
+                    "Fit artifact frame channels do not match its persisted model metadata."
+                )
+            # The worker fits the Search-grain-sliced frame from its immutable
+            # payload.  Restore that exact frame before downstream diagnostics,
+            # curves, and planning replay the posterior; the live session frame
+            # may still be the unsliced preparation frame.
+            set_state("frame", _fitted_frame)
             set_state("model", None)
             set_state("model_meta", _meta)
             set_state("trace", _trace)
@@ -1413,11 +1433,9 @@ for _completed_job in _fit_job_backend.store.list(statuses={"succeeded"}):
             set_state("model_approval", None)
             set_state(
                 "migration_review",
-                {
-                    "migration_review_status": "reviewed_refit_required",
-                    "migration_reviewed_at": datetime.now(timezone.utc).isoformat(),
-                    "migration_review_note": "A durable worker fit was adopted after identity validation.",
-                },
+                migration_review_after_fit_adoption(
+                    get_state("migration_review"), get_state("model_run_id")
+                ),
             )
             _fit_job_backend.store.mark_adopted(
                 _record.job_id, get_state("model_run_id")

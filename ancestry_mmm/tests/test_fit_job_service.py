@@ -192,6 +192,21 @@ def test_reconcile_rechecks_terminal_state_before_marking_worker_orphaned(
     assert store.get(record.job_id).status == "succeeded"
 
 
+def test_reconcile_does_not_orphan_queued_job_before_pid_is_recorded(
+    tmp_path: Path, monkeypatch
+):
+    """A second session must not win the create/Popen/PID hand-off race."""
+
+    store = FitJobStore(tmp_path, "project")
+    record = store.create(_submission(project_id="project"))
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service.process_is_alive", lambda pid: False
+    )
+
+    assert store.reconcile() == []
+    assert store.get(record.job_id).status == "queued"
+
+
 @pytest.fixture
 def candidate_a_fit_inputs() -> CandidateASearchFitInputs:
     query_set = GoogleTrendsQuerySetDefinition(

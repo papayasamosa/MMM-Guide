@@ -634,6 +634,11 @@ def _seo_eta_contribution(
         raise CandidateAReplayNotSupportedError(
             "SEO replay requires both visibility values and their active mask."
         )
+    if explicit_values is not None and len(group_payloads) > 1:
+        raise CandidateAReplayNotSupportedError(
+            "Explicit SEO replay for multiple groups requires group-specific "
+            "visibility values and active masks; one shared vector is ambiguous."
+        )
     row_markets = tuple(
         meta.markets[int(index)] for index in np.asarray(frame["market_idx"])
     )

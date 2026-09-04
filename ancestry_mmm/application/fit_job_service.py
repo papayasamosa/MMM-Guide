@@ -461,6 +461,14 @@ class FitJobStore:
                 latest = self.get(record.job_id)
                 if latest.status not in ACTIVE_JOB_STATES:
                     continue
+                # A queued record has no reliable worker liveness boundary
+                # yet.  The launcher creates it before Popen returns and the
+                # worker may not have recorded its PID (or transitioned to
+                # running) when another session reconciles the queue.  Do not
+                # orphan a valid launch during that interval; submit() will
+                # persist a failed state if Popen itself cannot launch.
+                if latest.status == "queued":
+                    continue
                 alive = latest.pid is not None and process_is_alive(latest.pid)
                 if alive:
                     continue

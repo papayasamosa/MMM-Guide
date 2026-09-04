@@ -19,6 +19,7 @@ from ancestry_mmm.application.fit_job_service import FitJobStore, FitJobSubmissi
 from ancestry_mmm.application.model_fit_service import SEARCH_CANDIDATE_A_ENGINE
 from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.core.schema import ModelSpec
+from ancestry_mmm.core.hierarchical_model import FHModelMeta
 from ancestry_mmm.core.search_intent_taxonomy import (
     SEARCH_INTENT_GROUP_ID_BRAND,
     SEARCH_INTENT_GROUP_ID_NON_BRAND,
@@ -225,6 +226,69 @@ def test_adopted_durable_fit_remains_available_for_fingerprint_verified_recovery
 
     assert not at.exception, f"page raised: {at.exception}"
     assert any(button.label == "Re-adopt completed fit" for button in at.button)
+
+
+def test_adopting_durable_fit_restores_the_frozen_search_grain_frame(
+    monkeypatch, tmp_path
+):
+    """Downstream replay must use the same sliced frame the worker fitted."""
+
+    project_name = "grain-project"
+    monkeypatch.setenv("ANCESTRY_MMM_FIT_JOB_ROOT", str(tmp_path))
+    base_frame = _frame()
+    frozen_frame = dict(base_frame)
+    frozen_frame["channels"] = ["TV"]
+    frozen_frame["X_media"] = base_frame["X_media"][:, :1]
+    store = FitJobStore(tmp_path, project_name)
+    record = store.create(
+        FitJobSubmission(
+            project_id=project_name,
+            project_display_name=project_name,
+            engine="pymc",
+            model_type="shared",
+            sampler_settings={"draws": 4, "tune": 2, "chains": 1},
+            random_seed=42,
+            data_fingerprint="data-fp",
+            model_spec_fingerprint="spec-fp",
+            fit_input_fingerprints={"seo": "seo-fp", "frame": "data-fp"},
+            build_kwargs={"frame": frozen_frame, "model_spec": {"channels": ["TV"]}},
+        )
+    )
+    store.transition(record.job_id, "running")
+    store.transition(record.job_id, "succeeded")
+    fitted_meta = FHModelMeta(
+        markets=["UK"],
+        outcome_ids=[OUTCOME_ID],
+        channels=["TV"],
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0],
+        dna_outcome_id=OUTCOME_ID,
+        dna_lag_weeks=0,
+        unpooled_markets=[],
+        control_names=[],
+    )
+
+    def fake_load_succeeded_fit(backend, job_id, **kwargs):
+        return object(), fitted_meta, backend.store.get(job_id)
+
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service.LocalFitJobBackend.load_succeeded_fit",
+        fake_load_succeeded_fit,
+    )
+    import ancestry_mmm.core.predict as predict
+
+    monkeypatch.setattr(predict, "extract_posterior_params", lambda *args: {"ok": 1})
+
+    at = _run_at(project_name=project_name, frame=base_frame)
+    adopt = next(
+        button for button in at.button if button.label == "Adopt completed fit"
+    )
+    at = adopt.click().run()
+
+    assert not at.exception, f"fit adoption raised: {at.exception}"
+    assert at.session_state["frame"]["channels"] == ["TV"]
+    assert at.session_state["frame"]["X_media"].shape == (len(base_frame["X_media"]), 1)
 
 
 def test_changed_seo_boundary_clears_adopted_fit_and_downstream_evidence():
