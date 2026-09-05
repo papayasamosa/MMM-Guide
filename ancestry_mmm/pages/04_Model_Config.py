@@ -113,7 +113,7 @@ render_workspace_note(
     kind="editable",
 )
 
-spec_dict = get_state("model_spec")
+spec_dict = get_state("prepared_model_spec") or get_state("model_spec")
 df = get_state("transformed_data")
 if df is None:
     df = adopted_model_input_frame(
@@ -938,6 +938,14 @@ else:
                 "brand_search_configs", [c.to_dict() for c in brand_search_configs]
             )
             clear_model_state()
+            # Persist the complete, unsliced preparation boundary separately
+            # from any fitted Search-grain snapshot.  The structure page is
+            # the source of this spec; preparation is the source of this
+            # frame.  Durable fit adoption may later install a reduced pair
+            # for replay, but invalidation must be able to return here.
+            set_state("model_spec", spec.to_dict())
+            set_state("prepared_model_spec", spec.to_dict())
+            set_state("prepared_frame", frame)
             _official_result_payload = _official_preparation.to_dict()
             if _canonical_frame is not None:
                 _official_result_payload["conversion_evidence"] = list(

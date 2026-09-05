@@ -63,6 +63,14 @@ def init_session_state():
         "validation_issues": [],
         # Structural model spec (core.schema.ModelSpec as a dict)
         "model_spec": None,
+        # The prepared structural boundary is kept separately from the
+        # Search-grain-sliced spec temporarily installed while a durable fit
+        # is adopted.  This lets a later invalidation restore the complete
+        # preparation boundary instead of treating a fitted subset as the
+        # project's only model configuration.
+        "prepared_model_spec": None,
+        "prepared_frame": None,
+        "fitted_model_spec": None,
         # Market-specific redesign, Phase 1: market descriptors, currency and
         # channel media-unit mappings (core.market_config.MarketSpecConfig as
         # a dict). Optional and not yet consumed by the fitting pipeline -
@@ -305,6 +313,15 @@ def curve_artifact_store_dir() -> Path:
 
 def clear_model_state() -> None:
     """Clear all model-related state (useful when data or spec changes)."""
+    prepared_model_spec = st.session_state.get("prepared_model_spec")
+    if prepared_model_spec is not None:
+        # A durable Search-grain fit temporarily replaces model_spec with the
+        # sliced spec that matches its posterior.  Once that fit is invalid,
+        # restore the unsliced preparation boundary before clearing the
+        # fitted artefacts so excluded channels remain available for the next
+        # preparation rather than being lost from the project.
+        st.session_state["model_spec"] = prepared_model_spec
+    st.session_state["fitted_model_spec"] = None
     model_keys = [
         "frame",
         "official_prepared_data",

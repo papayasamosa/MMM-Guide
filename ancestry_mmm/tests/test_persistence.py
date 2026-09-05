@@ -402,6 +402,21 @@ def test_export_then_import_reproduces_config(tmp_path, sample_project):
     assert imported["model_approval"] == sample_project["model_approval"]
 
 
+def test_export_then_import_preserves_distinct_fitted_model_spec(
+    tmp_path, sample_project
+):
+    """A Search-grain fit spec is durable alongside the full preparation spec."""
+
+    project = dict(sample_project)
+    fitted_spec = dict(project["model_spec"])
+    project["fitted_model_spec"] = fitted_spec
+
+    imported = import_project(export_project(tmp_path / "fit-spec.zip", **project))
+
+    assert imported["model_spec"] == project["model_spec"]
+    assert imported["fitted_model_spec"] == fitted_spec
+
+
 def test_media_input_and_cost_governance_round_trip(tmp_path, sample_project):
     project = dict(sample_project)
     project["media_input_specs"] = [

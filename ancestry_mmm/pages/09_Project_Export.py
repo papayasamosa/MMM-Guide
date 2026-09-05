@@ -129,6 +129,7 @@ from ancestry_mmm.core.search_objects import (
 )
 from ancestry_mmm.core.search_intent_taxonomy import (
     resolve_imported_search_intent_groups,
+    resolve_imported_search_intent_group_versions,
     resolve_search_intent_model_grain,
 )
 from ancestry_mmm.core.coverage import (
@@ -170,6 +171,7 @@ _CONTAINS_LABELS = {
     "raw_data": "Original source files and tables",
     "transformed_data": "Prepared modelling data",
     "model_spec": "Model definition (segments, markets, channels)",
+    "fitted_model_spec": "Fitted Search-grain model definition",
     "posterior": "Fitted model and posterior draws",
     "diagnostics": "Diagnostics scorecard / backtest results",
     "curves": "Exploratory curve snapshots",
@@ -797,7 +799,8 @@ if st.button("Build export bundle", type="primary"):
             raw_sources=get_state("raw_sources") or {},
             transformed_data=get_state("transformed_data"),
             pipeline_steps=get_state("pipeline_steps") or [],
-            model_spec=get_state("model_spec"),
+            model_spec=(get_state("prepared_model_spec") or get_state("model_spec")),
+            fitted_model_spec=get_state("fitted_model_spec"),
             prior_config=get_state("prior_config"),
             dna_lag_weeks=get_state("dna_lag_weeks", 4),
             trace=get_state("trace"),
@@ -1133,7 +1136,16 @@ if uploaded_zip is not None and st.button("Import bundle"):
             ),
         )
         set_state("pipeline_steps", imported["pipeline_steps"])
-        set_state("model_spec", imported["model_spec"])
+        # Keep the durable preparation boundary separate from the optional
+        # Search-grain specification that produced the persisted posterior.
+        # Pages that replay the fit use the latter; Model Structure can still
+        # recover the complete unsliced configuration after invalidation.
+        set_state("prepared_model_spec", imported["model_spec"])
+        set_state("fitted_model_spec", imported.get("fitted_model_spec"))
+        set_state(
+            "model_spec",
+            imported.get("fitted_model_spec") or imported["model_spec"],
+        )
         set_state("prior_config", imported["prior_config"])
         set_state("dna_lag_weeks", imported["dna_lag_weeks"])
         set_state("scenarios", imported["scenarios"])
@@ -1277,9 +1289,15 @@ if uploaded_zip is not None and st.button("Import bundle"):
                 "search_intent_groups",
                 [group.to_dict() for group in _governed_groups],
             )
+            _resolved_group_versions, _group_version_warnings = (
+                resolve_imported_search_intent_group_versions(
+                    imported.get("search_intent_group_versions"),
+                    current_groups=_governed_groups,
+                )
+            )
             set_state(
                 "search_intent_group_versions",
-                imported.get("search_intent_group_versions") or [],
+                _resolved_group_versions,
             )
             set_state(
                 "search_intent_model_grain",
@@ -1297,6 +1315,9 @@ if uploaded_zip is not None and st.button("Import bundle"):
             st.warning(
                 f"Persisted Search intent taxonomy was quarantined: {_taxonomy_exc}"
             )
+        else:
+            for _group_version_warning in _group_version_warnings:
+                st.warning(_group_version_warning)
         set_state(
             "future_assumption_bundles", imported.get("future_assumption_bundles")
         )

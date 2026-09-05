@@ -92,8 +92,17 @@ class SearchIntentGroup:
                 f"SearchIntentGroup: unknown brand_class '{self.brand_class}' "
                 f"(expected one of {BRAND_CLASSES})."
             )
+        if type(self.search_intent_group_version) is not int:
+            raise ValueError("search_intent_group_version must be an integer.")
         if self.search_intent_group_version < 1:
             raise ValueError("search_intent_group_version must be >= 1.")
+        if (
+            type(self.schema_version) is not int
+            or self.schema_version != SEARCH_INTENT_TAXONOMY_SCHEMA_VERSION
+        ):
+            raise ValueError(
+                "unsupported or malformed search intent taxonomy schema_version."
+            )
         if self.parent_search_intent_group_id == self.search_intent_group_id:
             raise ValueError(
                 f"SearchIntentGroup '{self.search_intent_group_id}' cannot be "
@@ -268,6 +277,94 @@ def resolve_imported_search_intent_groups(
         not in {SEARCH_INTENT_GROUP_ID_BRAND, SEARCH_INTENT_GROUP_ID_NON_BRAND}
     )
     return governed_search_intent_groups(custom_groups)
+
+
+def resolve_imported_search_intent_group_versions(
+    values: Sequence[SearchIntentGroup | Mapping[str, Any]] | None,
+    *,
+    current_groups: Sequence[SearchIntentGroup] = (),
+) -> Tuple[List[dict], List[str]]:
+    """Validate the append-only Search taxonomy version history on import.
+
+    Current taxonomy records and their history have different purposes: the
+    approved Brand/Non-Brand parents and the current custom children are the
+    live catalogue, while this collection is an audit trail.  A malformed
+    history record must therefore be quarantined without discarding an
+    otherwise valid current catalogue.  In particular, do not let JSON type
+    coercion turn an invalid version or lineage reference into a usable
+    record that can later break the editor or be re-exported.
+    """
+
+    warnings: List[str] = []
+    if values is None or values == []:
+        return [], warnings
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        return [], [
+            "Search intent taxonomy version history is not a sequence and was "
+            "quarantined (dropped, not silently kept)."
+        ]
+
+    known_ids = {
+        group.search_intent_group_id for group in APPROVED_MINIMUM_SEARCH_INTENT_GROUPS
+    }
+    known_ids.update(group.search_intent_group_id for group in current_groups)
+    parsed: List[tuple[int, SearchIntentGroup]] = []
+    seen_keys: set[Tuple[str, int]] = set()
+
+    for index, value in enumerate(values):
+        if not isinstance(value, Mapping):
+            warnings.append(
+                f"Search intent taxonomy version record {index} is not a mapping "
+                "and was quarantined (dropped, not silently kept)."
+            )
+            continue
+        try:
+            group = SearchIntentGroup.from_dict(value)
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            group_id = value.get("search_intent_group_id", "<unknown>")
+            warnings.append(
+                f"Search intent taxonomy version record {index} "
+                f"(search_intent_group_id={group_id!r}) was malformed and was "
+                f"quarantined (dropped, not silently kept): {exc}"
+            )
+            continue
+        key = group.version_key
+        if key in seen_keys:
+            warnings.append(
+                f"Search intent taxonomy version record {index} "
+                f"({key[0]!r}, version {key[1]}) duplicated an existing history "
+                "record and was quarantined (dropped, not silently kept)."
+            )
+            continue
+        seen_keys.add(key)
+        known_ids.add(group.search_intent_group_id)
+        parsed.append((index, group))
+
+    normalised: List[dict] = []
+    for index, group in parsed:
+        parent = group.parent_search_intent_group_id
+        supersedes = group.supersedes_search_intent_group_id
+        issue: str | None = None
+        if parent and parent not in known_ids:
+            issue = f"references unknown parent {parent!r}"
+        elif parent and parent != SEARCH_INTENT_GROUP_ID_NON_BRAND:
+            issue = "has a deeper-group parent other than Non-Brand Search"
+        elif supersedes is not None and (
+            not isinstance(supersedes, str)
+            or not supersedes.strip()
+            or supersedes not in known_ids
+        ):
+            issue = f"references unknown superseded group {supersedes!r}"
+        if issue:
+            warnings.append(
+                f"Search intent taxonomy version record {index} "
+                f"({group.search_intent_group_id!r}, version "
+                f"{group.search_intent_group_version}) {issue} and was "
+                "quarantined (dropped, not silently kept)."
+            )
+            continue
+        normalised.append(group.to_dict())
+    return normalised, warnings
 
 
 def resolve_search_intent_model_grain(

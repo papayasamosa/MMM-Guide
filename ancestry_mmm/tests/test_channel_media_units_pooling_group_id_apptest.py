@@ -119,6 +119,14 @@ def test_save_does_not_fabricate_pooling_group_id_for_a_new_row():
 
 def test_search_reclassification_invalidates_a_trained_model():
     df, spec = _base_state()
+    prepared_spec = ModelSpec(
+        date_col="date",
+        market_col="market",
+        markets=["UK"],
+        channels=["tv_spend", "unused_search_child"],
+        segment_outcomes={"New": "New"},
+    )
+    fitted_spec = spec.to_dict()
     existing = ActivityDefinition(
         activity_id="UK:paid-search",
         market="UK",
@@ -133,7 +141,7 @@ def test_search_reclassification_invalidates_a_trained_model():
     )
     at = _run_at(
         df,
-        spec,
+        ModelSpec.from_dict(fitted_spec),
         activity_definitions=[existing.to_dict()],
         search_intent_model_grain=[
             SEARCH_INTENT_GROUP_ID_BRAND,
@@ -142,6 +150,8 @@ def test_search_reclassification_invalidates_a_trained_model():
         model_trained=True,
         model_approval={"approved_by": "reviewer"},
         trace="fitted-trace",
+        prepared_model_spec=prepared_spec.to_dict(),
+        fitted_model_spec=fitted_spec,
     )
     assert not at.exception, f"initial page raised: {at.exception}"
 
@@ -157,10 +167,33 @@ def test_search_reclassification_invalidates_a_trained_model():
     assert at.session_state["model_trained"] is False
     assert at.session_state["trace"] is None
     assert at.session_state["model_approval"] is None
+    assert at.session_state["model_spec"]["channels"] == [
+        "tv_spend",
+        "unused_search_child",
+    ]
+    assert at.session_state["fitted_model_spec"] is None
     assert any(
         "fitted model" in (warning.value or "") and "invalidated" in warning.value
         for warning in at.warning
     )
+
+
+def test_default_empty_search_grain_does_not_invalidate_a_matching_fit():
+    """The empty persisted spelling resolves to the approved parent grain."""
+
+    df, spec = _base_state()
+    at = _run_at(
+        df,
+        spec,
+        search_intent_model_grain=[],
+        model_trained=True,
+        trace="fitted-trace",
+        model_approval={"approved_by": "reviewer"},
+    )
+
+    assert not at.exception, f"default grain page raised: {at.exception}"
+    assert at.session_state["model_trained"] is True
+    assert at.session_state["trace"] == "fitted-trace"
 
 
 def test_activity_mapping_is_reachable_before_model_structure():

@@ -297,11 +297,81 @@ def test_adopting_durable_fit_restores_the_frozen_search_grain_frame(
     assert at.session_state["frame"]["channels"] == ["TV"]
     assert at.session_state["frame"]["X_media"].shape == (len(base_frame["X_media"]), 1)
     assert at.session_state["model_spec"]["channels"] == ["TV"]
+    assert at.session_state["fitted_model_spec"]["channels"] == ["TV"]
+    assert at.session_state["prepared_model_spec"]["channels"] == CHANNELS
+    assert at.session_state["prepared_frame"]["channels"] == CHANNELS
     assert at.session_state["mcmc_draws"] == 4
     assert at.session_state["mcmc_tune"] == 2
     assert at.session_state["mcmc_chains"] == 1
     assert at.session_state["mcmc_target_accept"] == 0.83
     assert at.session_state["mcmc_random_seed"] == 42
+
+
+def test_adopting_search_fit_keeps_unsliced_preparation_boundary_available(
+    monkeypatch, tmp_path
+):
+    """A fitted Search subset must not become the only model configuration."""
+
+    project_name = "grain-invalidation-project"
+    monkeypatch.setenv("ANCESTRY_MMM_FIT_JOB_ROOT", str(tmp_path))
+    base_frame = _frame()
+    frozen_frame = dict(base_frame)
+    frozen_frame["channels"] = ["TV"]
+    frozen_frame["X_media"] = base_frame["X_media"][:, :1]
+    frozen_spec = _spec_dict()
+    frozen_spec["channels"] = ["TV"]
+    store = FitJobStore(tmp_path, project_name)
+    record = store.create(
+        FitJobSubmission(
+            project_id=project_name,
+            project_display_name=project_name,
+            engine="pymc",
+            model_type="shared",
+            sampler_settings={"draws": 4, "tune": 2, "chains": 1},
+            random_seed=42,
+            data_fingerprint="data-fp",
+            model_spec_fingerprint="spec-fp",
+            fit_input_fingerprints={"seo": "seo-fp", "frame": "data-fp"},
+            build_kwargs={"frame": frozen_frame, "model_spec": frozen_spec},
+        )
+    )
+    store.transition(record.job_id, "running")
+    store.transition(record.job_id, "succeeded")
+    fitted_meta = FHModelMeta(
+        markets=["UK"],
+        outcome_ids=[OUTCOME_ID],
+        channels=["TV"],
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0],
+        dna_outcome_id=OUTCOME_ID,
+        dna_lag_weeks=0,
+        unpooled_markets=[],
+        control_names=[],
+    )
+
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service.LocalFitJobBackend.load_succeeded_fit",
+        lambda backend, job_id, **kwargs: (
+            object(),
+            fitted_meta,
+            backend.store.get(job_id),
+        ),
+    )
+    import ancestry_mmm.core.predict as predict
+
+    monkeypatch.setattr(predict, "extract_posterior_params", lambda *args: {"ok": 1})
+
+    at = _run_at(project_name=project_name, frame=base_frame)
+    next(
+        button for button in at.button if button.label == "Adopt completed fit"
+    ).click()
+    at.run()
+
+    assert not at.exception, f"fit adoption raised: {at.exception}"
+    assert at.session_state["model_spec"]["channels"] == ["TV"]
+    assert at.session_state["prepared_model_spec"]["channels"] == CHANNELS
+    assert at.session_state["fitted_model_spec"]["channels"] == ["TV"]
 
 
 def test_changed_seo_boundary_clears_adopted_fit_and_downstream_evidence():

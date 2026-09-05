@@ -35,6 +35,7 @@ class ProjectExportInput:
     dna_lag_weeks: int
     trace: Optional[az.InferenceData]
     scenarios: List[dict]
+    fitted_model_spec: Optional[dict] = None
     curve_bank_source_dir: Optional[str] = None
     curve_artifact_store_source_dir: Optional[str] = None
     model_approval: Optional[dict] = None
@@ -168,6 +169,7 @@ class ProjectService:
                 exp_input.dna_lag_weeks,
                 exp_input.trace,
                 exp_input.scenarios,
+                fitted_model_spec=exp_input.fitted_model_spec,
                 curve_bank_source_dir=cb_path,
                 curve_artifact_store_source_dir=curve_artifact_store_path,
                 model_approval=exp_input.model_approval,

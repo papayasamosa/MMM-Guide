@@ -94,7 +94,7 @@ render_workspace_note(
     kind="governed",
 )
 
-spec_dict = get_state("model_spec")
+spec_dict = get_state("prepared_model_spec") or get_state("model_spec")
 df = get_state("transformed_data")
 if df is None:
     st.markdown("---")
@@ -297,6 +297,14 @@ _selected_model_grain = st.multiselect(
     help="Select parent Brand/Non-Brand or an explicitly governed deeper child. Parent and child cannot be fitted together.",
 )
 try:
+    # Compare semantic grains, not their raw serialized form.  The empty
+    # saved value is the legacy/default spelling of the approved parent
+    # grain, so opening this page must not invalidate a fit merely because
+    # the current UI resolves that empty value to its explicit parents.
+    _saved_resolved_model_grain = resolve_search_intent_model_grain(
+        _saved_model_grain,
+        search_intent_groups,
+    )
     _resolved_model_grain = resolve_search_intent_model_grain(
         _selected_model_grain,
         search_intent_groups,
@@ -304,7 +312,7 @@ try:
 except ValueError as exc:
     st.error(f"Search model grain is invalid: {exc}")
 else:
-    _grain_changed = tuple(_resolved_model_grain) != _saved_model_grain
+    _grain_changed = tuple(_resolved_model_grain) != tuple(_saved_resolved_model_grain)
     set_state("search_intent_model_grain", list(_resolved_model_grain))
     if _grain_changed and get_state("model_trained"):
         clear_model_state()

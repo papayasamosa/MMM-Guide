@@ -321,6 +321,58 @@ def test_import_restores_custom_search_child_under_approved_parent(
     )
 
 
+def test_import_quarantines_malformed_search_taxonomy_history_only(
+    monkeypatch, tmp_path
+):
+    """Malformed audit history must not discard a valid current child."""
+
+    export_root = tmp_path / "exports"
+    monkeypatch.setattr("ancestry_mmm.utils.PROJECT_EXPORT_ROOT", export_root)
+    child = SearchIntentGroup(
+        search_intent_group_id="non_brand_search_genealogy",
+        search_intent_group_name="Genealogy Non-Brand",
+        brand_class="generic_non_brand",
+        parent_search_intent_group_id="non_brand_search",
+    )
+    bundle_path = export_project(
+        tmp_path / "malformed-taxonomy-history.zip",
+        raw_sources={},
+        transformed_data=None,
+        pipeline_steps=[],
+        model_spec=None,
+        prior_config=None,
+        dna_lag_weeks=0,
+        trace=None,
+        scenarios=[],
+        search_intent_groups=[child.to_dict()],
+        search_intent_group_versions=[
+            {**child.to_dict(), "search_intent_group_version": "bad"}
+        ],
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    at.file_uploader[0].set_value(
+        (bundle_path.name, bundle_path.read_bytes(), "application/zip")
+    ).run()
+    next(
+        button for button in at.button if button.label == "Import bundle"
+    ).click().run()
+
+    assert not at.exception, f"malformed history import raised: {at.exception}"
+    restored_ids = {
+        item["search_intent_group_id"]
+        for item in at.session_state["search_intent_groups"]
+    }
+    assert child.search_intent_group_id in restored_ids
+    assert at.session_state["search_intent_group_versions"] == []
+    assert any(
+        "version record" in (warning.value or "")
+        and "quarantined" in (warning.value or "")
+        for warning in at.warning
+    )
+
+
 def test_import_clears_stale_cached_optimiser_results(monkeypatch, tmp_path):
     """Fresh review finding: a cached constrained_result/unconstrained_result
     left over from a DIFFERENT project earlier in this same Streamlit

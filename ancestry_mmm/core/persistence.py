@@ -6,7 +6,8 @@ Bundle layout (a single zip):
     data/raw_<source>.parquet          - each raw source, as uploaded
     data/transformed.parquet           - post-pipeline data
     config/pipeline_steps.json         - ordered transform steps
-    config/model_spec.json             - ModelSpec
+    config/model_spec.json             - unsliced preparation ModelSpec
+    config/fitted_model_spec.json      - optional Search-grain fit ModelSpec
     config/prior_config.json           - prior overrides + dna_lag_weeks
     config/model_run_id.json           - the fitted model's run ID, if trained
     config/model_meta.json             - FHModelMeta, if trained (lets a re-import
@@ -225,8 +226,10 @@ from .optimization import SpendConstraint
 # outcome valuation records. 24 -> 25 for the versioned Search intent
 # taxonomy and its persisted history. 25 -> 26 for the explicit Search
 # model/reporting grain. Older bundles remain importable
-# because these fields restore as None until explicitly reviewed.
-PROJECT_BUNDLE_SCHEMA_VERSION = 26
+# because these fields restore as None until explicitly reviewed. 26 -> 27
+# for the optional fitted Search-grain ModelSpec kept beside the unsliced
+# preparation boundary.
+PROJECT_BUNDLE_SCHEMA_VERSION = 27
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -288,6 +291,7 @@ def export_project(
     dna_lag_weeks: int,
     trace: Optional[az.InferenceData],
     scenarios: List[dict],
+    fitted_model_spec: Optional[dict] = None,
     curve_bank_source_dir: Optional[Path] = None,
     curve_artifact_store_source_dir: Optional[Path] = None,
     model_approval: Optional[dict] = None,
@@ -390,6 +394,10 @@ def export_project(
         if model_spec is not None:
             (tmp / "config" / "model_spec.json").write_text(
                 json.dumps(model_spec, indent=2, default=str)
+            )
+        if fitted_model_spec is not None:
+            (tmp / "config" / "fitted_model_spec.json").write_text(
+                json.dumps(fitted_model_spec, indent=2, default=str)
             )
         (tmp / "config" / "prior_config.json").write_text(
             json.dumps(
@@ -755,6 +763,7 @@ def export_project(
                 "raw_data": bool(raw_sources),
                 "transformed_data": transformed_data is not None,
                 "model_spec": model_spec is not None,
+                "fitted_model_spec": fitted_model_spec is not None,
                 "outcome_groups": outcome_groups is not None and bool(outcome_groups),
                 "outcome_group_treatments": outcome_group_treatments is not None
                 and bool(outcome_group_treatments),
@@ -842,6 +851,7 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         "transformed_data": None,
         "pipeline_steps": [],
         "model_spec": None,
+        "fitted_model_spec": None,
         "prior_config": {},
         "dna_lag_weeks": 4,
         "trace": None,
@@ -1024,6 +1034,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "model_spec.json").exists():
             result["model_spec"] = json.loads(
                 (config_dir / "model_spec.json").read_text()
+            )
+        if (config_dir / "fitted_model_spec.json").exists():
+            result["fitted_model_spec"] = json.loads(
+                (config_dir / "fitted_model_spec.json").read_text()
             )
         if (config_dir / "prior_config.json").exists():
             prior_data = json.loads((config_dir / "prior_config.json").read_text())
@@ -3262,7 +3276,8 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
         if imported.get("official_prepared_data") is not None
         else imported.get("transformed_data")
     )
-    if fit_input is not None and imported.get("model_spec") is not None:
+    fitted_spec_dict = imported.get("fitted_model_spec") or imported.get("model_spec")
+    if fit_input is not None and fitted_spec_dict is not None:
         try:
             # Local import: `ancestry_mmm.data.preprocessor` imports `ancestry_mmm.core.schema`
             # at module level, so importing it at module level here would close a
@@ -3272,7 +3287,7 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
             from ..data.preprocessor import prepare_fh_modeling_frame
             from .outcomes import resolve_outcome_definitions
 
-            spec = ModelSpec.from_dict(imported["model_spec"])
+            spec = ModelSpec.from_dict(fitted_spec_dict)
             transformed_data = fit_input
             outcome_definitions = resolve_outcome_definitions(
                 imported.get("outcome_definitions"),
@@ -3383,8 +3398,9 @@ def current_model_identity_fingerprints(
             _resolved_coverage_matrices
         )
     )
+    fitted_spec_dict = imported.get("fitted_model_spec") or imported.get("model_spec")
     spec_fp = fingerprint_model_spec(
-        imported.get("model_spec") or {},
+        fitted_spec_dict or {},
         imported.get("prior_config") or {},
         imported.get("dna_lag_weeks", 4),
         model_type=imported.get("model_type", "shared"),
@@ -3412,9 +3428,7 @@ def current_model_identity_fingerprints(
         search_object_fit_fingerprint=(
             search_object_fit_fingerprint(
                 imported["search_objects"],
-                consumed_model_input_columns=(imported.get("model_spec") or {}).get(
-                    "channels"
-                )
+                consumed_model_input_columns=(fitted_spec_dict or {}).get("channels")
                 or [],
             )
             if imported.get("search_objects")

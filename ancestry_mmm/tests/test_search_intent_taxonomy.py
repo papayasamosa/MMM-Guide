@@ -26,6 +26,7 @@ from ancestry_mmm.core.search_intent_taxonomy import (
     roll_up_paid_search_reporting,
     roll_up_paid_search_reporting_hierarchy,
     resolve_search_model_input_columns,
+    resolve_imported_search_intent_group_versions,
     validate_activity_search_taxonomy,
 )
 
@@ -126,6 +127,31 @@ class TestNewSearchIntentGroupVersion:
             new_search_intent_group_version(
                 BRAND_SEARCH_INTENT_GROUP, approval_status="approved"
             )
+
+
+def test_malformed_imported_taxonomy_history_is_quarantined_without_losing_valid_rows():
+    child = SearchIntentGroup(
+        search_intent_group_id="non_brand_genealogy",
+        search_intent_group_name="Genealogy",
+        brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+        parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+    )
+    valid = child.to_dict()
+    malformed_version = {**valid, "search_intent_group_version": "not-an-int"}
+    malformed_lineage = {
+        **valid,
+        "search_intent_group_version": 2,
+        "supersedes_search_intent_group_id": "missing-group",
+    }
+
+    restored, warnings = resolve_imported_search_intent_group_versions(
+        [valid, malformed_version, malformed_lineage],
+        current_groups=[child],
+    )
+
+    assert restored == [valid]
+    assert len(warnings) == 2
+    assert all("quarantined" in warning for warning in warnings)
 
 
 class _FakeActivity:

@@ -1420,6 +1420,12 @@ for _completed_job in _fit_job_backend.store.list(statuses={"succeeded"}):
                 raise ValueError(
                     "Fit artifact is missing its persisted frozen model specification."
                 )
+            _prepared_model_spec = get_state("prepared_model_spec")
+            if _prepared_model_spec is None:
+                _prepared_model_spec = get_state("model_spec")
+            _prepared_frame = get_state("prepared_frame")
+            if _prepared_frame is None:
+                _prepared_frame = get_state("frame")
             _fitted_channels = list(getattr(_meta, "channels", ()) or ())
             if _fitted_channels and list(_fitted_frame.get("channels") or ()) != (
                 _fitted_channels
@@ -1437,6 +1443,9 @@ for _completed_job in _fit_job_backend.store.list(statuses={"succeeded"}):
             # payload. Restore the paired frozen specification and frame before
             # downstream diagnostics, curves, and planning replay the posterior;
             # the live session may still contain the unsliced preparation pair.
+            set_state("prepared_model_spec", _prepared_model_spec)
+            set_state("prepared_frame", _prepared_frame)
+            set_state("fitted_model_spec", _fitted_model_spec)
             set_state("model_spec", _fitted_model_spec)
             set_state("frame", _fitted_frame)
             set_state("model", None)

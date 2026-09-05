@@ -161,7 +161,7 @@ render_technical_details(
     }
 )
 
-_saved_spec_dict = get_state("model_spec")
+_saved_spec_dict = get_state("prepared_model_spec") or get_state("model_spec")
 _saved_spec = ModelSpec.from_dict(_saved_spec_dict) if _saved_spec_dict else None
 _saved_outcome_rows = get_state("outcome_definitions") or []
 _saved_pathway_rows = get_state("media_outcome_pathways") or []
@@ -2018,6 +2018,12 @@ if st.button("Save structure and validate", type="primary"):
         if updated_df is not None:
             set_state("transformed_data", updated_df)
         set_state("model_spec", spec.to_dict())
+        # Structure is the unsliced preparation boundary.  Replacing it
+        # invalidates any previously prepared frame; keep the boundary
+        # explicit so durable Search-grain adoption cannot make a fitted
+        # subset the only recoverable model specification.
+        set_state("prepared_model_spec", spec.to_dict())
+        set_state("prepared_frame", None)
         set_state("outcome_definitions", [o.to_dict() for o in outcome_definitions])
         set_state(
             "outcome_groups",
