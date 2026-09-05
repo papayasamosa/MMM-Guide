@@ -131,6 +131,7 @@ from ancestry_mmm.core.search_intent_taxonomy import (
     resolve_imported_search_intent_groups,
     resolve_imported_search_intent_group_versions,
     resolve_search_intent_model_grain,
+    search_intent_taxonomy_fit_fingerprint,
 )
 from ancestry_mmm.core.coverage import (
     VariableCoverageMatrix,
@@ -399,6 +400,12 @@ def _resolve_official_curve_artifact_rows() -> list[dict]:
                     )
                     if search_objects
                     else None
+                ),
+                search_intent_taxonomy_fit_fingerprint=search_intent_taxonomy_fit_fingerprint(
+                    activity_definitions,
+                    get_state("search_intent_groups") or [],
+                    get_state("search_intent_group_versions") or [],
+                    consumed_model_input_columns=spec_dict.get("channels") or [],
                 ),
                 variable_coverage_fingerprint=(
                     VariableCoverageMatrix.from_dict(coverage_matrix_dict).fingerprint()
@@ -805,6 +812,7 @@ if st.button("Build export bundle", type="primary"):
             dna_lag_weeks=get_state("dna_lag_weeks", 4),
             trace=get_state("trace"),
             scenarios=get_state("scenarios") or [],
+            project_display_name=project_name,
             curve_bank_source_dir=curve_bank_dir(),
             curve_artifact_store_source_dir=curve_artifact_store_dir(),
             model_approval=get_state("model_approval"),
@@ -1071,6 +1079,11 @@ if uploaded_zip is not None and st.button("Import bundle"):
     except UnsafeZipEntryError as e:
         st.error(f"Refusing to import this bundle: {e}")
     else:
+        if (
+            isinstance(imported.get("project_display_name"), str)
+            and imported["project_display_name"].strip()
+        ):
+            set_state("project_name", imported["project_display_name"])
         set_state("raw_sources", imported["raw_sources"])
 
         # Replay promotion-event pipeline steps fresh against the imported

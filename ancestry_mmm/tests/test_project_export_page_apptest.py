@@ -288,6 +288,7 @@ def test_import_restores_custom_search_child_under_approved_parent(
         dna_lag_weeks=0,
         trace=None,
         scenarios=[],
+        project_display_name="Imported Human Project",
         activity_definitions=[activity.to_dict()],
         search_intent_groups=[child.to_dict()],
         search_intent_model_grain=[child.search_intent_group_id],
@@ -315,6 +316,7 @@ def test_import_restores_custom_search_child_under_approved_parent(
     )
     assert at.session_state["activity_definitions"][0]["search_platform"] == "google"
     assert at.session_state["activity_definitions"][0]["platform"] == "SA360"
+    assert at.session_state["project_name"] == "Imported Human Project"
     assert (
         at.session_state["activity_definitions"][0]["model_input_column"]
         == "paid_search_genealogy"

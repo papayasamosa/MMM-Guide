@@ -202,6 +202,10 @@ from .pathways import (
     OutcomeReconciliationGroup,
     validate_reconciliation_groups,
 )
+from .search_intent_taxonomy import (
+    resolve_imported_search_intent_groups,
+    search_intent_taxonomy_fit_fingerprint,
+)
 from .planning.value import CurrencyContext, OutcomeValueMapping
 from .predict import extract_posterior_params
 from .scenario_governance import CounterfactualPolicy
@@ -228,8 +232,9 @@ from .optimization import SpendConstraint
 # model/reporting grain. Older bundles remain importable
 # because these fields restore as None until explicitly reviewed. 26 -> 27
 # for the optional fitted Search-grain ModelSpec kept beside the unsliced
-# preparation boundary.
-PROJECT_BUNDLE_SCHEMA_VERSION = 27
+# preparation boundary. 27 -> 28 for the optional human-readable project
+# display name used to restore durable fit-job identity after session loss.
+PROJECT_BUNDLE_SCHEMA_VERSION = 28
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -356,6 +361,7 @@ def export_project(
     experiments: Optional[dict] = None,
     named_events: Optional[dict] = None,
     prefit_runs: Optional[List[dict]] = None,
+    project_display_name: Optional[str] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp_str:
@@ -758,6 +764,7 @@ def export_project(
         manifest = {
             "schema_version": PROJECT_BUNDLE_SCHEMA_VERSION,
             "app_version": PROJECT_APP_VERSION,
+            "project_display_name": project_display_name,
             "workflow_checkpoint": (workflow_state or {}).get("checkpoint", "unknown"),
             "contains": {
                 "raw_data": bool(raw_sources),
@@ -895,6 +902,7 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         "media_outcome_pathways": None,
         "net_billthrough_metadata": None,
         "manifest": None,
+        "project_display_name": None,
         "workflow_state": None,
         "diagnostics": {},
         "notes": None,
@@ -1000,6 +1008,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
 
         if (tmp / "manifest.json").exists():
             result["manifest"] = json.loads((tmp / "manifest.json").read_text())
+            if isinstance(result["manifest"], Mapping):
+                result["project_display_name"] = result["manifest"].get(
+                    "project_display_name"
+                )
 
         data_dir = tmp / "data"
         if data_dir.exists():
@@ -3399,6 +3411,9 @@ def current_model_identity_fingerprints(
         )
     )
     fitted_spec_dict = imported.get("fitted_model_spec") or imported.get("model_spec")
+    taxonomy_groups = resolve_imported_search_intent_groups(
+        imported.get("search_intent_groups") or []
+    )
     spec_fp = fingerprint_model_spec(
         fitted_spec_dict or {},
         imported.get("prior_config") or {},
@@ -3433,6 +3448,12 @@ def current_model_identity_fingerprints(
             )
             if imported.get("search_objects")
             else None
+        ),
+        search_intent_taxonomy_fit_fingerprint=search_intent_taxonomy_fit_fingerprint(
+            imported.get("activity_definitions") or [],
+            taxonomy_groups,
+            imported.get("search_intent_group_versions") or [],
+            consumed_model_input_columns=(fitted_spec_dict or {}).get("channels") or [],
         ),
         variable_coverage_fingerprint=(
             VariableCoverageMatrix.from_dict(current_coverage_matrix_dict).fingerprint()

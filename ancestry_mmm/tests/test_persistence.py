@@ -402,6 +402,17 @@ def test_export_then_import_reproduces_config(tmp_path, sample_project):
     assert imported["model_approval"] == sample_project["model_approval"]
 
 
+def test_export_then_import_restores_human_project_display_name(
+    tmp_path, sample_project
+):
+    project = dict(sample_project)
+    project["project_display_name"] = "UK Production 2026"
+
+    imported = import_project(export_project(tmp_path / "named-project.zip", **project))
+
+    assert imported["project_display_name"] == "UK Production 2026"
+
+
 def test_export_then_import_preserves_distinct_fitted_model_spec(
     tmp_path, sample_project
 ):

@@ -27,6 +27,7 @@ from ancestry_mmm.core.search_intent_taxonomy import (
     roll_up_paid_search_reporting_hierarchy,
     resolve_search_model_input_columns,
     resolve_imported_search_intent_group_versions,
+    search_intent_taxonomy_fit_fingerprint,
     validate_activity_search_taxonomy,
 )
 
@@ -154,6 +155,32 @@ def test_malformed_imported_taxonomy_history_is_quarantined_without_losing_valid
     assert all("quarantined" in warning for warning in warnings)
 
 
+def test_history_lineage_cannot_rely_on_a_quarantined_record():
+    child = SearchIntentGroup(
+        search_intent_group_id="non_brand_genealogy",
+        search_intent_group_name="Genealogy",
+        brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+        parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+    )
+    dependent = {
+        **child.to_dict(),
+        "search_intent_group_id": "dependent",
+        "supersedes_search_intent_group_id": "quarantined",
+    }
+    quarantined = {
+        **child.to_dict(),
+        "search_intent_group_id": "quarantined",
+        "parent_search_intent_group_id": "missing-parent",
+    }
+
+    restored, warnings = resolve_imported_search_intent_group_versions(
+        [dependent, quarantined], current_groups=[child]
+    )
+
+    assert restored == []
+    assert len(warnings) == 2
+
+
 class _FakeActivity:
     def __init__(
         self,
@@ -162,12 +189,18 @@ class _FakeActivity:
         search_platform="",
         campaign_type="",
         planning_eligibility="excluded",
+        economic_treatment="response_only",
+        model_input_column="",
+        channel="search_input",
     ):
         self.activity_id = activity_id
         self.search_intent_group_id = search_intent_group_id
         self.search_platform = search_platform
         self.campaign_type = campaign_type
         self.planning_eligibility = planning_eligibility
+        self.economic_treatment = economic_treatment
+        self.model_input_column = model_input_column
+        self.channel = channel
 
 
 class TestValidateActivitySearchTaxonomy:
@@ -214,7 +247,7 @@ class TestValidateActivitySearchTaxonomy:
         activities = [_FakeActivity("x", campaign_type="pmax")]
         assert validate_activity_search_taxonomy(activities) == []
 
-    def test_deeper_child_cannot_be_marked_optimisable(self):
+    def test_deeper_child_planning_and_cost_economics_fail_closed(self):
         child = SearchIntentGroup(
             search_intent_group_id="non_brand_generic_keywords",
             search_intent_group_name="Non-Brand: Generic Keywords",
@@ -226,14 +259,41 @@ class TestValidateActivitySearchTaxonomy:
             child.search_intent_group_id,
             SEARCH_PLATFORM_GOOGLE,
             planning_eligibility="optimisable",
+            economic_treatment="paid_media_cost",
         )
         issues = validate_activity_search_taxonomy(
             [activity], (*APPROVED_MINIMUM_SEARCH_INTENT_GROUPS, child)
         )
-        assert any(
-            "child economics and planning remain unavailable" in issue
-            for issue in issues
-        )
+        assert any("planning remains excluded" in issue for issue in issues)
+        assert any("cost-bearing economic_treatment" in issue for issue in issues)
+
+
+def test_search_taxonomy_fit_fingerprint_binds_consumed_group_metadata():
+    child = SearchIntentGroup(
+        search_intent_group_id="non_brand_generic_keywords",
+        search_intent_group_name="Non-Brand: Generic Keywords",
+        brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+        parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+    )
+    activity = _FakeActivity(
+        "child", child.search_intent_group_id, model_input_column="search_input"
+    )
+    first = search_intent_taxonomy_fit_fingerprint(
+        [activity],
+        [child],
+        [child.to_dict()],
+        consumed_model_input_columns=["search_input"],
+    )
+    changed = SearchIntentGroup(
+        **{**child.to_dict(), "search_intent_group_name": "Changed name"}
+    )
+    second = search_intent_taxonomy_fit_fingerprint(
+        [activity],
+        [changed],
+        [changed.to_dict()],
+        consumed_model_input_columns=["search_input"],
+    )
+    assert first != second
 
 
 class TestPaidSearchReportingRollup:

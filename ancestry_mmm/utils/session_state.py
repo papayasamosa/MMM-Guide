@@ -48,6 +48,9 @@ def init_session_state():
         "join_diagnostics": None,
         "data_loaded": False,
         "project_name": "ancestry-fh-uk",
+        # Durable fit-job recovery may repopulate this independently of the
+        # disposable display-name input after a browser/session loss.
+        "durable_project_id": None,
         # Transformation pipeline
         "pipeline_steps": [],  # list of TransformStep dicts
         "transformed_data": None,

@@ -34,6 +34,8 @@ carries both a taxonomy reference and one of those campaign types.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import asdict, dataclass, replace
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
@@ -337,34 +339,150 @@ def resolve_imported_search_intent_group_versions(
             )
             continue
         seen_keys.add(key)
-        known_ids.add(group.search_intent_group_id)
         parsed.append((index, group))
 
-    normalised: List[dict] = []
+    # A lineage reference may point to another history-only record, so do not
+    # make every parsed ID known before validating.  Accept records in
+    # dependency order; anything still unresolved after a pass is either
+    # unknown or depends on a record that was itself quarantined.  This keeps
+    # exported history from retaining references to records that are absent
+    # from the retained audit trail.
+    candidate_ids = {group.search_intent_group_id for _, group in parsed}
+    remaining = list(parsed)
+    accepted: List[tuple[int, SearchIntentGroup]] = []
+    accepted_ids = set(known_ids)
+    rejected: dict[int, str] = {}
+    while remaining:
+        progressed = False
+        next_remaining: List[tuple[int, SearchIntentGroup]] = []
+        for index, group in remaining:
+            parent = group.parent_search_intent_group_id
+            supersedes = group.supersedes_search_intent_group_id
+            issue: str | None = None
+            deferred = False
+            if parent and parent != SEARCH_INTENT_GROUP_ID_NON_BRAND:
+                issue = "has a deeper-group parent other than Non-Brand Search"
+            elif parent and parent not in accepted_ids:
+                if parent in candidate_ids:
+                    deferred = True
+                else:
+                    issue = f"references unknown parent {parent!r}"
+            elif supersedes is not None and (
+                not isinstance(supersedes, str) or not supersedes.strip()
+            ):
+                issue = f"references unknown superseded group {supersedes!r}"
+            elif supersedes not in {None, *accepted_ids}:
+                if supersedes in candidate_ids:
+                    deferred = True
+                else:
+                    issue = f"references unknown superseded group {supersedes!r}"
+            if deferred and issue is None:
+                next_remaining.append((index, group))
+                continue
+            if issue is not None:
+                rejected[index] = issue
+                continue
+            accepted.append((index, group))
+            accepted_ids.add(group.search_intent_group_id)
+            progressed = True
+        if not next_remaining:
+            break
+        if not progressed:
+            for index, group in next_remaining:
+                rejected[index] = (
+                    "references a quarantined or unresolved lineage record"
+                )
+            break
+        remaining = next_remaining
+
     for index, group in parsed:
-        parent = group.parent_search_intent_group_id
-        supersedes = group.supersedes_search_intent_group_id
-        issue: str | None = None
-        if parent and parent not in known_ids:
-            issue = f"references unknown parent {parent!r}"
-        elif parent and parent != SEARCH_INTENT_GROUP_ID_NON_BRAND:
-            issue = "has a deeper-group parent other than Non-Brand Search"
-        elif supersedes is not None and (
-            not isinstance(supersedes, str)
-            or not supersedes.strip()
-            or supersedes not in known_ids
-        ):
-            issue = f"references unknown superseded group {supersedes!r}"
-        if issue:
-            warnings.append(
-                f"Search intent taxonomy version record {index} "
-                f"({group.search_intent_group_id!r}, version "
-                f"{group.search_intent_group_version}) {issue} and was "
-                "quarantined (dropped, not silently kept)."
-            )
+        if index not in rejected:
             continue
-        normalised.append(group.to_dict())
+        warnings.append(
+            f"Search intent taxonomy version record {index} "
+            f"({group.search_intent_group_id!r}, version "
+            f"{group.search_intent_group_version}) {rejected[index]} and was "
+            "quarantined (dropped, not silently kept)."
+        )
+    normalised = [group.to_dict() for _, group in sorted(accepted)]
     return normalised, warnings
+
+
+def search_intent_taxonomy_fit_fingerprint(
+    activities: Sequence[object],
+    groups: Sequence[SearchIntentGroup | Mapping[str, Any]],
+    versions: Sequence[SearchIntentGroup | Mapping[str, Any]] | None,
+    *,
+    consumed_model_input_columns: Sequence[str],
+) -> str:
+    """Fingerprint the governed Search taxonomy consumed by one fit.
+
+    Only groups attached to activities whose resolved model-input column is
+    actually consumed by the fitted spec are included.  The current group
+    records and their retained lineage records are canonicalised, so a
+    change to a consumed child's name, parent, approval/evidence metadata or
+    version history invalidates the fit while unrelated taxonomy edits do not.
+    """
+
+    current = resolve_imported_search_intent_groups(groups)
+    by_id = {group.search_intent_group_id: group for group in current}
+    consumed_columns = set(consumed_model_input_columns)
+    consumed_ids = {
+        str(group_id)
+        for activity in activities
+        for group_id in [_attr(activity, "search_intent_group_id", None)]
+        if group_id
+        and (
+            str(
+                _attr(activity, "model_input_column", "")
+                or _attr(activity, "channel", "")
+            )
+            in consumed_columns
+        )
+    }
+    if not consumed_ids:
+        return ""
+
+    # Include governed ancestors as well as the directly consumed group.  The
+    # approved parent is part of the causal/reporting boundary for a child.
+    lineage_ids = set(consumed_ids)
+    changed = True
+    while changed:
+        changed = False
+        for group_id in tuple(lineage_ids):
+            parent = by_id.get(group_id)
+            parent_id = parent.parent_search_intent_group_id if parent else None
+            if parent_id and parent_id not in lineage_ids:
+                lineage_ids.add(parent_id)
+                changed = True
+
+    retained_versions, _warnings = resolve_imported_search_intent_group_versions(
+        versions, current_groups=current
+    )
+    version_payload = [
+        value
+        for value in retained_versions
+        if isinstance(value, Mapping)
+        and value.get("search_intent_group_id") in lineage_ids
+    ]
+    payload = {
+        "schema_version": 1,
+        "current_groups": [
+            by_id[group_id].to_dict()
+            for group_id in sorted(lineage_ids)
+            if group_id in by_id
+        ],
+        "version_history": sorted(
+            version_payload,
+            key=lambda value: (
+                str(value.get("search_intent_group_id", "")),
+                int(value.get("search_intent_group_version", 0)),
+            ),
+        ),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def resolve_search_intent_model_grain(
@@ -506,8 +624,8 @@ def validate_activity_search_taxonomy(
       `NON_PAID_SEARCH_CAMPAIGN_TYPES` must not also carry a
       `search_intent_group_id` or `search_platform` (Decision 2's PMax/
       Demand Gen/YouTube exclusion).
-    - A deeper Non-Brand child cannot be marked `optimisable` until it has
-      child-level observed and governed cost support.
+    - A deeper Non-Brand child remains excluded from planning and monetary
+      economics until it has child-level observed and governed support.
     """
     issues: List[str] = []
     catalogue = governed_search_intent_groups(groups)
@@ -530,14 +648,28 @@ def validate_activity_search_taxonomy(
         if (
             referenced_group is not None
             and referenced_group.parent_search_intent_group_id is not None
-            and _attr(activity, "planning_eligibility", "excluded") == "optimisable"
         ):
-            issues.append(
-                f"Activity '{activity_id}' references deeper Search intent group "
-                f"'{group_id}' but is marked optimisable. Deeper child economics "
-                "and planning remain unavailable until child-level observed and "
-                "governed cost evidence is supplied."
-            )
+            planning = _attr(activity, "planning_eligibility", "excluded")
+            economic_treatment = _attr(activity, "economic_treatment", "response_only")
+            if planning != "excluded":
+                issues.append(
+                    f"Activity '{activity_id}' references deeper Search intent group "
+                    f"'{group_id}' but has planning_eligibility '{planning}'. "
+                    "Deeper-child planning remains excluded until child-level "
+                    "evidence is approved."
+                )
+            if economic_treatment in {
+                "paid_media_cost",
+                "fully_loaded_cost",
+                "campaign_cost",
+            }:
+                issues.append(
+                    f"Activity '{activity_id}' references deeper Search intent group "
+                    f"'{group_id}' but has cost-bearing economic_treatment "
+                    f"'{economic_treatment}'. Deeper-child economics remain "
+                    "unavailable until child-level observed cost support is "
+                    "approved."
+                )
         if platform and platform not in SEARCH_PLATFORMS:
             issues.append(
                 f"Activity '{activity_id}' has unknown search_platform "

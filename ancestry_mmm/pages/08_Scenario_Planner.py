@@ -49,6 +49,9 @@ from ancestry_mmm.core.search_objects import (
     SearchObjectDefinition,
     search_object_fit_fingerprint,
 )
+from ancestry_mmm.core.search_intent_taxonomy import (
+    search_intent_taxonomy_fit_fingerprint,
+)
 from ancestry_mmm.core.coverage import VariableCoverageMatrix
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
@@ -993,6 +996,12 @@ if model_run_id and spec_dict is not None:
                 )
                 if search_objects
                 else None
+            ),
+            search_intent_taxonomy_fit_fingerprint=search_intent_taxonomy_fit_fingerprint(
+                activity_definitions,
+                get_state("search_intent_groups") or [],
+                get_state("search_intent_group_versions") or [],
+                consumed_model_input_columns=spec_dict.get("channels") or [],
             ),
             variable_coverage_fingerprint=(
                 VariableCoverageMatrix.from_dict(coverage_matrix_dict).fingerprint()

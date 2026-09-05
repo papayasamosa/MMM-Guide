@@ -75,6 +75,7 @@ from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_finger
 from ancestry_mmm.core.search_intent_taxonomy import (
     resolve_imported_search_intent_groups,
     resolve_search_model_input_columns,
+    search_intent_taxonomy_fit_fingerprint,
 )
 from ancestry_mmm.core.search_objects import search_object_fit_fingerprint
 from ancestry_mmm.core.search_capacity import (
@@ -164,7 +165,23 @@ render_workspace_note(
 # browser session loss still exposes active/orphaned/completed jobs.
 def _current_project_display_name() -> str:
     value = get_state("project_name", "ancestry-fh-uk")
-    return value if isinstance(value, str) and value else "ancestry-fh-uk"
+    if isinstance(value, str) and value and value != "ancestry-fh-uk":
+        set_state("durable_project_id", canonical_project_id(value))
+        return value
+    discovered = FitJobStore.discover_project_identity()
+    if discovered is not None:
+        _project_id, display_name = discovered
+        if display_name and display_name != "ancestry-fh-uk":
+            # A new Streamlit session can recover the durable project/job
+            # namespace without asking the analyst to re-enter its display
+            # name.  The job record remains the source of truth for the
+            # canonical filesystem ID.
+            set_state("project_name", display_name)
+            set_state("durable_project_id", _project_id)
+            return display_name
+    display_name = value if isinstance(value, str) and value else "ancestry-fh-uk"
+    set_state("durable_project_id", canonical_project_id(display_name))
+    return display_name
 
 
 _fit_job_backend = LocalFitJobBackend(
@@ -1115,6 +1132,14 @@ def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
             )
             if search_objects
             else None
+        ),
+        search_intent_taxonomy_fit_fingerprint=(
+            search_intent_taxonomy_fit_fingerprint(
+                activity_definitions,
+                get_state("search_intent_groups") or [],
+                get_state("search_intent_group_versions") or [],
+                consumed_model_input_columns=fit_spec.channels,
+            )
         ),
         variable_coverage_fingerprint=(
             VariableCoverageMatrix.from_dict(coverage_matrix_dict).fingerprint()

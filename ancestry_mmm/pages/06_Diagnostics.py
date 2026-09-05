@@ -62,6 +62,9 @@ from ancestry_mmm.core.search_objects import (
     SearchObjectDefinition,
     search_object_fit_fingerprint,
 )
+from ancestry_mmm.core.search_intent_taxonomy import (
+    search_intent_taxonomy_fit_fingerprint,
+)
 from ancestry_mmm.core.coverage import VariableCoverageMatrix
 from ancestry_mmm.core.market_data_capability import check_market_channel_capability
 from ancestry_mmm.core.data_support_classification import (
@@ -517,6 +520,14 @@ if model_run_id and posterior_params is not None and model_spec_dict is not None
                 )
                 if search_objects
                 else None
+            ),
+            search_intent_taxonomy_fit_fingerprint=(
+                search_intent_taxonomy_fit_fingerprint(
+                    activity_definitions,
+                    get_state("search_intent_groups") or [],
+                    get_state("search_intent_group_versions") or [],
+                    consumed_model_input_columns=model_spec_dict.get("channels") or [],
+                )
             ),
             named_event_fit_fingerprint=(
                 current_named_event_fit_inputs.fingerprint()

@@ -211,6 +211,40 @@ class FitJobStore:
         directory = Path(job_dir).resolve()
         return cls(directory.parents[1], directory.parent.name)
 
+    @classmethod
+    def discover_project_identity(
+        cls, root: Path | str | None = None
+    ) -> tuple[str, str] | None:
+        """Find the most recently submitted durable project independently of UI state.
+
+        Streamlit session state is intentionally disposable.  A fresh browser
+        session therefore cannot rely on ``project_name`` to find a running or
+        completed worker.  Job records retain both the canonical filesystem ID
+        and the human-readable name, so the latest durable record is a safe
+        recovery hint when no explicit project name has been restored yet.
+        """
+
+        configured_root = os.environ.get("ANCESTRY_MMM_FIT_JOB_ROOT")
+        root_path = Path(
+            root or configured_root or Path(__file__).resolve().parents[1] / ".fit_jobs"
+        )
+        if not root_path.exists():
+            return None
+        candidates: list[FitJobRecord] = []
+        for path in root_path.glob("*/*/job.json"):
+            try:
+                record = FitJobRecord.from_dict(
+                    json.loads(path.read_text(encoding="utf-8"))
+                )
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                continue
+            candidates.append(record)
+        if not candidates:
+            return None
+        latest = max(candidates, key=lambda record: (record.created_at, record.job_id))
+        display_name = latest.project_display_name or latest.project_id
+        return latest.project_id, display_name
+
     def job_dir(self, job_id: str) -> Path:
         safe_id = _SAFE_NAME.sub("_", job_id)
         if safe_id != job_id or not safe_id:

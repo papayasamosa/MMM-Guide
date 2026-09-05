@@ -482,6 +482,10 @@ def test_human_project_names_use_one_canonical_durable_job_id(
     recovered = recovered_store.get(record.job_id)
     assert recovered.status == "queued"
     assert recovered.project_display_name == display_name
+    assert FitJobStore.discover_project_identity(tmp_path) == (
+        expected_id,
+        display_name,
+    )
 
 
 def test_adoption_identity_mismatch_does_not_load_artifact(tmp_path: Path):
