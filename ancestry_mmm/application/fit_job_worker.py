@@ -50,9 +50,17 @@ def run_job(job_dir: Path | str) -> int:
             message="Cancellation was requested before sampling started.",
         )
         return 0
-    record.pid = os.getpid()
-    record.process_start_time = utc_now()
-    store.save(record)
+    # Targeted locked read-modify-write, not a blind save of the `record`
+    # object read above: the launcher's own update_process_metadata() call
+    # (recording pid/process_start_time/process_identity_token) can land in
+    # the gap between that read and a save here. A save of this now-stale
+    # in-memory snapshot would silently clobber process_identity_token back
+    # to None, defeating the PID-reuse check reconciliation relies on. Both
+    # the worker and the launcher target the *same* pid, so whichever of
+    # the two calls this races against writes second, the persisted
+    # identity token is identical either way - the fix is safety against
+    # clobbering unrelated concurrently-written fields, not a fresh value.
+    store.update_process_metadata(job_id, pid=os.getpid(), process_start_time=utc_now())
     store.transition(job_id, "running", message="Worker started.")
     try:
         build_kwargs = store.load_build_kwargs(job_id)
