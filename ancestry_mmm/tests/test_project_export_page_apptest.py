@@ -375,6 +375,98 @@ def test_import_quarantines_malformed_search_taxonomy_history_only(
     )
 
 
+def test_import_preserves_valid_taxonomy_when_only_grain_is_invalid(
+    monkeypatch, tmp_path
+):
+    """Regression for review PRRT_kwDOTd28Js6fkIJn: a valid current
+    taxonomy and version history must survive even when
+    search_intent_model_grain alone is malformed (references an unknown
+    group here) - only the grain is quarantined/reset, not the whole
+    taxonomy, and re-export must not lose the governed child."""
+
+    export_root = tmp_path / "exports"
+    monkeypatch.setattr("ancestry_mmm.utils.PROJECT_EXPORT_ROOT", export_root)
+    child = SearchIntentGroup(
+        search_intent_group_id="non_brand_search_genealogy",
+        search_intent_group_name="Genealogy Non-Brand",
+        brand_class="generic_non_brand",
+        parent_search_intent_group_id="non_brand_search",
+        business_description="Generic genealogy discovery terms.",
+    )
+    bundle_path = export_project(
+        tmp_path / "invalid-grain-only.zip",
+        raw_sources={},
+        transformed_data=None,
+        pipeline_steps=[],
+        model_spec=None,
+        prior_config=None,
+        dna_lag_weeks=0,
+        trace=None,
+        scenarios=[],
+        search_intent_groups=[child.to_dict()],
+        search_intent_group_versions=[child.to_dict()],
+        # References a group that does not exist in this catalogue.
+        search_intent_model_grain=["this_group_id_does_not_exist"],
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.file_uploader[0].set_value(
+        (bundle_path.name, bundle_path.read_bytes(), "application/zip")
+    ).run()
+    next(
+        button for button in at.button if button.label == "Import bundle"
+    ).click().run()
+
+    assert not at.exception, f"invalid-grain-only import raised: {at.exception}"
+    restored_ids = {
+        item["search_intent_group_id"]
+        for item in at.session_state["search_intent_groups"]
+    }
+    assert child.search_intent_group_id in restored_ids
+    assert "brand_search" in restored_ids
+    assert "non_brand_search" in restored_ids
+    restored_version_ids = {
+        item["search_intent_group_id"]
+        for item in at.session_state["search_intent_group_versions"]
+    }
+    assert child.search_intent_group_id in restored_version_ids
+    # The grain alone was reset to the approved parent grain (empty means
+    # "approved parent grain" per resolve_search_intent_model_grain).
+    assert at.session_state["search_intent_model_grain"] == []
+    assert any(
+        "grain" in (warning.value or "").lower()
+        and "quarantined" not in (warning.value or "").lower()
+        for warning in at.warning
+    ), "expected a grain-specific warning, not a whole-taxonomy quarantine message"
+    assert not any(
+        "Search intent taxonomy was quarantined" in (warning.value or "")
+        for warning in at.warning
+    ), "the valid catalogue must not be reported as quarantined"
+
+    # Re-export must not have lost the governed child.
+    reexport_path = export_project(
+        tmp_path / "reexported.zip",
+        raw_sources={},
+        transformed_data=None,
+        pipeline_steps=[],
+        model_spec=None,
+        prior_config=None,
+        dna_lag_weeks=0,
+        trace=None,
+        scenarios=[],
+        search_intent_groups=at.session_state["search_intent_groups"],
+        search_intent_group_versions=at.session_state["search_intent_group_versions"],
+        search_intent_model_grain=at.session_state["search_intent_model_grain"],
+    )
+    reimported = import_project(reexport_path)
+    reimported_ids = {
+        item["search_intent_group_id"] for item in reimported["search_intent_groups"]
+    }
+    assert child.search_intent_group_id in reimported_ids
+
+
 def test_import_quarantines_malformed_current_search_taxonomy_without_crashing_readiness(
     monkeypatch, tmp_path
 ):
@@ -428,7 +520,15 @@ def test_import_quarantines_malformed_current_search_taxonomy_without_crashing_r
     )
     assert at.session_state["search_intent_groups"] == []
     assert at.session_state["search_intent_group_versions"] == []
-    assert at.session_state["search_intent_model_grain"] == []
+    # No explicit grain was supplied by this bundle, and grain validation is
+    # now independent of the (quarantined) current-groups validation above -
+    # an empty requested selection still resolves to its own default
+    # (the approved parent grain), it is not force-reset to [] merely
+    # because the unrelated current-groups catalogue was malformed.
+    assert at.session_state["search_intent_model_grain"] == [
+        "brand_search",
+        "non_brand_search",
+    ]
     assert any(
         "Search intent taxonomy was quarantined" in (w.value or "") for w in at.warning
     )

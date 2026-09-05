@@ -613,7 +613,8 @@ def resolve_search_model_input_columns(
             requested_group_ids, catalogue, activity_definitions
         )
     )
-    known_ids = {group.search_intent_group_id for group in catalogue}
+    by_id = {group.search_intent_group_id: group for group in catalogue}
+    known_ids = set(by_id)
     input_groups: Dict[str, set[str]] = {}
     for activity in activity_definitions:
         if isinstance(activity, Mapping):
@@ -637,6 +638,7 @@ def resolve_search_model_input_columns(
         input_groups.setdefault(input_column, set()).add(group_id)
 
     resolved: list[str] = []
+    resolved_groups: set[str] = set()
     for column in model_input_columns:
         groups_for_input = input_groups.get(column)
         if not groups_for_input:
@@ -652,10 +654,38 @@ def resolve_search_model_input_columns(
             )
         if selected_groups:
             resolved.append(column)
+            resolved_groups.update(selected_groups)
     if not resolved:
         raise ValueError(
             "The selected Search model grain does not resolve to any model input "
             "column."
+        )
+    # A deeper child is only ever in `selected` because the analyst
+    # explicitly picked it (the approved Brand/Non-Brand parents are the
+    # only implicit default, and a project with no Paid Search activity at
+    # all legitimately has neither mapped to any column - that must not
+    # block an ordinary non-Search fit). An explicitly selected child is
+    # different: it has no sensible "silently unused" reading, so if it
+    # never appeared in `input_groups` above (in any market) the persisted
+    # grain would claim a group that silently contributes nothing to the
+    # posterior. Checked against `resolved_groups`, not raw membership in
+    # `input_groups`, so a child whose only mapped column lost the
+    # selected/unselected conflict check above still counts as unresolved
+    # rather than passing on a column that was ultimately rejected.
+    unresolved_children = sorted(
+        group_id
+        for group_id in selected
+        if by_id.get(group_id) is not None
+        and by_id[group_id].parent_search_intent_group_id
+        and group_id not in resolved_groups
+    )
+    if unresolved_children:
+        raise ValueError(
+            "The following selected deeper Search group(s) have no mapped "
+            "physical model input in any applicable market: "
+            f"{', '.join(unresolved_children)}. Map an activity to this "
+            "group, or remove it from the Search model grain, before "
+            "fitting."
         )
     return tuple(resolved)
 

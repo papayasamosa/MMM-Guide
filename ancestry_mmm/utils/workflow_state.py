@@ -354,8 +354,18 @@ def _official_curve_status(getter: StateGetter, key: str) -> WorkflowPageState:
             reason="An approved current model is required before official curve generation.",
         )
 
+    # project_name is untrusted display metadata (it can arrive verbatim from
+    # an imported bundle's manifest) - canonical_project_id collapses any
+    # path separators, ".." segments, or absolute-path syntax into a single
+    # safe component before it is joined under the storage root, exactly as
+    # utils.session_state.curve_artifact_store_dir() does for the same
+    # store. Imported locally (not at module top) to preserve this module's
+    # explicit Streamlit-independence without adding it to every caller's
+    # import graph.
+    from ancestry_mmm.application.fit_job_service import canonical_project_id
+
     project_name = _get(getter, "project_name", "default") or "default"
-    store_dir = Path(CURVE_ARTIFACT_ROOT) / str(project_name)
+    store_dir = Path(CURVE_ARTIFACT_ROOT) / canonical_project_id(str(project_name))
     try:
         store = load_curve_artifact_store(store_dir, raise_on_malformed=False)
     except (OSError, TypeError, ValueError):

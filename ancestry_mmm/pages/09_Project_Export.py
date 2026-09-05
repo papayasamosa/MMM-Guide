@@ -1079,11 +1079,23 @@ if uploaded_zip is not None and st.button("Import bundle"):
     except UnsafeZipEntryError as e:
         st.error(f"Refusing to import this bundle: {e}")
     else:
-        if (
-            isinstance(imported.get("project_display_name"), str)
-            and imported["project_display_name"].strip()
-        ):
-            set_state("project_name", imported["project_display_name"])
+        # project_display_name is untrusted display metadata from the
+        # bundle manifest - never a filesystem path component. A value such
+        # as "../../target" is installed verbatim here, but every reader
+        # that derives a storage path from `project_name` (curve_bank_dir,
+        # curve_artifact_store_dir, _official_curve_status) canonicalises it
+        # first via `canonical_project_id`, so a raw display name can never
+        # escape the intended storage root regardless of what is stored
+        # here. This still strips control characters and caps length as
+        # display hygiene, since the raw value is rendered directly in the
+        # UI (e.g. the "Project name" caption below).
+        _imported_display_name = imported.get("project_display_name")
+        if isinstance(_imported_display_name, str):
+            _sanitized_display_name = "".join(
+                ch for ch in _imported_display_name if ch.isprintable()
+            ).strip()[:200]
+            if _sanitized_display_name:
+                set_state("project_name", _sanitized_display_name)
         set_state("raw_sources", imported["raw_sources"])
 
         # Replay promotion-event pipeline steps fresh against the imported
@@ -1293,57 +1305,64 @@ if uploaded_zip is not None and st.button("Import bundle"):
         # REQ-SEARCH-004/005: restore only valid, explicitly persisted custom
         # taxonomy records. The approved minimum is supplied by the taxonomy
         # module; malformed children are quarantined and named.
+        #
+        # Catalogue/history validation and grain validation are deliberately
+        # independent try/except boundaries, not one shared block: the
+        # current taxonomy and its version history can be entirely valid
+        # while only `search_intent_model_grain` references an unknown
+        # group or an invalid parent/child overlap (e.g. from a hand-edited
+        # or partially-upgraded bundle). A single shared try/except would
+        # let that grain-only failure erase an otherwise-valid, already-
+        # governed catalogue and history - a real loss of governed data on
+        # a bundle that is re-exported afterward. Each stage instead
+        # quarantines only its own malformed piece and downstream readers
+        # (session state and `imported`, which `current_model_identity_
+        # fingerprints` re-reads directly) always see a mutually consistent,
+        # already-validated result.
         _raw_search_intent_groups = imported.get("search_intent_groups") or []
         try:
             _governed_groups = resolve_imported_search_intent_groups(
                 _raw_search_intent_groups
             )
-            set_state(
-                "search_intent_groups",
-                [group.to_dict() for group in _governed_groups],
-            )
-            _resolved_group_versions, _group_version_warnings = (
-                resolve_imported_search_intent_group_versions(
-                    imported.get("search_intent_group_versions"),
-                    current_groups=_governed_groups,
-                )
-            )
-            set_state(
-                "search_intent_group_versions",
-                _resolved_group_versions,
-            )
-            set_state(
-                "search_intent_model_grain",
-                list(
-                    resolve_search_intent_model_grain(
-                        imported.get("search_intent_model_grain") or (),
-                        _governed_groups,
-                        imported.get("activity_definitions") or (),
-                    )
-                ),
-            )
         except (TypeError, ValueError) as _taxonomy_exc:
+            _governed_groups = ()
             set_state("search_intent_groups", [])
-            set_state("search_intent_group_versions", [])
-            set_state("search_intent_model_grain", [])
-            # Downstream resumability/readiness/approval checks in this same
-            # import (e.g. `current_model_identity_fingerprints`) re-read
-            # `imported["search_intent_groups"]` directly, not session state.
-            # Leaving the raw malformed collection in `imported` after only
-            # clearing session state means those checks re-raise the same
-            # error outside this handler, crashing the import after it has
-            # already installed the rest of the project. Mirror the
-            # sanitized (quarantined-to-empty) session state into `imported`
-            # so every later reader sees the same already-validated result.
             imported["search_intent_groups"] = []
-            imported["search_intent_group_versions"] = []
-            imported["search_intent_model_grain"] = []
             st.warning(
                 f"Persisted Search intent taxonomy was quarantined: {_taxonomy_exc}"
             )
         else:
-            for _group_version_warning in _group_version_warnings:
-                st.warning(_group_version_warning)
+            _governed_group_dicts = [group.to_dict() for group in _governed_groups]
+            set_state("search_intent_groups", _governed_group_dicts)
+            imported["search_intent_groups"] = _governed_group_dicts
+
+        _resolved_group_versions, _group_version_warnings = (
+            resolve_imported_search_intent_group_versions(
+                imported.get("search_intent_group_versions"),
+                current_groups=_governed_groups,
+            )
+        )
+        set_state("search_intent_group_versions", _resolved_group_versions)
+        imported["search_intent_group_versions"] = _resolved_group_versions
+        for _group_version_warning in _group_version_warnings:
+            st.warning(_group_version_warning)
+
+        try:
+            _resolved_model_grain = resolve_search_intent_model_grain(
+                imported.get("search_intent_model_grain") or (),
+                _governed_groups,
+                imported.get("activity_definitions") or (),
+            )
+        except (TypeError, ValueError) as _grain_exc:
+            set_state("search_intent_model_grain", [])
+            imported["search_intent_model_grain"] = []
+            st.warning(
+                "Persisted Search model/reporting grain was invalid and was "
+                f"reset to the approved parent grain: {_grain_exc}"
+            )
+        else:
+            set_state("search_intent_model_grain", list(_resolved_model_grain))
+            imported["search_intent_model_grain"] = list(_resolved_model_grain)
         set_state(
             "future_assumption_bundles", imported.get("future_assumption_bundles")
         )

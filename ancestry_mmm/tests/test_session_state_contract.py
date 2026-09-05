@@ -88,3 +88,98 @@ class TestClearModelStateClearsDiagnosticAndValidationEvidence:
         assert not at.exception, f"clear raised: {at.exception}"
         assert at.session_state["model_approval"] is None
         assert at.session_state["model_run_id"] is None
+
+
+_CURVE_DIR_SCRIPT = """
+from ancestry_mmm.utils.config import CURVE_ARTIFACT_ROOT, CURVE_BANK_ROOT
+from ancestry_mmm.utils.session_state import curve_artifact_store_dir, curve_bank_dir
+import streamlit as st
+
+st.session_state["_artifact_dir"] = str(curve_artifact_store_dir())
+st.session_state["_bank_dir"] = str(curve_bank_dir())
+st.session_state["_artifact_root"] = str(CURVE_ARTIFACT_ROOT)
+st.session_state["_bank_root"] = str(CURVE_BANK_ROOT)
+"""
+
+
+class TestCurveStorageDirsRejectPathTraversalInProjectName:
+    """Regression for review 5121* (PRRT_kwDOTd28Js6fkIJk): an imported
+    bundle's untrusted display name is installed as `project_name` and must
+    never be usable as a raw filesystem path component when deriving the
+    curve bank / official curve artifact storage directories - those must
+    always resolve to a single safe component under the intended root,
+    however adversarial the display name is."""
+
+    def _resolved_dirs(self, project_name):
+        at = AppTest.from_string(_CURVE_DIR_SCRIPT, default_timeout=30)
+        at.session_state["project_name"] = project_name
+        at.run()
+        assert not at.exception, f"resolving curve dirs raised: {at.exception}"
+        return at
+
+    def _assert_stays_under_root(self, at):
+        from pathlib import Path
+
+        artifact_root = Path(at.session_state["_artifact_root"]).resolve()
+        bank_root = Path(at.session_state["_bank_root"]).resolve()
+        artifact_dir = Path(at.session_state["_artifact_dir"]).resolve()
+        bank_dir = Path(at.session_state["_bank_dir"]).resolve()
+        assert artifact_dir == artifact_root or artifact_root in artifact_dir.parents
+        assert bank_dir == bank_root or bank_root in bank_dir.parents
+        # Exactly one path segment was added under the root - a traversal
+        # attempt must not be able to add extra ".." segments back out.
+        assert len(artifact_dir.relative_to(artifact_root).parts) == 1
+        assert len(bank_dir.relative_to(bank_root).parts) == 1
+
+    def test_posix_style_traversal_stays_under_root(self):
+        at = self._resolved_dirs("../../target")
+        self._assert_stays_under_root(at)
+
+    def test_windows_style_traversal_stays_under_root(self):
+        at = self._resolved_dirs("..\\..\\target")
+        self._assert_stays_under_root(at)
+
+    def test_absolute_posix_path_stays_under_root(self):
+        at = self._resolved_dirs("/etc/passwd")
+        self._assert_stays_under_root(at)
+
+    def test_absolute_windows_path_stays_under_root(self):
+        at = self._resolved_dirs("C:\\Windows\\System32")
+        self._assert_stays_under_root(at)
+
+    def test_bare_dotdot_stays_under_root(self):
+        at = self._resolved_dirs("..")
+        self._assert_stays_under_root(at)
+
+    def test_normal_name_with_spaces_and_punctuation_still_resolves_deterministically(
+        self,
+    ):
+        """Non-regression: an ordinary human-readable project name (the
+        common case) must keep resolving to a stable directory derived the
+        same way durable fit-job storage already canonicalises it, not
+        break or start colliding with an unrelated project."""
+        from pathlib import Path
+
+        from ancestry_mmm.application.fit_job_service import canonical_project_id
+
+        name = "UK Production 2026 (v2)!"
+        at = self._resolved_dirs(name)
+        self._assert_stays_under_root(at)
+        artifact_root = Path(at.session_state["_artifact_root"]).resolve()
+        artifact_dir = Path(at.session_state["_artifact_dir"]).resolve()
+        assert artifact_dir.relative_to(artifact_root).parts[0] == canonical_project_id(
+            name
+        )
+
+    def test_already_safe_name_keeps_its_existing_readable_directory(self):
+        """A name with no character canonical_project_id needs to touch
+        (matches fit-job storage's own contract) must keep resolving to its
+        existing plain directory, so storage built before this fix for such
+        a project remains addressable without a migration."""
+        from pathlib import Path
+
+        at = self._resolved_dirs("ancestry-fh-uk")
+        self._assert_stays_under_root(at)
+        artifact_root = Path(at.session_state["_artifact_root"]).resolve()
+        artifact_dir = Path(at.session_state["_artifact_dir"]).resolve()
+        assert artifact_dir.relative_to(artifact_root).parts[0] == "ancestry-fh-uk"

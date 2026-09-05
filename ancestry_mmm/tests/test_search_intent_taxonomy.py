@@ -566,3 +566,86 @@ class TestSearchModelInputResolution:
                 groups,
                 activities,
             )
+
+    def test_selected_child_with_no_mapped_activity_is_rejected(self):
+        """Regression for review PRRT_kwDOTd28Js6fkIJp: selecting a deeper
+        child with no matching ActivityDefinition anywhere must fail
+        fitting explicitly, not silently proceed while the persisted grain
+        still claims that child was fit."""
+        child = SearchIntentGroup(
+            search_intent_group_id="non_brand_search_genealogy",
+            search_intent_group_name="Genealogy Non-Brand",
+            brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+            parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+        )
+        groups = (*APPROVED_MINIMUM_SEARCH_INTENT_GROUPS, child)
+        # Only Brand has a mapped activity - the selected child does not.
+        activities = [
+            _search_activity("brand", "paid_brand", SEARCH_INTENT_GROUP_ID_BRAND),
+        ]
+
+        with pytest.raises(
+            ValueError, match="no mapped physical model input"
+        ) as excinfo:
+            resolve_search_model_input_columns(
+                ["paid_brand", "TV"],
+                [SEARCH_INTENT_GROUP_ID_BRAND, child.search_intent_group_id],
+                groups,
+                activities,
+            )
+        assert child.search_intent_group_id in str(excinfo.value)
+
+    def test_selected_child_mapped_in_its_applicable_market_is_accepted(self):
+        """Non-regression: a selected deeper child that does have a mapped
+        activity in its applicable market must fit normally."""
+        child = SearchIntentGroup(
+            search_intent_group_id="non_brand_search_genealogy",
+            search_intent_group_name="Genealogy Non-Brand",
+            brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+            parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+        )
+        groups = (*APPROVED_MINIMUM_SEARCH_INTENT_GROUPS, child)
+        activities = [
+            _search_activity(
+                "genealogy",
+                "paid_genealogy",
+                child.search_intent_group_id,
+                market="GB",
+            ),
+        ]
+
+        resolved = resolve_search_model_input_columns(
+            ["paid_genealogy", "TV"],
+            [child.search_intent_group_id],
+            groups,
+            activities,
+        )
+
+        assert set(resolved) == {"paid_genealogy", "TV"}
+
+    def test_unrelated_non_search_column_does_not_mask_an_unresolved_child(self):
+        """A Brand, non-Search, or unclassified column keeping `resolved`
+        nonempty must not be mistaken for the explicitly selected deeper
+        child actually having a mapped input - the check is per group, not
+        merely whether anything at all was fit."""
+        child = SearchIntentGroup(
+            search_intent_group_id="non_brand_search_genealogy",
+            search_intent_group_name="Genealogy Non-Brand",
+            brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+            parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+        )
+        groups = (*APPROVED_MINIMUM_SEARCH_INTENT_GROUPS, child)
+        activities = [
+            _search_activity("brand", "paid_brand", SEARCH_INTENT_GROUP_ID_BRAND),
+        ]
+
+        with pytest.raises(ValueError, match="no mapped physical model input"):
+            resolve_search_model_input_columns(
+                # "TV" and "paid_brand" both remain in `resolved`, but
+                # neither is the selected child - `resolved` being nonempty
+                # must not paper over the child's missing mapping.
+                ["paid_brand", "TV", "unclassified_context_var"],
+                [SEARCH_INTENT_GROUP_ID_BRAND, child.search_intent_group_id],
+                groups,
+                activities,
+            )

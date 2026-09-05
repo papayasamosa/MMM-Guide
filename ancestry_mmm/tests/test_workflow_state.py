@@ -333,3 +333,67 @@ def test_end_of_workflow_has_no_further_required_target():
     assert nav.kind == "done"
     assert nav.target is None
     assert nav.optional_targets == ()
+
+
+class TestOfficialCurveStatusRejectsPathTraversalInProjectName:
+    """Regression: an imported bundle's untrusted display name must never
+    let the official curve artifact store's read path escape
+    CURVE_ARTIFACT_ROOT, mirroring the same fix in
+    utils.session_state.curve_artifact_store_dir()."""
+
+    def _approved_getter(self, extra):
+        state = {"model_approval": {"status": "approved"}}
+        state.update(extra)
+        return _getter(state)
+
+    def _resolved_store_dir(self, monkeypatch, project_name):
+        from pathlib import Path
+
+        import ancestry_mmm.utils.workflow_state as workflow_state_module
+
+        captured = {}
+
+        class _FakeStore:
+            loaded = False
+            audit = None
+
+        def fake_load(store_dir, raise_on_malformed=False):
+            captured["store_dir"] = Path(store_dir)
+            return _FakeStore()
+
+        monkeypatch.setattr(
+            workflow_state_module, "load_curve_artifact_store", fake_load
+        )
+        getter = self._approved_getter({"project_name": project_name})
+        state = workflow_page_state("official_curve_generation", getter=getter)
+        assert state.access_status != "blocked", (
+            "test setup did not satisfy _model_approval_is_current"
+        )
+        return captured["store_dir"]
+
+    def test_posix_style_traversal_stays_under_curve_artifact_root(self, monkeypatch):
+        from ancestry_mmm.utils.config import CURVE_ARTIFACT_ROOT
+
+        store_dir = self._resolved_store_dir(monkeypatch, "../../target")
+        root = CURVE_ARTIFACT_ROOT.resolve()
+        resolved = store_dir.resolve()
+        assert resolved == root or root in resolved.parents
+        assert len(resolved.relative_to(root).parts) == 1
+
+    def test_absolute_windows_path_stays_under_curve_artifact_root(self, monkeypatch):
+        from ancestry_mmm.utils.config import CURVE_ARTIFACT_ROOT
+
+        store_dir = self._resolved_store_dir(monkeypatch, "C:\\Windows\\System32")
+        root = CURVE_ARTIFACT_ROOT.resolve()
+        resolved = store_dir.resolve()
+        assert resolved == root or root in resolved.parents
+        assert len(resolved.relative_to(root).parts) == 1
+
+    def test_normal_name_still_resolves_under_curve_artifact_root(self, monkeypatch):
+        from ancestry_mmm.utils.config import CURVE_ARTIFACT_ROOT
+
+        store_dir = self._resolved_store_dir(monkeypatch, "UK Production 2026")
+        root = CURVE_ARTIFACT_ROOT.resolve()
+        resolved = store_dir.resolve()
+        assert resolved == root or root in resolved.parents
+        assert len(resolved.relative_to(root).parts) == 1

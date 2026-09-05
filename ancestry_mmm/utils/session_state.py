@@ -303,14 +303,31 @@ def update_state(**kwargs) -> None:
 
 
 def curve_bank_dir() -> Path:
-    """Per-project curve bank directory (created on first write)."""
-    name = get_state("project_name", "default")
+    """Per-project curve bank directory (created on first write).
+
+    ``project_name`` is display metadata that can arrive from an imported
+    bundle's manifest (an untrusted display name), so it is never used as a
+    raw path component here - ``canonical_project_id`` collapses any path
+    separators, ``..`` segments, or absolute-path syntax into a single safe
+    component before it is joined under the storage root (see
+    ``application.fit_job_service.canonical_project_id``, the same
+    canonicalisation durable fit-job storage already relies on).
+    """
+    from ancestry_mmm.application.fit_job_service import canonical_project_id
+
+    name = canonical_project_id(str(get_state("project_name") or "default"))
     return CURVE_BANK_ROOT / name
 
 
 def curve_artifact_store_dir() -> Path:
-    """Per-project official curve artifact store directory (created on first write)."""
-    name = get_state("project_name", "default")
+    """Per-project official curve artifact store directory (created on first write).
+
+    See ``curve_bank_dir`` above: ``project_name`` is untrusted display
+    metadata and must never be used as a raw path component.
+    """
+    from ancestry_mmm.application.fit_job_service import canonical_project_id
+
+    name = canonical_project_id(str(get_state("project_name") or "default"))
     return CURVE_ARTIFACT_ROOT / name
 
 
