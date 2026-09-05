@@ -504,13 +504,30 @@ def search_intent_taxonomy_fit_fingerprint(
 def resolve_search_intent_model_grain(
     requested_group_ids: Sequence[str],
     groups: Sequence[SearchIntentGroup],
+    activity_definitions: Sequence[Any] = (),
 ) -> Tuple[str, ...]:
     """Resolve an explicit Search model grain without parent/child double fit.
 
     An empty selection means the approved parent grain. A deeper child is
     usable only when it is selected explicitly; selecting both that child and
-    its parent is rejected. This helper does not infer child economics or
-    planning eligibility from taxonomy membership.
+    its parent is rejected *within the same applicable market* - REQ-SEARCH-004
+    §4 and REQ-SEARCH-005 §2 explicitly permit ragged market coverage (one
+    market fit at the approved parent grain while another uses an approved
+    deeper child), so a project-wide selection covering both is only a real
+    double-fit risk where a single market's activities resolve to both the
+    parent and the child.
+
+    ``activity_definitions`` (``ActivityDefinition``-like objects or mappings
+    carrying ``market`` and ``search_intent_group_id``) supplies that market
+    scope. When it is omitted - callers that only ever validate a flat group
+    selection with no per-market activity mapping available, such as the SEO
+    upload group check - this falls back to the previous project-wide
+    overlap rejection, since no market scope exists to narrow it. A ``"*"``
+    (all-markets) activity market is treated as applicable to every market,
+    since it can genuinely overlap with any market-specific row.
+
+    This helper does not infer child economics or planning eligibility from
+    taxonomy membership.
     """
     catalogue = governed_search_intent_groups(groups)
     by_id = {group.search_intent_group_id: group for group in catalogue}
@@ -524,16 +541,51 @@ def resolve_search_intent_model_grain(
         raise ValueError(f"Unknown Search model-grain group(s): {', '.join(unknown)}")
     if not requested:
         return (SEARCH_INTENT_GROUP_ID_BRAND, SEARCH_INTENT_GROUP_ID_NON_BRAND)
-    parents = {
-        group.parent_search_intent_group_id
-        for group in (by_id[group_id] for group_id in requested)
-        if group.parent_search_intent_group_id
+    parent_by_child = {
+        group_id: by_id[group_id].parent_search_intent_group_id
+        for group_id in requested
+        if by_id[group_id].parent_search_intent_group_id
     }
-    overlap = sorted(set(requested) & parents)
-    if overlap:
+    overlap_pairs = sorted(
+        (child_id, parent_id)
+        for child_id, parent_id in parent_by_child.items()
+        if parent_id in requested
+    )
+    if not overlap_pairs:
+        return requested
+    if not activity_definitions:
+        overlap = sorted({parent_id for _, parent_id in overlap_pairs})
         raise ValueError(
             "Search model grain cannot select a parent and its deeper child "
             f"together: {', '.join(overlap)}"
+        )
+    markets_by_group: Dict[str, set[str]] = {}
+    for activity in activity_definitions:
+        group_id = str(_attr(activity, "search_intent_group_id", "") or "")
+        if group_id not in requested:
+            continue
+        market = str(_attr(activity, "market", "*") or "*")
+        markets_by_group.setdefault(group_id, set()).add(market)
+
+    def _same_market_scope(left: str, right: str) -> bool:
+        left_markets = markets_by_group.get(left, set())
+        right_markets = markets_by_group.get(right, set())
+        if "*" in left_markets or "*" in right_markets:
+            return bool(left_markets) and bool(right_markets)
+        return bool(left_markets & right_markets)
+
+    conflicting = sorted(
+        {
+            parent_id
+            for child_id, parent_id in overlap_pairs
+            if _same_market_scope(child_id, parent_id)
+        }
+    )
+    if conflicting:
+        raise ValueError(
+            "Search model grain cannot select a parent and its deeper child "
+            "together within the same market: "
+            f"{', '.join(conflicting)}"
         )
     return requested
 
@@ -556,7 +608,11 @@ def resolve_search_model_input_columns(
     """
 
     catalogue = governed_search_intent_groups(groups)
-    selected = set(resolve_search_intent_model_grain(requested_group_ids, catalogue))
+    selected = set(
+        resolve_search_intent_model_grain(
+            requested_group_ids, catalogue, activity_definitions
+        )
+    )
     known_ids = {group.search_intent_group_id for group in catalogue}
     input_groups: Dict[str, set[str]] = {}
     for activity in activity_definitions:

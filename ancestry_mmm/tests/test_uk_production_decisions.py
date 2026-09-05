@@ -73,3 +73,64 @@ def test_search_model_grain_rejects_parent_and_child_double_fit():
             ("non_brand_search", "non_brand_genealogy"),
             (child,),
         )
+
+
+def _ragged_market_child() -> SearchIntentGroup:
+    return SearchIntentGroup(
+        search_intent_group_id="non_brand_genealogy",
+        search_intent_group_name="Genealogy",
+        brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+        parent_search_intent_group_id="non_brand_search",
+    )
+
+
+def test_search_model_grain_allows_ragged_parent_and_child_across_markets():
+    """REQ-SEARCH-004 §4 / REQ-SEARCH-005 §2: one market may use the
+    approved Non-Brand parent while a different market uses an approved
+    deeper child - a project-wide selection covering both must not be
+    rejected merely because it spans both grains somewhere in the project.
+    """
+    child = _ragged_market_child()
+    activities = [
+        {"market": "GB", "search_intent_group_id": "non_brand_search"},
+        {"market": "US", "search_intent_group_id": "non_brand_genealogy"},
+    ]
+    resolved = resolve_search_intent_model_grain(
+        ("non_brand_search", "non_brand_genealogy"),
+        (child,),
+        activities,
+    )
+    assert set(resolved) == {"non_brand_search", "non_brand_genealogy"}
+
+
+def test_search_model_grain_rejects_parent_and_child_in_the_same_market():
+    """The double-fit risk is real when one market's own activities resolve
+    to both the parent and the child - ragged coverage does not excuse an
+    overlap that is not actually ragged."""
+    child = _ragged_market_child()
+    activities = [
+        {"market": "GB", "search_intent_group_id": "non_brand_search"},
+        {"market": "GB", "search_intent_group_id": "non_brand_genealogy"},
+    ]
+    with pytest.raises(ValueError, match="same market"):
+        resolve_search_intent_model_grain(
+            ("non_brand_search", "non_brand_genealogy"),
+            (child,),
+            activities,
+        )
+
+
+def test_search_model_grain_rejects_wildcard_market_overlap_with_any_market():
+    """A ``market='*'`` activity applies to every market, so it still
+    conflicts with a deeper child selected for one specific market."""
+    child = _ragged_market_child()
+    activities = [
+        {"market": "*", "search_intent_group_id": "non_brand_search"},
+        {"market": "GB", "search_intent_group_id": "non_brand_genealogy"},
+    ]
+    with pytest.raises(ValueError, match="same market"):
+        resolve_search_intent_model_grain(
+            ("non_brand_search", "non_brand_genealogy"),
+            (child,),
+            activities,
+        )

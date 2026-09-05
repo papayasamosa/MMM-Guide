@@ -154,6 +154,7 @@ class FitJobRecord:
     finished_at: Optional[str] = None
     pid: Optional[int] = None
     process_start_time: Optional[str] = None
+    process_identity_token: Optional[str] = None
     progress: FitJobProgress = field(default_factory=FitJobProgress)
     job_spec_location: str = ""
     result_artifact_location: str = ""
@@ -401,6 +402,7 @@ class FitJobStore:
         *,
         pid: int,
         process_start_time: Optional[str] = None,
+        process_identity_token: Optional[str] = None,
     ) -> FitJobRecord:
         """Record launcher metadata without overwriting worker state.
 
@@ -408,12 +410,27 @@ class FitJobStore:
         transitions and progress updates.  This makes the post-launch PID
         write a targeted update of the latest record rather than a save of the
         queued object returned by ``create``.
+
+        ``process_identity_token`` is a best-effort OS process-start identity
+        captured for *pid* right after launch (see
+        ``_capture_process_identity_token``).  Reconciliation compares it
+        against the live process's current identity so a PID later reused by
+        an unrelated process (e.g. after a host restart) is not mistaken for
+        the still-running worker.  A caller may supply an explicit value (for
+        deterministic tests); otherwise it is captured automatically.  When
+        capture is unavailable, it stays ``None`` and reconciliation falls
+        back to PID-existence only, exactly as before this field existed.
         """
 
         with self._record_lock(job_id):
             record = self.get(job_id)
             record.pid = int(pid)
             record.process_start_time = process_start_time or utc_now()
+            record.process_identity_token = (
+                process_identity_token
+                if process_identity_token is not None
+                else _capture_process_identity_token(int(pid))
+            )
             return self._save_unlocked(record)
 
     def append_log(self, job_id: str, message: str) -> None:
@@ -484,17 +501,35 @@ class FitJobStore:
                     # record but before Popen/PID hand-off.  Do not preserve a
                     # PID-less queue entry forever; the bounded grace period
                     # is the only exemption for this launch window.
-                alive = latest.pid is not None and process_is_alive(latest.pid)
+                alive = latest.pid is not None and process_is_alive(
+                    latest.pid, latest.process_identity_token
+                )
                 if alive:
                     continue
                 cancelled = latest.status == "cancel_requested" or (
                     self.cancellation_requested(latest.job_id)
                 )
                 status = "cancelled" if cancelled else "orphaned"
+                # A pid that still answers to a liveness check but no longer
+                # matches the identity captured at launch means the PID was
+                # reused by an unrelated process, not that the worker exited
+                # cleanly - give the analyst an accurate reason either way.
+                identity_mismatch = (
+                    not cancelled
+                    and latest.pid is not None
+                    and process_is_alive(latest.pid)
+                    and not process_is_alive(latest.pid, latest.process_identity_token)
+                )
                 message = (
                     "Worker is no longer running after cancellation."
                     if cancelled
-                    else "Fit worker is no longer running and produced no terminal result."
+                    else (
+                        "Fit worker process no longer matches the identity recorded "
+                        "at launch (its PID appears to have been reused by an "
+                        "unrelated process); treating the fit as orphaned."
+                        if identity_mismatch
+                        else "Fit worker is no longer running and produced no terminal result."
+                    )
                 )
                 now = utc_now()
                 latest.status = status
@@ -520,7 +555,32 @@ def _queued_launch_grace_expired(created_at: str) -> bool:
     )
 
 
-def process_is_alive(pid: int) -> bool:
+def _capture_process_identity_token(pid: int) -> Optional[str]:
+    """Best-effort OS process-start identity for *pid*.
+
+    A bare PID is not a stable worker identity: after a host restart (or any
+    sufficiently long uptime), the OS can hand the same PID to an unrelated
+    later process.  ``psutil.Process.create_time()`` reads the OS's own
+    process-creation timestamp (procfs on Linux, the Win32 process table on
+    Windows), which changes whenever a PID is reused, so persisting it at
+    launch and comparing it again at reconciliation time distinguishes "the
+    worker is still running" from "something else now owns this PID".  When
+    psutil is unavailable or the process cannot be inspected, this returns
+    ``None`` and callers fall back to PID-existence-only liveness, exactly as
+    before this check existed.
+    """
+
+    try:
+        import psutil
+    except ImportError:
+        return None
+    try:
+        return repr(psutil.Process(pid).create_time())
+    except (psutil.Error, OSError):
+        return None
+
+
+def process_is_alive(pid: int, expected_identity_token: Optional[str] = None) -> bool:
     if pid <= 0:
         return False
     try:
@@ -530,7 +590,17 @@ def process_is_alive(pid: int) -> bool:
     # On POSIX, kill(pid, 0) also succeeds for a zombie.  The launcher does
     # not retain/reap Popen handles across sessions, so inspect procfs when it
     # is available before treating the PID as a live worker.
-    return _posix_process_state(pid) != "Z"
+    if _posix_process_state(pid) == "Z":
+        return False
+    if expected_identity_token:
+        current_token = _capture_process_identity_token(pid)
+        # Only a confirmed mismatch (both sides known) counts against
+        # liveness - an unavailable current token means identity cannot be
+        # verified either way, so this stays best-effort like the rest of
+        # this function rather than failing closed on an inspection gap.
+        if current_token is not None and current_token != expected_identity_token:
+            return False
+    return True
 
 
 def _posix_process_state(pid: int) -> Optional[str]:

@@ -55,6 +55,17 @@ dependencies = [
     "networkx>=3.5,<4.0",
     # Parquet read/write for project persistence (ancestry_mmm/core/persistence.py)
     "pyarrow>=14.0.0",
+    # Cross-platform OS process-creation-time lookup for durable fit-job
+    # worker identity (ancestry_mmm/application/fit_job_service.py) - lets
+    # reconciliation tell a still-running worker apart from an unrelated
+    # process that later reused the same PID (e.g. after a host restart),
+    # on both the local Windows analyst machine and Linux CI/hosted
+    # backends, without a hand-rolled Win32/procfs implementation. Already
+    # resolved in this project's lock as a transitive dependency of
+    # ipykernel (notebook group), so this is a version already known to be
+    # compatible with the rest of the stack, now declared as a direct
+    # runtime dependency because fit_job_service.py needs it unconditionally.
+    "psutil>=6.0.0",
 ]
 
 [project.optional-dependencies]

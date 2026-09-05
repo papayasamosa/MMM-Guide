@@ -304,10 +304,12 @@ try:
     _saved_resolved_model_grain = resolve_search_intent_model_grain(
         _saved_model_grain,
         search_intent_groups,
+        existing_activity_items,
     )
     _resolved_model_grain = resolve_search_intent_model_grain(
         _selected_model_grain,
         search_intent_groups,
+        existing_activity_items,
     )
 except ValueError as exc:
     st.error(f"Search model grain is invalid: {exc}")

@@ -187,7 +187,8 @@ def test_reconcile_rechecks_terminal_state_before_marking_worker_orphaned(
 
     monkeypatch.setattr(store, "list", list_then_worker_finishes)
     monkeypatch.setattr(
-        "ancestry_mmm.application.fit_job_service.process_is_alive", lambda pid: False
+        "ancestry_mmm.application.fit_job_service.process_is_alive",
+        lambda pid, *_args, **_kwargs: False,
     )
 
     assert store.reconcile() == []
@@ -202,7 +203,8 @@ def test_reconcile_does_not_orphan_queued_job_before_pid_is_recorded(
     store = FitJobStore(tmp_path, "project")
     record = store.create(_submission(project_id="project"))
     monkeypatch.setattr(
-        "ancestry_mmm.application.fit_job_service.process_is_alive", lambda pid: False
+        "ancestry_mmm.application.fit_job_service.process_is_alive",
+        lambda pid, *_args, **_kwargs: False,
     )
 
     assert store.reconcile() == []
@@ -220,7 +222,8 @@ def test_reconcile_orphans_queued_job_after_pid_hand_off_if_process_is_dead(
         record.job_id, pid=12345, process_start_time="started"
     )
     monkeypatch.setattr(
-        "ancestry_mmm.application.fit_job_service.process_is_alive", lambda pid: False
+        "ancestry_mmm.application.fit_job_service.process_is_alive",
+        lambda pid, *_args, **_kwargs: False,
     )
 
     recovered = store.reconcile()
@@ -252,6 +255,127 @@ def test_process_is_alive_rejects_a_posix_zombie(monkeypatch):
     )
 
     assert process_is_alive(12345) is False
+
+
+def test_process_is_alive_rejects_a_pid_reused_by_a_different_process(monkeypatch):
+    """A live PID whose OS identity no longer matches launch time is not the worker."""
+
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service.os.kill",
+        lambda pid, signal: None,
+    )
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service._posix_process_state",
+        lambda pid: None,
+    )
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service._capture_process_identity_token",
+        lambda pid: "current-process-identity",
+    )
+
+    assert process_is_alive(4242, "original-worker-identity") is False
+    assert process_is_alive(4242, "current-process-identity") is True
+    # No expected identity recorded (e.g. captured before this check existed,
+    # or capture was unavailable at launch): fall back to PID-existence only.
+    assert process_is_alive(4242) is True
+
+
+def test_process_is_alive_stays_best_effort_when_identity_cannot_be_verified(
+    monkeypatch,
+):
+    """An inspection gap at reconcile time must not fail closed on a live worker."""
+
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service.os.kill",
+        lambda pid, signal: None,
+    )
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service._posix_process_state",
+        lambda pid: None,
+    )
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service._capture_process_identity_token",
+        lambda pid: None,
+    )
+
+    assert process_is_alive(4242, "original-worker-identity") is True
+
+
+def test_update_process_metadata_captures_identity_token_automatically(tmp_path: Path):
+    store = FitJobStore(tmp_path, "project")
+    record = store.create(_submission(project_id="project"))
+
+    updated = store.update_process_metadata(record.job_id, pid=os.getpid())
+
+    assert updated.process_identity_token
+    assert store.get(record.job_id).process_identity_token == (
+        updated.process_identity_token
+    )
+
+
+def test_reconcile_orphans_a_running_job_when_its_pid_is_reused(
+    tmp_path: Path, monkeypatch
+):
+    """Regression: a worker that dies and whose PID is later reused by an
+    unrelated process must not be reported as still running forever."""
+
+    store = FitJobStore(tmp_path, "project")
+    record = store.create(_submission(project_id="project"))
+    store.update_process_metadata(
+        record.job_id, pid=99999, process_identity_token="worker-token-A"
+    )
+    store.transition(record.job_id, "running")
+
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service.os.kill",
+        lambda pid, signal: None,
+    )
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service._posix_process_state",
+        lambda pid: None,
+    )
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service._capture_process_identity_token",
+        lambda pid: "unrelated-process-token-B",
+    )
+
+    recovered = store.reconcile()
+
+    assert any(
+        item.job_id == record.job_id and item.status == "orphaned" for item in recovered
+    )
+    restored = store.get(record.job_id)
+    assert restored.status == "orphaned"
+    assert "reused" in restored.error_summary
+
+
+def test_reconcile_keeps_a_running_job_when_identity_token_still_matches(
+    tmp_path: Path, monkeypatch
+):
+    """Non-regression: the ordinary still-alive case must not be orphaned."""
+
+    store = FitJobStore(tmp_path, "project")
+    record = store.create(_submission(project_id="project"))
+    store.update_process_metadata(
+        record.job_id, pid=99999, process_identity_token="worker-token-A"
+    )
+    store.transition(record.job_id, "running")
+
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service.os.kill",
+        lambda pid, signal: None,
+    )
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service._posix_process_state",
+        lambda pid: None,
+    )
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service._capture_process_identity_token",
+        lambda pid: "worker-token-A",
+    )
+
+    assert store.reconcile() == []
+    assert store.get(record.job_id).status == "running"
 
 
 @pytest.fixture

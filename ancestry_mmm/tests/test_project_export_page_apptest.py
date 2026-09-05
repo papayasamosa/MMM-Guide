@@ -375,6 +375,65 @@ def test_import_quarantines_malformed_search_taxonomy_history_only(
     )
 
 
+def test_import_quarantines_malformed_current_search_taxonomy_without_crashing_readiness(
+    monkeypatch, tmp_path
+):
+    """Regression for review 5120876238 (thread PRRT_kwDOTd28Js6fiZaZ):
+    quarantining a malformed *current* search_intent_groups record must not
+    just clear session state - `current_model_identity_fingerprints` (called
+    by `verify_imported_approval`/`audit_project_resumability` right after
+    this handler, in the same import) re-reads `imported["search_intent_groups"]`
+    directly, not session state. Leaving the raw malformed collection there
+    used to crash a bundle that also carries a model approval (or reaches
+    the official_curves/scenarios checkpoint) after the rest of the project
+    had already been installed, instead of completing the advertised
+    quarantine."""
+
+    export_root = tmp_path / "exports"
+    monkeypatch.setattr("ancestry_mmm.utils.PROJECT_EXPORT_ROOT", export_root)
+
+    project = build_lifecycle_project()
+    bundle_path = export_project(
+        tmp_path / "malformed-current-taxonomy.zip",
+        raw_sources={"joined": project.fitted.transformed_data.copy()},
+        transformed_data=project.fitted.transformed_data,
+        pipeline_steps=[],
+        model_spec=project.fitted.model_spec_dict,
+        prior_config=project.fitted.prior_config,
+        dna_lag_weeks=project.fitted.dna_lag_weeks,
+        trace=project.fitted.trace,
+        scenarios=[],
+        model_approval=project.approval.to_dict(),
+        model_run_id=project.fitted.model_run_id,
+        model_meta=project.fitted.meta,
+        # A current record missing required fields - SearchIntentGroup.from_dict
+        # raises constructing it, which resolve_imported_search_intent_groups
+        # turns into the ValueError this handler is meant to quarantine.
+        search_intent_groups=[{"search_intent_group_id": "malformed_record"}],
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.file_uploader[0].set_value(
+        (bundle_path.name, bundle_path.read_bytes(), "application/zip")
+    ).run()
+    next(
+        button for button in at.button if button.label == "Import bundle"
+    ).click().run()
+
+    assert not at.exception, (
+        "malformed current taxonomy import crashed downstream readiness/"
+        f"approval verification instead of completing the quarantine: {at.exception}"
+    )
+    assert at.session_state["search_intent_groups"] == []
+    assert at.session_state["search_intent_group_versions"] == []
+    assert at.session_state["search_intent_model_grain"] == []
+    assert any(
+        "Search intent taxonomy was quarantined" in (w.value or "") for w in at.warning
+    )
+
+
 def test_import_clears_stale_cached_optimiser_results(monkeypatch, tmp_path):
     """Fresh review finding: a cached constrained_result/unconstrained_result
     left over from a DIFFERENT project earlier in this same Streamlit

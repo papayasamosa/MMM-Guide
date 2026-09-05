@@ -1318,6 +1318,7 @@ if uploaded_zip is not None and st.button("Import bundle"):
                     resolve_search_intent_model_grain(
                         imported.get("search_intent_model_grain") or (),
                         _governed_groups,
+                        imported.get("activity_definitions") or (),
                     )
                 ),
             )
@@ -1325,6 +1326,18 @@ if uploaded_zip is not None and st.button("Import bundle"):
             set_state("search_intent_groups", [])
             set_state("search_intent_group_versions", [])
             set_state("search_intent_model_grain", [])
+            # Downstream resumability/readiness/approval checks in this same
+            # import (e.g. `current_model_identity_fingerprints`) re-read
+            # `imported["search_intent_groups"]` directly, not session state.
+            # Leaving the raw malformed collection in `imported` after only
+            # clearing session state means those checks re-raise the same
+            # error outside this handler, crashing the import after it has
+            # already installed the rest of the project. Mirror the
+            # sanitized (quarantined-to-empty) session state into `imported`
+            # so every later reader sees the same already-validated result.
+            imported["search_intent_groups"] = []
+            imported["search_intent_group_versions"] = []
+            imported["search_intent_model_grain"] = []
             st.warning(
                 f"Persisted Search intent taxonomy was quarantined: {_taxonomy_exc}"
             )

@@ -438,7 +438,7 @@ class TestHierarchicalPaidSearchReporting:
             )
 
 
-def _search_activity(activity_id: str, column: str, group_id: str):
+def _search_activity(activity_id: str, column: str, group_id: str, market: str = "*"):
     return ActivityDefinition(
         activity_id=activity_id,
         channel=column,
@@ -450,6 +450,7 @@ def _search_activity(activity_id: str, column: str, group_id: str):
         model_input_column=column,
         search_intent_group_id=group_id,
         search_platform=SEARCH_PLATFORM_GOOGLE,
+        market=market,
     )
 
 
@@ -493,5 +494,75 @@ class TestSearchModelInputResolution:
                 ["paid_search", "TV"],
                 [SEARCH_INTENT_GROUP_ID_BRAND],
                 APPROVED_MINIMUM_SEARCH_INTENT_GROUPS,
+                activities,
+            )
+
+    def test_ragged_market_coverage_allows_parent_and_child_together(self):
+        """REQ-SEARCH-004 §4 / REQ-SEARCH-005 §2: GB fits the approved
+        Non-Brand parent while US fits an approved deeper child - a single
+        project-wide model-input resolution must include both columns
+        rather than forcing a common grain across markets."""
+        child = SearchIntentGroup(
+            search_intent_group_id="non_brand_search_genealogy",
+            search_intent_group_name="Genealogy Non-Brand",
+            brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+            parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+        )
+        groups = (*APPROVED_MINIMUM_SEARCH_INTENT_GROUPS, child)
+        activities = [
+            _search_activity(
+                "gb_non_brand",
+                "gb_paid_non_brand",
+                SEARCH_INTENT_GROUP_ID_NON_BRAND,
+                market="GB",
+            ),
+            _search_activity(
+                "us_genealogy",
+                "us_paid_genealogy",
+                child.search_intent_group_id,
+                market="US",
+            ),
+        ]
+
+        resolved = resolve_search_model_input_columns(
+            ["gb_paid_non_brand", "us_paid_genealogy", "TV"],
+            [SEARCH_INTENT_GROUP_ID_NON_BRAND, child.search_intent_group_id],
+            groups,
+            activities,
+        )
+
+        assert set(resolved) == {"gb_paid_non_brand", "us_paid_genealogy", "TV"}
+
+    def test_same_market_parent_and_child_overlap_still_fails_closed(self):
+        """Ragged coverage does not excuse a genuine same-market double fit:
+        one market whose activities resolve to both the parent and the
+        child must still be rejected."""
+        child = SearchIntentGroup(
+            search_intent_group_id="non_brand_search_genealogy",
+            search_intent_group_name="Genealogy Non-Brand",
+            brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+            parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+        )
+        groups = (*APPROVED_MINIMUM_SEARCH_INTENT_GROUPS, child)
+        activities = [
+            _search_activity(
+                "gb_non_brand",
+                "gb_paid_non_brand",
+                SEARCH_INTENT_GROUP_ID_NON_BRAND,
+                market="GB",
+            ),
+            _search_activity(
+                "gb_genealogy",
+                "gb_paid_genealogy",
+                child.search_intent_group_id,
+                market="GB",
+            ),
+        ]
+
+        with pytest.raises(ValueError, match="same market"):
+            resolve_search_model_input_columns(
+                ["gb_paid_non_brand", "gb_paid_genealogy", "TV"],
+                [SEARCH_INTENT_GROUP_ID_NON_BRAND, child.search_intent_group_id],
+                groups,
                 activities,
             )
