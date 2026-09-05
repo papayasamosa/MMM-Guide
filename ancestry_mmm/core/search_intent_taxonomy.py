@@ -266,12 +266,28 @@ def resolve_imported_search_intent_groups(
     because its approved parent was omitted from the bundle.
     """
 
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise ValueError(
+            "Search intent taxonomy records are not a sequence and were "
+            "quarantined (dropped, not silently kept)."
+        )
     imported: list[SearchIntentGroup] = []
-    for value in values:
+    for index, value in enumerate(values):
         if isinstance(value, SearchIntentGroup):
             imported.append(value)
         elif isinstance(value, Mapping):
-            imported.append(SearchIntentGroup.from_dict(value))
+            try:
+                imported.append(SearchIntentGroup.from_dict(value))
+            except (TypeError, ValueError, KeyError, AttributeError) as exc:
+                raise ValueError(
+                    f"Search intent taxonomy record {index} was malformed and "
+                    f"was quarantined (dropped, not silently kept): {exc}"
+                ) from exc
+        else:
+            raise ValueError(
+                f"Search intent taxonomy record {index} is not a mapping and "
+                "was quarantined (dropped, not silently kept)."
+            )
     custom_groups = tuple(
         group
         for group in imported

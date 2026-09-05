@@ -4,6 +4,7 @@ import json
 import os
 import threading
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -221,6 +222,18 @@ def test_reconcile_orphans_queued_job_after_pid_hand_off_if_process_is_dead(
     monkeypatch.setattr(
         "ancestry_mmm.application.fit_job_service.process_is_alive", lambda pid: False
     )
+
+    recovered = store.reconcile()
+
+    assert any(item.job_id == record.job_id for item in recovered)
+    assert store.get(record.job_id).status == "orphaned"
+
+
+def test_reconcile_expires_a_pidless_queued_launch_after_grace_period(tmp_path: Path):
+    store = FitJobStore(tmp_path, "project")
+    record = store.create(_submission(project_id="project"))
+    record.created_at = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    store.save(record)
 
     recovered = store.reconcile()
 
@@ -451,16 +464,16 @@ def test_ordinary_fit_adoption_keeps_its_existing_input_boundary(
 
 
 @pytest.mark.parametrize(
-    ("display_name", "expected_id"),
+    "display_name",
     [
-        ("UK Production 2026", "UK_Production_2026"),
-        ("UK-Production 2026", "UK-Production_2026"),
-        ("UK/Production: 2026!", "UK_Production_2026"),
-        ("UK   Production    2026", "UK_Production_2026"),
+        "UK Production 2026",
+        "UK-Production 2026",
+        "UK/Production: 2026!",
+        "UK   Production    2026",
     ],
 )
 def test_human_project_names_use_one_canonical_durable_job_id(
-    tmp_path: Path, display_name: str, expected_id: str
+    tmp_path: Path, display_name: str
 ):
     class FakeProcess:
         pid = os.getpid()
@@ -473,7 +486,8 @@ def test_human_project_names_use_one_canonical_durable_job_id(
         replace(_submission(display_name), project_display_name=display_name)
     )
 
-    assert canonical_project_id(display_name) == expected_id
+    expected_id = canonical_project_id(display_name)
+    assert expected_id
     assert store.project_id == expected_id
     assert record.project_id == expected_id
     assert record.project_display_name == display_name
@@ -482,10 +496,32 @@ def test_human_project_names_use_one_canonical_durable_job_id(
     recovered = recovered_store.get(record.job_id)
     assert recovered.status == "queued"
     assert recovered.project_display_name == display_name
-    assert FitJobStore.discover_project_identity(tmp_path) == (
-        expected_id,
-        display_name,
+
+
+def test_distinct_human_names_cannot_share_a_canonical_project_id():
+    names = (
+        "UK Production 2026",
+        "UK/Production: 2026!",
+        "UK   Production    2026",
     )
+    assert len({canonical_project_id(name) for name in names}) == len(names)
+
+
+def test_project_recovery_uses_the_explicit_human_name_not_a_global_latest_job(
+    tmp_path: Path,
+):
+    first = FitJobStore(tmp_path, "first project")
+    first_record = first.create(
+        replace(_submission("first project"), project_display_name="first project")
+    )
+    second = FitJobStore(tmp_path, "second project")
+    second_record = second.create(
+        replace(_submission("second project"), project_display_name="second project")
+    )
+
+    assert first.project_id != second.project_id
+    assert first.get(first_record.job_id).project_display_name == "first project"
+    assert second.get(second_record.job_id).project_display_name == "second project"
 
 
 def test_adoption_identity_mismatch_does_not_load_artifact(tmp_path: Path):

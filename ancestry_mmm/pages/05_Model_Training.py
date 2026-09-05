@@ -74,6 +74,7 @@ from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
 from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
 from ancestry_mmm.core.search_intent_taxonomy import (
     resolve_imported_search_intent_groups,
+    resolve_search_intent_model_grain,
     resolve_search_model_input_columns,
     search_intent_taxonomy_fit_fingerprint,
 )
@@ -168,17 +169,6 @@ def _current_project_display_name() -> str:
     if isinstance(value, str) and value and value != "ancestry-fh-uk":
         set_state("durable_project_id", canonical_project_id(value))
         return value
-    discovered = FitJobStore.discover_project_identity()
-    if discovered is not None:
-        _project_id, display_name = discovered
-        if display_name and display_name != "ancestry-fh-uk":
-            # A new Streamlit session can recover the durable project/job
-            # namespace without asking the analyst to re-enter its display
-            # name.  The job record remains the source of truth for the
-            # canonical filesystem ID.
-            set_state("project_name", display_name)
-            set_state("durable_project_id", _project_id)
-            return display_name
     display_name = value if isinstance(value, str) and value else "ancestry-fh-uk"
     set_state("durable_project_id", canonical_project_id(display_name))
     return display_name
@@ -917,6 +907,27 @@ def _render_seo_visibility_boundary() -> None:
                     if not selected_groups:
                         raise ValueError(
                             "Select at least one explicit SEO group to attach."
+                        )
+                    if group_column != "__seo_group_id":
+                        governed_groups = resolve_imported_search_intent_groups(
+                            get_state("search_intent_groups") or []
+                        )
+                        # ``seo_visibility`` is a private legacy fallback for
+                        # files with no group column.  Explicit upload group
+                        # IDs must instead resolve to the governed Search
+                        # taxonomy.  Accept the old human-facing parent
+                        # aliases while comparing parent/child overlap using
+                        # the repository IDs.
+                        seo_group_aliases = {
+                            "brand": "brand_search",
+                            "non_brand": "non_brand_search",
+                        }
+                        governed_selection = tuple(
+                            seo_group_aliases.get(group_id, group_id)
+                            for group_id in selected_groups
+                        )
+                        resolve_search_intent_model_grain(
+                            governed_selection, governed_groups
                         )
                     available_groups = {
                         str(value).strip()

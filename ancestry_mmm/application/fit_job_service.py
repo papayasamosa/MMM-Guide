@@ -13,6 +13,7 @@ function.  No model algebra belongs in this orchestration layer.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import pickle
@@ -22,7 +23,7 @@ import sys
 import uuid
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import (
     Any,
@@ -59,6 +60,7 @@ _ALLOWED_TRANSITIONS = {
     "orphaned": set(),
 }
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
+QUEUED_LAUNCH_GRACE_SECONDS = 60
 
 
 def canonical_project_id(project_name: str) -> str:
@@ -71,7 +73,15 @@ def canonical_project_id(project_name: str) -> str:
 
     if not isinstance(project_name, str):
         raise TypeError("project_name must be a string")
-    return _SAFE_NAME.sub("_", project_name).strip("._") or "default"
+    safe_name = _SAFE_NAME.sub("_", project_name).strip("._") or "default"
+    # Keep readable slugs for already-safe identifiers (and therefore keep
+    # existing durable jobs addressable), but distinguish every name that had
+    # to be normalised.  A lossy slug alone would make e.g. ``UK / Production``
+    # and ``UK: Production`` share a job namespace.
+    if safe_name == project_name:
+        return safe_name
+    digest = hashlib.sha256(project_name.encode("utf-8")).hexdigest()[:12]
+    return f"{safe_name}--{digest}"
 
 
 def utc_now() -> str:
@@ -210,40 +220,6 @@ class FitJobStore:
     def for_job_dir(cls, job_dir: Path | str) -> "FitJobStore":
         directory = Path(job_dir).resolve()
         return cls(directory.parents[1], directory.parent.name)
-
-    @classmethod
-    def discover_project_identity(
-        cls, root: Path | str | None = None
-    ) -> tuple[str, str] | None:
-        """Find the most recently submitted durable project independently of UI state.
-
-        Streamlit session state is intentionally disposable.  A fresh browser
-        session therefore cannot rely on ``project_name`` to find a running or
-        completed worker.  Job records retain both the canonical filesystem ID
-        and the human-readable name, so the latest durable record is a safe
-        recovery hint when no explicit project name has been restored yet.
-        """
-
-        configured_root = os.environ.get("ANCESTRY_MMM_FIT_JOB_ROOT")
-        root_path = Path(
-            root or configured_root or Path(__file__).resolve().parents[1] / ".fit_jobs"
-        )
-        if not root_path.exists():
-            return None
-        candidates: list[FitJobRecord] = []
-        for path in root_path.glob("*/*/job.json"):
-            try:
-                record = FitJobRecord.from_dict(
-                    json.loads(path.read_text(encoding="utf-8"))
-                )
-            except (OSError, ValueError, TypeError, json.JSONDecodeError):
-                continue
-            candidates.append(record)
-        if not candidates:
-            return None
-        latest = max(candidates, key=lambda record: (record.created_at, record.job_id))
-        display_name = latest.project_display_name or latest.project_id
-        return latest.project_id, display_name
 
     def job_dir(self, job_id: str) -> Path:
         safe_id = _SAFE_NAME.sub("_", job_id)
@@ -502,7 +478,12 @@ class FitJobStore:
                 # orphan a valid launch during that interval; submit() will
                 # persist a failed state if Popen itself cannot launch.
                 if latest.status == "queued" and latest.pid is None:
-                    continue
+                    if not _queued_launch_grace_expired(latest.created_at):
+                        continue
+                    # The launcher may have died after creating the durable
+                    # record but before Popen/PID hand-off.  Do not preserve a
+                    # PID-less queue entry forever; the bounded grace period
+                    # is the only exemption for this launch window.
                 alive = latest.pid is not None and process_is_alive(latest.pid)
                 if alive:
                     continue
@@ -525,6 +506,18 @@ class FitJobStore:
                 latest.progress.last_updated_at = now
                 changed.append(self._save_unlocked(latest))
         return changed
+
+
+def _queued_launch_grace_expired(created_at: str) -> bool:
+    try:
+        created = datetime.fromisoformat(created_at)
+    except (TypeError, ValueError):
+        return True
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - created >= timedelta(
+        seconds=QUEUED_LAUNCH_GRACE_SECONDS
+    )
 
 
 def process_is_alive(pid: int) -> bool:

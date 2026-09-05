@@ -25,6 +25,7 @@ from ancestry_mmm.core.search_intent_taxonomy import (
     new_search_intent_group_version,
     roll_up_paid_search_reporting,
     roll_up_paid_search_reporting_hierarchy,
+    resolve_imported_search_intent_groups,
     resolve_search_model_input_columns,
     resolve_imported_search_intent_group_versions,
     search_intent_taxonomy_fit_fingerprint,
@@ -179,6 +180,19 @@ def test_history_lineage_cannot_rely_on_a_quarantined_record():
 
     assert restored == []
     assert len(warnings) == 2
+
+
+@pytest.mark.parametrize("malformed", [42, "not-a-record"])
+def test_malformed_current_taxonomy_records_are_rejected_and_quarantined(malformed):
+    with pytest.raises(ValueError, match="quarantined"):
+        resolve_imported_search_intent_groups([malformed])
+
+
+def test_malformed_current_taxonomy_mapping_is_rejected_and_quarantined():
+    with pytest.raises(ValueError, match="quarantined"):
+        resolve_imported_search_intent_groups(
+            [{"search_intent_group_id": "missing-required-fields"}]
+        )
 
 
 class _FakeActivity:

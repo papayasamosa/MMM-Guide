@@ -423,6 +423,32 @@ def test_changed_seo_boundary_clears_adopted_fit_and_downstream_evidence():
     )
 
 
+def test_seo_upload_rejects_an_ungoverned_explicit_group_id():
+    at = _run_at(seo_selected_group_ids_text="arbitrary_group")
+    uploader = next(
+        item for item in at.file_uploader if "GSC CSV" in (item.label or "")
+    )
+    rows = [
+        "market,week,impressions,seo_group_id,dimension_label,position",
+        *(
+            f"UK,{pd.Timestamp(week).date()},100,arbitrary_group,ancestry,1"
+            for week in _frame()["dates"]
+        ),
+    ]
+    uploader.set_value(("gsc.csv", "\n".join(rows).encode(), "text/csv")).run()
+    next(
+        button
+        for button in at.button
+        if button.label == "Validate and load SEO visibility"
+    ).click().run()
+
+    assert not at.exception, f"SEO upload raised: {at.exception}"
+    assert any(
+        "Unknown Search model-grain group" in (error.value or "") for error in at.error
+    )
+    assert "seo_fit_inputs" not in at.session_state
+
+
 def _google_trends_anchor(raw_offset: float = 0.0):
     weeks = [str(pd.Timestamp(week).date()) for week in _frame()["dates"]]
     query_set = GoogleTrendsQuerySetDefinition(
