@@ -16,12 +16,19 @@ concurrency:
   cancel-in-progress: false
 
 # Least-privilege token: contents:read is for checking out the PR head only
-# (Claude cannot push - see disallowedTools below); pull-requests:read is for
-# reading PR head/base SHAs via the API; issues:write is for posting the
-# final review comment and reading prior ones for duplicate detection (PR
-# conversation comments are Issues-API objects even for pull requests);
-# actions:read is forwarded to Claude via additional_permissions so it can
-# inspect CI results.
+# (Claude cannot push - see disallowedTools below); actions:read is
+# forwarded to Claude via additional_permissions so it can inspect CI
+# results.
+#
+# pull-requests: write is required for `gh pr comment` (used to post the
+# review and, on failure, the failure notice). This looks broader than
+# necessary - GitHub's REST "create an issue comment" endpoint accepts
+# either issues or pull-requests write - but `gh pr comment` posts via the
+# GraphQL `addComment` mutation against the PullRequest node, which in
+# practice rejected an issues-write-only token with "GraphQL: Resource not
+# accessible by integration (addComment)" on two separate genuine Codex
+# quota triggers against this exact workflow. issues:write is kept because
+# duplicate-detection reads prior PR comments via the Issues API.
 #
 # id-token: write is required even though CLAUDE_CODE_OAUTH_TOKEN is set.
 # These are two separate authentication layers: claude_code_oauth_token
@@ -36,7 +43,7 @@ concurrency:
 # just makes the GitHub-side auth fail at runtime.
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
   issues: write
   actions: read
   id-token: write

@@ -218,11 +218,14 @@ The workflow:
   rewrite its own review instructions by editing
   `.github/claude/fallback-review-prompt.md` in its own diff
 - grants repository contents read-only access, and requests only the
-  additional scopes actually used (`pull-requests: read` to resolve the PR
-  head/base SHAs, `issues: write` to post the review comment, `actions: read`
-  to let Claude inspect CI, `id-token: write` because the official Claude
-  GitHub App's default GitHub-side authentication requires it - see
-  [One-time Claude authentication](#one-time-claude-authentication) above)
+  additional scopes actually used (`pull-requests: write` because
+  `gh pr comment` posts via the GraphQL `addComment` mutation, which two
+  genuine Codex-triggered runs confirmed rejects a read-only/issues-only
+  token; `issues: write` to read prior comments for duplicate detection;
+  `actions: read` to let Claude inspect CI; `id-token: write` because the
+  official Claude GitHub App's default GitHub-side authentication requires
+  it - see [One-time Claude authentication](#one-time-claude-authentication)
+  above)
 - disables Edit and Write tools
 - does not enable arbitrary Bash for Claude
 - tells Claude not to commit/push/merge

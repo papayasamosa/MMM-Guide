@@ -262,15 +262,20 @@ class TestPermissionsAreMinimal:
     default GitHub-side OIDC authentication (this workflow supplies no
     custom `github_token`), separately from claude_code_oauth_token which
     authenticates the Claude/Anthropic API side - see Anthropic's FAQ entry
-    "Why am I getting OIDC authentication errors?". Every other scope stays
-    at the minimum each step actually uses."""
+    "Why am I getting OIDC authentication errors?". pull-requests: write is
+    required for `gh pr comment` to post the review: it posts via the
+    GraphQL `addComment` mutation on the PullRequest node, which two
+    separate genuine Codex-triggered runs against this exact workflow
+    confirmed rejects an issues-write-only token with "GraphQL: Resource
+    not accessible by integration (addComment)". Every other scope stays at
+    the minimum each step actually uses."""
 
     def test_only_the_needed_scopes_are_granted(self):
         doc = _load_workflow_yaml()
         permissions = doc["permissions"]
         assert permissions == {
             "contents": "read",
-            "pull-requests": "read",
+            "pull-requests": "write",
             "issues": "write",
             "actions": "read",
             "id-token": "write",
@@ -288,9 +293,9 @@ class TestPermissionsAreMinimal:
         doc = _load_workflow_yaml()
         assert doc["permissions"]["contents"] != "write"
 
-    def test_pull_requests_permission_is_read_only(self):
+    def test_pull_requests_permission_is_write_for_gh_pr_comment(self):
         doc = _load_workflow_yaml()
-        assert doc["permissions"]["pull-requests"] == "read"
+        assert doc["permissions"]["pull-requests"] == "write"
 
     def test_issues_permission_is_write(self):
         doc = _load_workflow_yaml()
