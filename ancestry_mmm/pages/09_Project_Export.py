@@ -96,7 +96,11 @@ from ancestry_mmm.core.curve_artifact import (
     governed_context_fields,
     load_curve_artifact_store,
 )
-from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
+from ancestry_mmm.core.activities import (
+    ActivityDefinition,
+    activity_fit_fingerprint,
+    resolve_imported_activity_definitions,
+)
 from ancestry_mmm.core.attribution import (
     compute_shapley_contributions,
     total_fh_contribution,
@@ -1188,10 +1192,30 @@ if uploaded_zip is not None and st.button("Import bundle"):
             "monetary_spend_support",
             imported.get("monetary_spend_support") or [],
         )
-        set_state(
-            "activity_definitions",
-            imported.get("activity_definitions") or [],
+        # Previously installed verbatim with no parsing at all - and
+        # separately, import_project() itself used to raise straight out of
+        # ActivityDefinition.from_dict() for a malformed record, crashing
+        # every caller before any page-level handling could run at all
+        # (fixed at that root in core.persistence.import_project, which now
+        # quarantines there and reports under
+        # "activity_definition_import_warnings"). Re-validate here too as a
+        # defense-in-depth safety net for any caller that builds an
+        # `imported`-shaped dict without going through import_project(), and
+        # mirror the sanitized value into `imported` itself (not just
+        # session state) so current_model_identity_fingerprints's
+        # activity_fit_fingerprint() call further down this same import
+        # never re-reads a raw payload either - the same failure mode
+        # already fixed for the Search taxonomy and SEO fit-input payloads.
+        _resolved_activity_definitions, _activity_definition_warnings = (
+            resolve_imported_activity_definitions(imported.get("activity_definitions"))
         )
+        imported["activity_definitions"] = _resolved_activity_definitions
+        set_state("activity_definitions", _resolved_activity_definitions)
+        for _activity_definition_warning in (
+            *(imported.get("activity_definition_import_warnings") or []),
+            *_activity_definition_warnings,
+        ):
+            st.warning(_activity_definition_warning)
         set_state("model_type", imported["model_type"])
         set_state("outcome_definitions", imported["outcome_definitions"])
         _resolved_outcome_groups, _outcome_group_warnings = (
@@ -1295,6 +1319,16 @@ if uploaded_zip is not None and st.button("Import bundle"):
             resolve_imported_search_objects(imported)
         )
         set_state("search_object_versions", _resolved_search_objects)
+        # Mirror the sanitized, quarantine-checked history into `imported`
+        # itself (not just session state): current_model_identity_
+        # fingerprints re-reads imported["search_objects"] directly to
+        # compute search_object_fit_fingerprint, bypassing this function
+        # entirely - leaving the raw payload there let a malformed record
+        # that was already correctly quarantined for session state above
+        # crash verify_imported_approval/audit_project_resumability later
+        # in the same import, the same failure mode fixed for the Search
+        # taxonomy and SEO fit-input payloads.
+        imported["search_objects"] = _resolved_search_objects
         set_state(
             "search_objects",
             [

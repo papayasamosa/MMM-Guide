@@ -613,6 +613,68 @@ def test_import_quarantines_malformed_seo_fit_inputs_without_crashing_readiness(
     assert reimported["seo_fit_inputs"] is None
 
 
+def test_import_quarantines_malformed_search_objects_activities_and_coverage_matrices(
+    monkeypatch, tmp_path
+):
+    """Independent-review findings A/B/C: search_objects, activity_definitions,
+    and variable_coverage_matrices were each consumed raw (uncaught) by
+    current_model_identity_fingerprints (search_object_fit_fingerprint /
+    activity_fit_fingerprint) or by resolve_imported_variable_coverage_matrices
+    itself for a non-iterable top-level payload - the same crash-after-partial-
+    install failure mode already fixed for the Search taxonomy and SEO
+    fit-input payloads, just for three payloads that were missed the first
+    time. A single bundle exercises all three at once."""
+
+    export_root = tmp_path / "exports"
+    monkeypatch.setattr("ancestry_mmm.utils.PROJECT_EXPORT_ROOT", export_root)
+
+    project = build_lifecycle_project()
+    bundle_path = export_project(
+        tmp_path / "malformed-abc.zip",
+        raw_sources={"joined": project.fitted.transformed_data.copy()},
+        transformed_data=project.fitted.transformed_data,
+        pipeline_steps=[],
+        model_spec=project.fitted.model_spec_dict,
+        prior_config=project.fitted.prior_config,
+        dna_lag_weeks=project.fitted.dna_lag_weeks,
+        trace=project.fitted.trace,
+        scenarios=[],
+        model_approval=project.approval.to_dict(),
+        model_run_id=project.fitted.model_run_id,
+        model_meta=project.fitted.meta,
+        # A: non-iterable top-level payload.
+        variable_coverage_matrices=42,
+        # B: individually malformed record inside an otherwise-valid list.
+        search_objects=[{"not_a_valid": "record"}],
+        # C: individually malformed record inside an otherwise-valid list.
+        activity_definitions=[{"not_a_valid": "record"}],
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.file_uploader[0].set_value(
+        (bundle_path.name, bundle_path.read_bytes(), "application/zip")
+    ).run()
+    next(
+        button for button in at.button if button.label == "Import bundle"
+    ).click().run()
+
+    assert not at.exception, (
+        "malformed search_objects/activity_definitions/coverage_matrices "
+        f"crashed downstream verification instead of quarantining: {at.exception}"
+    )
+    assert at.session_state["search_objects"] == []
+    assert at.session_state["search_object_versions"] == []
+    assert at.session_state["activity_definitions"] == []
+    assert at.session_state["variable_coverage_matrix_versions"] == []
+    assert at.session_state["trace"] is not None
+    assert any(
+        "Activity definition" in (w.value or "") and "quarantined" in (w.value or "")
+        for w in at.warning
+    )
+
+
 def test_import_clears_stale_cached_optimiser_results(monkeypatch, tmp_path):
     """Fresh review finding: a cached constrained_result/unconstrained_result
     left over from a DIFFERENT project earlier in this same Streamlit

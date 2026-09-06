@@ -174,7 +174,7 @@ from .approval import (
 
 if TYPE_CHECKING:
     from .validation_policy import ApprovalReadiness, ThresholdPolicy
-from .activities import ActivityDefinition, activity_fit_fingerprint
+from .activities import activity_fit_fingerprint, resolve_imported_activity_definitions
 from .fingerprint import (
     fingerprint_dataframe,
     fingerprint_model_spec,
@@ -877,6 +877,7 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         "media_input_support": [],
         "monetary_spend_support": [],
         "activity_definitions": [],
+        "activity_definition_import_warnings": [],
         # Absent in bundles exported before the market-specific redesign's
         # Phase 2 - "shared" (Model A) is the correct default: every bundle
         # exported before Model C existed was necessarily a Model A fit.
@@ -1091,10 +1092,23 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
             activity_payload = json.loads(
                 (config_dir / "activity_definitions.json").read_text()
             )
-            result["activity_definitions"] = [
-                ActivityDefinition.from_dict(item).to_dict()
-                for item in activity_payload
-            ]
+            # A malformed record used to raise straight out of
+            # ActivityDefinition.from_dict() here, crashing import_project()
+            # itself for every caller (page or otherwise) before any
+            # downstream quarantine handling ever ran. Self-quarantine here
+            # instead, mirroring every other governed payload's contract in
+            # this function. Unlike every other governed payload (which
+            # import_project() returns raw for the page's own
+            # resolve_imported_* call to validate and warn about),
+            # activity_definitions is uniquely pre-parsed/schema-migrated
+            # here already, so any quarantine warnings are captured under a
+            # dedicated key rather than silently discarded - a caller that
+            # doesn't check it loses nothing it had before this fix (the
+            # record is still safely dropped either way).
+            (
+                result["activity_definitions"],
+                result["activity_definition_import_warnings"],
+            ) = resolve_imported_activity_definitions(activity_payload)
         if (config_dir / "model_type.json").exists():
             result["model_type"] = json.loads(
                 (config_dir / "model_type.json").read_text()
@@ -1670,6 +1684,11 @@ def resolve_imported_search_objects(
     warnings: List[str] = []
     if not raw_objects:
         return [], warnings
+    if isinstance(raw_objects, (str, bytes)) or not isinstance(raw_objects, Sequence):
+        return [], [
+            "Search objects payload is not a sequence and was quarantined "
+            "(dropped, not silently kept)."
+        ]
 
     normalised: List[SearchObjectDefinition] = []
     for index, item in enumerate(raw_objects):
@@ -1900,6 +1919,11 @@ def resolve_imported_variable_coverage_matrices(
     warnings: List[str] = []
     if not raw_matrices:
         return [], warnings
+    if isinstance(raw_matrices, (str, bytes)) or not isinstance(raw_matrices, Sequence):
+        return [], [
+            "Variable coverage matrices payload is not a sequence and was "
+            "quarantined (dropped, not silently kept)."
+        ]
 
     normalised: List[dict] = []
     for index, item in enumerate(raw_matrices):

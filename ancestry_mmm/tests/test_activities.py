@@ -12,6 +12,7 @@ from ancestry_mmm.core.activities import (
     activity_invalidation,
     activity_reporting_fingerprint,
     resolve_graph_activity_predictor,
+    resolve_imported_activity_definitions,
 )
 from ancestry_mmm.core.media_costs import monetary_governance_fingerprint
 
@@ -28,6 +29,43 @@ def _activity(**overrides):
     }
     values.update(overrides)
     return ActivityDefinition(**values)
+
+
+class TestResolveImportedActivityDefinitions:
+    """Independent-review finding: activity_definitions was installed into
+    session state with zero validation, and activity_fit_fingerprint (used
+    by core.persistence.current_model_identity_fingerprints) parsed the raw
+    imported payload with no try/except - a malformed record crashed
+    verify_imported_approval/audit_project_resumability deep inside import,
+    the same failure mode already fixed for the Search taxonomy and SEO
+    fit-input payloads."""
+
+    def test_absent_payload_is_not_an_error(self):
+        assert resolve_imported_activity_definitions(None) == ([], [])
+        assert resolve_imported_activity_definitions([]) == ([], [])
+
+    def test_non_sequence_top_level_payload_is_quarantined(self):
+        normalised, warnings = resolve_imported_activity_definitions(42)
+        assert normalised == []
+        assert any("not a sequence" in w for w in warnings)
+
+    def test_malformed_record_is_quarantined_not_raised(self):
+        normalised, warnings = resolve_imported_activity_definitions(
+            [{"not_a_valid": "record"}]
+        )
+        assert normalised == []
+        assert any("malformed" in w and "quarantined" in w for w in warnings)
+
+    def test_valid_and_malformed_records_are_separated(self):
+        good = _activity().to_dict()
+        normalised, warnings = resolve_imported_activity_definitions(
+            [good, "not-a-mapping", {"activity_id": "bad-only"}]
+        )
+        assert len(normalised) == 1
+        assert normalised[0]["activity_id"] == good["activity_id"]
+        assert len(warnings) == 2
+        assert any("not a mapping" in w for w in warnings)
+        assert any("bad-only" in w for w in warnings)
 
 
 def test_organic_social_is_response_only_without_fake_cpa():

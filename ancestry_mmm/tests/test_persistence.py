@@ -1801,6 +1801,17 @@ def test_resolve_imported_search_objects_quarantines_malformed_records():
     assert any("not a mapping" in w for w in warnings)
 
 
+def test_resolve_imported_search_objects_quarantines_non_sequence_top_level_payload():
+    """Independent-review finding: a non-iterable top-level search_objects
+    payload (e.g. an int, from a corrupted bundle) used to raise
+    `TypeError: 'int' object is not iterable` straight out of `enumerate()`,
+    uncaught - this must quarantine like every other malformed shape, not
+    crash the caller."""
+    objects, warnings = resolve_imported_search_objects({"search_objects": 42})
+    assert objects == []
+    assert any("not a sequence" in w for w in warnings)
+
+
 def test_resolve_imported_search_objects_quarantines_cross_object_column_alias():
     """REQ-SEARCH-001 S14: a click column already governed as
     paid_search_delivery cannot also be registered as paid_search_cap in
@@ -2409,6 +2420,17 @@ def test_resolve_imported_variable_coverage_matrices_quarantines_malformed_recor
     assert len(warnings) == 2
     assert any("not a mapping" in w for w in warnings)
     assert any("incomplete" in w for w in warnings)
+
+
+def test_resolve_imported_variable_coverage_matrices_quarantines_non_sequence_payload():
+    """Independent-review finding: a non-iterable top-level payload used to
+    raise TypeError from enumerate(), uncaught, crashing
+    current_model_identity_fingerprints during import."""
+    matrices, warnings = resolve_imported_variable_coverage_matrices(
+        {"variable_coverage_matrices": 42}
+    )
+    assert matrices == []
+    assert any("not a sequence" in w for w in warnings)
 
 
 def test_export_then_import_join_config_round_trip(tmp_path, sample_project):
