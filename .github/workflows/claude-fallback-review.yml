@@ -15,12 +15,20 @@ concurrency:
   group: claude-fallback-review-pr-${{ github.event.issue.number }}
   cancel-in-progress: false
 
+# Least-privilege token: contents:read is for checking out the PR head only
+# (Claude cannot push - see disallowedTools below); pull-requests:read is for
+# reading PR head/base SHAs via the API; issues:write is for posting the
+# final review comment and reading prior ones for duplicate detection (PR
+# conversation comments are Issues-API objects even for pull requests);
+# actions:read is forwarded to Claude via additional_permissions so it can
+# inspect CI results. No id-token permission is granted - this workflow
+# authenticates with a static claude_code_oauth_token secret, not OIDC
+# federation, so id-token:write is unused and intentionally omitted.
 permissions:
   contents: read
-  pull-requests: write
+  pull-requests: read
   issues: write
   actions: read
-  id-token: write
 
 jobs:
   claude-fallback-review:
@@ -65,9 +73,34 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # SECURITY BOUNDARY: the review PROMPT must come from the same trusted
+      # source this workflow file itself is evaluated from (the repository's
+      # default branch - see the note at the top of this file), never from
+      # the PR under review. If we read the prompt from the PR's checked-out
+      # working tree, a PR could rewrite its own review instructions (prompt
+      # injection / self-grading) simply by editing
+      # .github/claude/fallback-review-prompt.md in its own diff. We
+      # therefore fetch the prompt from the default branch via the GitHub
+      # Contents API, before the PR head is ever checked out, so it is never
+      # read from PR-controlled filesystem content.
+      - name: Load review prompt from trusted default branch
+        if: steps.duplicate.outputs.skip != 'true'
+        id: prompt
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          PROMPT_CONTENT="$(gh api "repos/${REPOSITORY}/contents/.github/claude/fallback-review-prompt.md?ref=${DEFAULT_BRANCH}" --jq '.content' | base64 -d)"
+          {
+            echo 'content<<CLAUDE_PROMPT_EOF'
+            printf '%s\n' "${PROMPT_CONTENT}"
+            echo 'CLAUDE_PROMPT_EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Checkout exact PR head
         if: steps.duplicate.outputs.skip != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: refs/pull/${{ github.event.issue.number }}/head
           fetch-depth: 0
@@ -87,22 +120,10 @@ jobs:
             exit 1
           fi
 
-      - name: Load review prompt
-        if: steps.duplicate.outputs.skip != 'true'
-        id: prompt
-        shell: bash
-        run: |
-          set -euo pipefail
-          {
-            echo 'content<<CLAUDE_PROMPT_EOF'
-            cat .github/claude/fallback-review-prompt.md
-            echo 'CLAUDE_PROMPT_EOF'
-          } >> "$GITHUB_OUTPUT"
-
       - name: Run Claude fallback review
         if: steps.duplicate.outputs.skip != 'true'
         id: claude
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@9c5ddab2e6d17b83ea679153b31f1d5f023cf636 # v1.0.217
         with:
           # Recommended for Claude Code Pro / Max:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

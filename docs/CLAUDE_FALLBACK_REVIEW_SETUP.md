@@ -195,13 +195,27 @@ The workflow:
 - accepts the quota trigger only from `chatgpt-codex-connector[bot]`
 - sets Claude `allowed_bots` to that exact bot
 - does not use `allowed_bots: "*"`
-- grants repository contents read-only access
+- loads the review prompt from the repository's default branch via the
+  GitHub Contents API, before the PR head is ever checked out - a PR cannot
+  rewrite its own review instructions by editing
+  `.github/claude/fallback-review-prompt.md` in its own diff
+- grants repository contents read-only access, and requests only the
+  additional scopes actually used (`pull-requests: read` to resolve the PR
+  head/base SHAs, `issues: write` to post the review comment, `actions: read`
+  to let Claude inspect CI) - no `id-token` permission is requested, since
+  authentication uses a static secret, not OIDC
 - disables Edit and Write tools
 - does not enable arbitrary Bash for Claude
 - tells Claude not to commit/push/merge
 - uses structured output and posts the final review itself
 - does not expose full Claude output in Actions logs
 - checks exact SHA before and after review
+- pins `actions/checkout` and `anthropics/claude-code-action` to full commit
+  SHAs (with a trailing `# vX.Y.Z` comment for readability) rather than
+  mutable version tags
+- is covered by a static invariant test,
+  `ancestry_mmm/tests/test_claude_fallback_review_workflow.py`, that runs in
+  the normal test suite and fails if any of the above regresses
 
 ## First test
 
@@ -214,9 +228,5 @@ After the small setup PR is merged to `main`:
 5. Wait for a genuine Codex quota comment on a PR.
 
 Typing the quota text yourself will not trigger Claude because the workflow verifies the comment author is the official Codex bot.
-
-## Current PR #351
-
-Because the Codex review quota is already exhausted, this workflow can handle a future genuine quota message on PR #351 once the workflow has been merged to `main`.
 
 For an immediate review before that setup PR is merged, use a fresh Claude Code session manually. The workflow is primarily for future automatic fallback.
