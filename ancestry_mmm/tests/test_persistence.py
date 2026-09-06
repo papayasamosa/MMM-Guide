@@ -3809,6 +3809,103 @@ class TestVerifyImportedApproval:
         assert rejected is None
         assert "does not match" in rejection_message.lower()
 
+    def test_malformed_seo_fit_inputs_crash_current_model_identity_fingerprints(
+        self, tmp_path, consistent_project
+    ):
+        """Documents the exact crash reported in review PRRT_kwDOTd28Js6fnFan:
+        without quarantining first, a malformed seo_fit_inputs record
+        reaches SeoModelFitInputs.from_dict() deep inside
+        current_model_identity_fingerprints and raises - core.persistence
+        itself does not (and should not) swallow this; the import boundary
+        (09_Project_Export.py) is responsible for quarantining before
+        calling verify_imported_approval/audit_project_resumability, which
+        the next test proves."""
+        project = dict(consistent_project)
+        project["seo_fit_inputs"] = {"groups": [{}]}
+        imported = import_project(
+            export_project(tmp_path / "malformed-seo-raw.zip", **project)
+        )
+        reconstructed = reconstruct_model_state(imported)
+        with pytest.raises((KeyError, TypeError, ValueError)):
+            verify_imported_approval(imported, reconstructed)
+
+    def test_approval_bound_to_a_real_seo_boundary_is_unverified_after_quarantine(
+        self, tmp_path, consistent_project
+    ):
+        """The fix's actual contract: once the import boundary has
+        quarantined a malformed seo_fit_inputs payload (sanitizing
+        `imported["seo_fit_inputs"]` to None, mirroring
+        core.seo_visibility.resolve_imported_seo_fit_inputs's contract), an
+        approval that was genuinely computed against a real, non-empty SEO
+        boundary must fail verification rather than being silently accepted
+        as if the model had no SEO input at all."""
+        weeks = [
+            str(value.date())
+            for value in pd.date_range("2024-01-01", periods=8, freq="W")
+        ]
+        seo_inputs = SeoModelFitInputs.from_observations(
+            [
+                SeoPositionalVisibilityObservation(
+                    market="UK",
+                    week=week,
+                    weighted_avg_position=2.0,
+                    visibility_index=0.5,
+                    total_impressions=100.0,
+                    total_clicks=10.0,
+                    ctr=0.1,
+                )
+                for week in weeks
+            ],
+            model_markets=["UK"] * len(weeks),
+            model_weeks=weeks,
+            metric_definition=SEO_POSITIONAL_VISIBILITY_METRIC,
+        )
+        seo_payload = seo_inputs.to_dict()
+        project = dict(consistent_project)
+        project["seo_fit_inputs"] = seo_payload
+        project["model_meta"] = replace(
+            consistent_project["model_meta"],
+            seo_fit_inputs_at_fit=seo_payload,
+        )
+        project["trace"] = _make_trace(project["model_meta"])
+        project["model_approval"] = dict(consistent_project["model_approval"])
+        project["model_approval"]["model_spec_fingerprint"] = fingerprint_model_spec(
+            project["model_spec"],
+            project["prior_config"],
+            project["dna_lag_weeks"],
+            direct_dna_outcome_ids=project["model_meta"].direct_dna_outcome_ids,
+            seo_fit_fingerprint=seo_fit_inputs_fingerprint(seo_inputs),
+        )
+        project["model_approval"]["posterior_fingerprint"] = fingerprint_posterior(
+            extract_posterior_params(project["trace"], project["model_meta"])
+        )
+
+        imported = import_project(
+            export_project(tmp_path / "seo-boundary-quarantined.zip", **project)
+        )
+        reconstructed = reconstruct_model_state(imported)
+        verified, message = verify_imported_approval(imported, reconstructed)
+        assert verified is not None, message
+
+        # Simulate the import boundary's now-corrupted-on-disk config: the
+        # analyst's config/seo_fit_inputs.json became malformed (a group
+        # missing metric_definition) between export and re-import.
+        imported["seo_fit_inputs"] = {"groups": [{}]}
+        from ancestry_mmm.core.seo_visibility import resolve_imported_seo_fit_inputs
+
+        try:
+            resolve_imported_seo_fit_inputs(imported["seo_fit_inputs"])
+        except ValueError:
+            # This is the quarantine 09_Project_Export.py's import handler
+            # performs before ever calling verify_imported_approval.
+            imported["seo_fit_inputs"] = None
+        else:
+            pytest.fail("expected the malformed SEO payload to be rejected")
+
+        rejected, rejection_message = verify_imported_approval(imported, reconstructed)
+        assert rejected is None
+        assert "does not match" in rejection_message.lower()
+
     def test_rejected_when_posterior_artefacts_differ(
         self, tmp_path, consistent_meta, consistent_project
     ):

@@ -394,6 +394,71 @@ class TestProjectExportInputGovernanceFields:
         assert imported["approval_readiness"] is None
 
 
+class TestProjectExportInputDisplayName:
+    """Regression for review PRRT_kwDOTd28Js6fnFao: ProjectExportInput has
+    no way to carry a project's human-readable display name through to
+    export_project(), so a non-Streamlit caller (batch/notebook/future API)
+    always exported the manifest's default (None) - a re-imported bundle
+    then resolved to the default project name and looked in the wrong
+    durable-job namespace, unable to recover that project's jobs."""
+
+    def test_export_with_a_display_name_round_trips_through_import(
+        self, tmp_path, governed_project
+    ):
+        exp_input = ProjectExportInput(
+            output_path=str(tmp_path / "bundle.zip"),
+            project_display_name="UK Production 2026",
+            **governed_project,
+        )
+        result = ProjectService().export(exp_input)
+
+        assert result.success, result.errors
+        imported = import_project(result.actual_export_path)
+        assert imported["project_display_name"] == "UK Production 2026"
+
+    def test_imported_display_name_resolves_to_the_same_durable_job_namespace(
+        self, tmp_path, governed_project
+    ):
+        """The whole point of carrying the display name through: after a
+        fresh import, the durable fit-job store for the recovered display
+        name must be the same canonical namespace the original session's
+        jobs were filed under - not the default project's namespace."""
+        from ancestry_mmm.application.fit_job_service import FitJobStore
+
+        display_name = "UK Production 2026"
+        exp_input = ProjectExportInput(
+            output_path=str(tmp_path / "bundle.zip"),
+            project_display_name=display_name,
+            **governed_project,
+        )
+        result = ProjectService().export(exp_input)
+        assert result.success, result.errors
+        imported = import_project(result.actual_export_path)
+
+        original_store = FitJobStore(tmp_path / "jobs", display_name)
+        recovered_store = FitJobStore(
+            tmp_path / "jobs", imported["project_display_name"]
+        )
+        assert recovered_store.project_id == original_store.project_id
+
+    def test_export_without_an_explicit_display_name_still_works(
+        self, tmp_path, governed_project
+    ):
+        """Backward compatibility: older callers that never set
+        project_display_name (the field's default) must keep exporting
+        successfully, with the documented default (None) preserved through
+        import exactly as before this field existed."""
+        exp_input = ProjectExportInput(
+            output_path=str(tmp_path / "bundle.zip"),
+            **governed_project,
+        )
+        result = ProjectService().export(exp_input)
+
+        assert result.success, result.errors
+        imported = import_project(result.actual_export_path)
+        assert imported["project_display_name"] is None
+
+
 class TestProjectExportInputCounterfactualAndCurrencyContext:
     """PR 125A: counterfactual_policy / currency_context - the project-level
     planning dependencies newly threaded through ProjectExportInput ->

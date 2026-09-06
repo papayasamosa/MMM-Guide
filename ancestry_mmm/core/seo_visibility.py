@@ -719,7 +719,9 @@ def seo_group_variable_suffixes(group_ids: Sequence[str]) -> dict[str, str]:
 
 
 def seo_fit_inputs_to_dict(
-    value: Optional[SeoModelFitInputs | SeoModelFitInputsCollection],
+    value: Optional[
+        SeoModelFitInputs | SeoModelFitInputsCollection | Mapping[str, Any]
+    ],
 ) -> dict:
     groups = normalise_seo_fit_inputs(value)
     if not groups:
@@ -730,7 +732,9 @@ def seo_fit_inputs_to_dict(
 
 
 def seo_fit_inputs_fingerprint(
-    value: Optional[SeoModelFitInputs | SeoModelFitInputsCollection],
+    value: Optional[
+        SeoModelFitInputs | SeoModelFitInputsCollection | Mapping[str, Any]
+    ],
 ) -> str:
     if value is None or (isinstance(value, Mapping) and not value):
         return ""
@@ -740,6 +744,46 @@ def seo_fit_inputs_fingerprint(
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def resolve_imported_seo_fit_inputs(value: Optional[Mapping[str, Any]]) -> dict:
+    """Validate an imported ``seo_fit_inputs`` payload before it can reach
+    model-identity reconstruction.
+
+    ``seo_fit_inputs_fingerprint``/``seo_fit_inputs_to_dict`` parse a raw
+    imported mapping through ``SeoModelFitInputs.from_dict`` internally
+    (e.g. a group missing ``metric_definition`` raises ``KeyError``) - a
+    malformed record therefore used to raise straight out of
+    ``current_model_identity_fingerprints`` during import, after session
+    state had already been partially replaced. Callers must catch
+    ``ValueError`` here and quarantine (drop, not silently keep) the
+    payload - mirroring
+    ``core.search_intent_taxonomy.resolve_imported_search_intent_groups``'s
+    quarantine contract - rather than letting the underlying parse
+    exception surface from deep inside identity reconstruction.
+
+    Returns ``{}`` for an absent/empty payload (never fabricated) or the
+    validated, canonical payload dict for a valid one - never the raw
+    input unchanged, so a legacy single-group shape and an explicit
+    ``{"groups": [...]}`` collection both resolve to the same
+    representation ``seo_fit_inputs_fingerprint`` would compute from it.
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError(
+            "SEO fit inputs payload is not a mapping and was quarantined "
+            "(dropped, not silently kept)."
+        )
+    if not value:
+        return {}
+    try:
+        return seo_fit_inputs_to_dict(value)
+    except (TypeError, ValueError, KeyError, AttributeError) as exc:
+        raise ValueError(
+            "SEO fit inputs payload was malformed and was quarantined "
+            f"(dropped, not silently kept): {exc}"
+        ) from exc
 
 
 __all__ = [
@@ -756,6 +800,7 @@ __all__ = [
     "compute_weekly_positional_visibility",
     "compute_weekly_positional_visibility_series",
     "normalise_seo_fit_inputs",
+    "resolve_imported_seo_fit_inputs",
     "seo_group_variable_suffixes",
     "seo_fit_inputs_fingerprint",
     "seo_fit_inputs_to_dict",

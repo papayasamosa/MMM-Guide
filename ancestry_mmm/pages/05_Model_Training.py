@@ -1479,6 +1479,29 @@ for _completed_job in _fit_job_backend.store.list(statuses={"succeeded"}):
             # payload. Restore the paired frozen specification and frame before
             # downstream diagnostics, curves, and planning replay the posterior;
             # the live session may still contain the unsliced preparation pair.
+            _adopted_model_run_id = _record.project_run_id or str(uuid.uuid4())
+            # A genuinely new posterior (a different run identity than what
+            # this session currently has active) must not let diagnostics,
+            # approval, curves, or scenarios computed against the *previous*
+            # posterior keep displaying as if they still applied - reuse the
+            # same fit-invalidation mechanism every other trigger in this app
+            # uses (grain change, Candidate A anchor change, activity mapping
+            # change), rather than a second, narrower ad hoc clearing list.
+            # Re-adopting the *same* run identity (fingerprint-verified
+            # recovery of an already-adopted job after a session/browser
+            # loss) is not a new fit - clearing here would destroy valid,
+            # still-current evidence for no reason, so it is skipped only in
+            # that exact case.
+            if get_state("model_run_id") != _adopted_model_run_id:
+                clear_model_state()
+                set_state("scenarios", [])
+                set_state(
+                    "fit_invalidation_notice",
+                    "A new fit was adopted, so the previous run's approval, "
+                    "diagnostics, curves, and scenarios were cleared. "
+                    "Recompute diagnostics and re-approve before relying on "
+                    "curves, planning, or scenarios for this run.",
+                )
             set_state("prepared_model_spec", _prepared_model_spec)
             set_state("prepared_frame", _prepared_frame)
             set_state("fitted_model_spec", _fitted_model_spec)
@@ -1490,7 +1513,7 @@ for _completed_job in _fit_job_backend.store.list(statuses={"succeeded"}):
             set_state("model_trained", True)
             set_state("posterior_params", _posterior_params)
             set_state("model_type", model_type)
-            set_state("model_run_id", _record.project_run_id or str(uuid.uuid4()))
+            set_state("model_run_id", _adopted_model_run_id)
             _fitted_settings = dict(_record.sampler_settings)
             set_state("mcmc_draws", int(_fitted_settings.get("draws", 1000)))
             set_state("mcmc_tune", int(_fitted_settings.get("tune", 1000)))
@@ -1501,7 +1524,6 @@ for _completed_job in _fit_job_backend.store.list(statuses={"succeeded"}):
             )
             if _record.random_seed is not None:
                 set_state("mcmc_random_seed", int(_record.random_seed))
-            set_state("model_approval", None)
             set_state(
                 "migration_review",
                 migration_review_after_fit_adoption(

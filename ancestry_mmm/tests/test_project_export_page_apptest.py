@@ -534,6 +534,85 @@ def test_import_quarantines_malformed_current_search_taxonomy_without_crashing_r
     )
 
 
+def test_import_quarantines_malformed_seo_fit_inputs_without_crashing_readiness(
+    monkeypatch, tmp_path
+):
+    """Regression for review PRRT_kwDOTd28Js6fnFan: a malformed
+    config/seo_fit_inputs.json (e.g. a group missing metric_definition)
+    reaches SeoModelFitInputs.from_dict() deep inside
+    current_model_identity_fingerprints's seo_fit_inputs_fingerprint() call
+    - called by verify_imported_approval/audit_project_resumability right
+    after this handler, in the same import - so a raw payload used to crash
+    an approved/reconstructable bundle's import after the rest of project
+    state had already been installed. The import handler must quarantine it
+    first, exactly like the Search taxonomy quarantine above."""
+
+    export_root = tmp_path / "exports"
+    monkeypatch.setattr("ancestry_mmm.utils.PROJECT_EXPORT_ROOT", export_root)
+
+    project = build_lifecycle_project()
+    bundle_path = export_project(
+        tmp_path / "malformed-seo.zip",
+        raw_sources={"joined": project.fitted.transformed_data.copy()},
+        transformed_data=project.fitted.transformed_data,
+        pipeline_steps=[],
+        model_spec=project.fitted.model_spec_dict,
+        prior_config=project.fitted.prior_config,
+        dna_lag_weeks=project.fitted.dna_lag_weeks,
+        trace=project.fitted.trace,
+        scenarios=[],
+        model_approval=project.approval.to_dict(),
+        model_run_id=project.fitted.model_run_id,
+        model_meta=project.fitted.meta,
+        # A group missing required fields - the exact example from the
+        # review. SeoModelFitInputs.from_dict() raises constructing it.
+        seo_fit_inputs={"groups": [{}]},
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.file_uploader[0].set_value(
+        (bundle_path.name, bundle_path.read_bytes(), "application/zip")
+    ).run()
+    next(
+        button for button in at.button if button.label == "Import bundle"
+    ).click().run()
+
+    assert not at.exception, (
+        "malformed SEO fit inputs crashed downstream readiness/approval "
+        f"verification instead of completing the quarantine: {at.exception}"
+    )
+    assert at.session_state["seo_fit_inputs"] is None
+    assert any(
+        "SEO fit inputs" in (w.value or "") and "quarantined" in (w.value or "")
+        for w in at.warning
+    )
+
+    # Valid, unrelated project data remains importable alongside the
+    # quarantine - the rest of the fitted/approved project state installed
+    # normally.
+    assert at.session_state["model_run_id"] == project.fitted.model_run_id
+    assert at.session_state["trace"] is not None
+
+    # Re-exporting the sanitized session state must not resurrect the
+    # malformed object.
+    reexport_path = export_project(
+        tmp_path / "seo-reexported.zip",
+        raw_sources={},
+        transformed_data=at.session_state["transformed_data"],
+        pipeline_steps=[],
+        model_spec=at.session_state["model_spec"],
+        prior_config=at.session_state["prior_config"],
+        dna_lag_weeks=at.session_state["dna_lag_weeks"],
+        trace=at.session_state["trace"],
+        scenarios=[],
+        seo_fit_inputs=at.session_state["seo_fit_inputs"],
+    )
+    reimported = import_project(reexport_path)
+    assert reimported["seo_fit_inputs"] is None
+
+
 def test_import_clears_stale_cached_optimiser_results(monkeypatch, tmp_path):
     """Fresh review finding: a cached constrained_result/unconstrained_result
     left over from a DIFFERENT project earlier in this same Streamlit

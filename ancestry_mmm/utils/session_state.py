@@ -302,6 +302,26 @@ def update_state(**kwargs) -> None:
         st.session_state[key] = value
 
 
+def _canonical_store_dir_with_legacy_migration(root: Path, raw_name: str) -> Path:
+    """Resolve ``root / canonical_project_id(raw_name)``, migrating a
+    pre-canonicalisation store still sitting at ``root / raw_name`` into it
+    first when one exists and it is safe to do so - see
+    ``core.curve_artifact.migrate_legacy_curve_store_directory`` for the
+    full safety contract (an untrusted ``raw_name`` can never be used to
+    probe or touch anything outside ``root``). A migration attempt is only
+    worth making when canonicalisation actually changed the name - an
+    already-safe name is its own canonical directory, so there is nothing
+    to migrate from."""
+    from ancestry_mmm.application.fit_job_service import canonical_project_id
+    from ancestry_mmm.core.curve_artifact import migrate_legacy_curve_store_directory
+
+    name = canonical_project_id(raw_name)
+    canonical_dir = root / name
+    if name != raw_name:
+        migrate_legacy_curve_store_directory(root, raw_name, canonical_dir)
+    return canonical_dir
+
+
 def curve_bank_dir() -> Path:
     """Per-project curve bank directory (created on first write).
 
@@ -311,24 +331,25 @@ def curve_bank_dir() -> Path:
     separators, ``..`` segments, or absolute-path syntax into a single safe
     component before it is joined under the storage root (see
     ``application.fit_job_service.canonical_project_id``, the same
-    canonicalisation durable fit-job storage already relies on).
+    canonicalisation durable fit-job storage already relies on). A store
+    still sitting under the pre-canonicalisation literal name is migrated
+    into the canonical directory the first time it is found - see
+    ``_canonical_store_dir_with_legacy_migration``.
     """
-    from ancestry_mmm.application.fit_job_service import canonical_project_id
-
-    name = canonical_project_id(str(get_state("project_name") or "default"))
-    return CURVE_BANK_ROOT / name
+    raw_name = str(get_state("project_name") or "default")
+    return _canonical_store_dir_with_legacy_migration(CURVE_BANK_ROOT, raw_name)
 
 
 def curve_artifact_store_dir() -> Path:
     """Per-project official curve artifact store directory (created on first write).
 
     See ``curve_bank_dir`` above: ``project_name`` is untrusted display
-    metadata and must never be used as a raw path component.
+    metadata and must never be used as a raw path component, and a legacy
+    (pre-canonicalisation) store is migrated in place the first time it is
+    found.
     """
-    from ancestry_mmm.application.fit_job_service import canonical_project_id
-
-    name = canonical_project_id(str(get_state("project_name") or "default"))
-    return CURVE_ARTIFACT_ROOT / name
+    raw_name = str(get_state("project_name") or "default")
+    return _canonical_store_dir_with_legacy_migration(CURVE_ARTIFACT_ROOT, raw_name)
 
 
 def clear_model_state() -> None:

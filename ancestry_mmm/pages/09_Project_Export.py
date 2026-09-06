@@ -146,7 +146,10 @@ from ancestry_mmm.core.outcomes import (
     outcome_catalogue_fingerprint_payload,
     resolve_outcome_definitions,
 )
-from ancestry_mmm.core.seo_visibility import seo_fit_inputs_fingerprint
+from ancestry_mmm.core.seo_visibility import (
+    resolve_imported_seo_fit_inputs,
+    seo_fit_inputs_fingerprint,
+)
 from ancestry_mmm.core.pathways import (
     MediaOutcomePathway,
     pathway_catalogue_fingerprint_payload,
@@ -1301,7 +1304,30 @@ if uploaded_zip is not None and st.button("Import bundle"):
         )
         set_state("search_candidate_a_spec", imported.get("search_candidate_a_spec"))
         set_state("google_trends_anchor", imported.get("google_trends_anchor"))
-        set_state("seo_fit_inputs", imported.get("seo_fit_inputs"))
+        # A malformed seo_fit_inputs record (e.g. a group missing
+        # metric_definition) reaches SeoModelFitInputs.from_dict() deep
+        # inside current_model_identity_fingerprints's
+        # seo_fit_inputs_fingerprint() call, well after this handler - a raw
+        # payload therefore crashed import outside any try/except here,
+        # after the rest of project state had already been installed.
+        # Parse and sanitize it here instead, and mirror the sanitized
+        # value into `imported` (not just session state) so downstream
+        # resumability/readiness/approval verification never re-reads the
+        # malformed raw payload: an approval or curve bound to the
+        # malformed SEO boundary then genuinely fails its fingerprint
+        # match (fails closed as unverified/stale) rather than crashing.
+        try:
+            _sanitized_seo_fit_inputs = resolve_imported_seo_fit_inputs(
+                imported.get("seo_fit_inputs")
+            )
+        except ValueError as _seo_exc:
+            set_state("seo_fit_inputs", None)
+            imported["seo_fit_inputs"] = None
+            st.warning(f"Persisted SEO fit inputs were quarantined: {_seo_exc}")
+        else:
+            _sanitized_seo_fit_inputs = _sanitized_seo_fit_inputs or None
+            set_state("seo_fit_inputs", _sanitized_seo_fit_inputs)
+            imported["seo_fit_inputs"] = _sanitized_seo_fit_inputs
         # REQ-SEARCH-004/005: restore only valid, explicitly persisted custom
         # taxonomy records. The approved minimum is supplied by the taxonomy
         # module; malformed children are quarantined and named.

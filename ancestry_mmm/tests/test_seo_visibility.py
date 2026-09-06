@@ -17,8 +17,10 @@ from ancestry_mmm.core.seo_visibility import (
     SeoVisibilityMetricDefinition,
     compute_weekly_positional_visibility,
     compute_weekly_positional_visibility_series,
+    resolve_imported_seo_fit_inputs,
     seo_group_variable_suffixes,
     seo_fit_inputs_fingerprint,
+    seo_fit_inputs_to_dict,
 )
 
 
@@ -27,6 +29,67 @@ def test_empty_seo_configuration_has_no_fingerprint():
 
     assert seo_fit_inputs_fingerprint(None) == ""
     assert seo_fit_inputs_fingerprint({}) == ""
+
+
+def _valid_seo_fit_inputs(seo_group_id: str = "brand") -> SeoModelFitInputs:
+    return SeoModelFitInputs(
+        metric_definition=SEO_POSITIONAL_VISIBILITY_METRIC,
+        model_markets=("UK",),
+        model_weeks=("2025-01-06",),
+        standardized_visibility=(0.5,),
+        active_mask=(1.0,),
+        raw_visibility=(4.0,),
+        window_by_market={},
+        standardization_center=0.0,
+        standardization_scale=1.0,
+        seo_group_id=seo_group_id,
+    )
+
+
+class TestResolveImportedSeoFitInputs:
+    """Regression for review PRRT_kwDOTd28Js6fnFan: a malformed imported
+    seo_fit_inputs payload must be quarantined at the import boundary
+    (before it can reach model-identity reconstruction), never let the
+    underlying SeoModelFitInputs.from_dict() parse exception surface from
+    deep inside current_model_identity_fingerprints."""
+
+    def test_absent_payload_is_not_an_error(self):
+        assert resolve_imported_seo_fit_inputs(None) == {}
+
+    def test_empty_mapping_is_not_an_error(self):
+        assert resolve_imported_seo_fit_inputs({}) == {}
+
+    def test_malformed_group_payload_is_quarantined(self):
+        """The exact example from the review: a group missing required
+        fields such as metric_definition."""
+        with pytest.raises(ValueError, match="quarantined"):
+            resolve_imported_seo_fit_inputs({"groups": [{}]})
+
+    def test_malformed_top_level_non_mapping_payload_is_quarantined(self):
+        with pytest.raises(ValueError, match="not a mapping"):
+            resolve_imported_seo_fit_inputs([1, 2, 3])
+
+    def test_top_level_payload_with_no_resolvable_groups_is_quarantined(self):
+        with pytest.raises(ValueError, match="quarantined"):
+            resolve_imported_seo_fit_inputs({"unexpected_shape": True})
+
+    def test_valid_single_group_payload_round_trips(self):
+        valid = _valid_seo_fit_inputs()
+        result = resolve_imported_seo_fit_inputs(valid.to_dict())
+        assert result == seo_fit_inputs_to_dict(valid)
+        assert result["seo_group_id"] == "brand"
+
+    def test_valid_multi_group_payload_round_trips(self):
+        groups = (_valid_seo_fit_inputs("brand"), _valid_seo_fit_inputs("non_brand"))
+        raw_payload = {
+            "schema_version": groups[0].schema_version,
+            "groups": [group.to_dict() for group in groups],
+        }
+        result = resolve_imported_seo_fit_inputs(raw_payload)
+        assert {g["seo_group_id"] for g in result["groups"]} == {
+            "brand",
+            "non_brand",
+        }
 
 
 def test_seo_group_ids_that_normalize_to_one_pymc_name_fail_closed():

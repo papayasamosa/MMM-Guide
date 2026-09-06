@@ -94,6 +94,15 @@ class ProjectExportInput:
     include_excel: bool = False
     excel_sheets: Optional[Dict[str, Optional[pd.DataFrame]]] = None
     excel_output_path: Optional[str] = None
+    # Human-readable display metadata only - never the durable-job or
+    # curve-store filesystem namespace (canonical_project_id derives that
+    # from it on import; see utils.session_state/application.fit_job_
+    # service). Appended at the end (not inserted alphabetically among the
+    # other optional fields above) so existing positional/keyword callers
+    # of this dataclass are unaffected; omitting it preserves the prior
+    # default (export_project() falls back to None, matching the manifest
+    # before this field existed).
+    project_display_name: Optional[str] = None
 
 
 @dataclass
@@ -225,6 +234,7 @@ class ProjectService:
                 standard_context_data=exp_input.standard_context_data,
                 context_variable_metadata=exp_input.context_variable_metadata,
                 source_domain_semantics=exp_input.source_domain_semantics,
+                project_display_name=exp_input.project_display_name,
             )
         except Exception as exc:
             errors.append(f"Project export failed: {exc}")

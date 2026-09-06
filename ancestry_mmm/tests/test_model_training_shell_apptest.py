@@ -307,6 +307,167 @@ def test_adopting_durable_fit_restores_the_frozen_search_grain_frame(
     assert at.session_state["mcmc_random_seed"] == 42
 
 
+def _submit_completed_job(store, project_name, base_frame, *, project_run_id):
+    return store.create(
+        FitJobSubmission(
+            project_id=project_name,
+            project_display_name=project_name,
+            engine="pymc",
+            model_type="shared",
+            sampler_settings={
+                "draws": 4,
+                "tune": 2,
+                "chains": 1,
+                "target_accept": 0.9,
+            },
+            random_seed=42,
+            data_fingerprint="data-fp",
+            model_spec_fingerprint="spec-fp",
+            fit_input_fingerprints={"seo": "seo-fp", "frame": "data-fp"},
+            build_kwargs={"frame": base_frame, "model_spec": _spec_dict()},
+            project_run_id=project_run_id,
+        )
+    )
+
+
+def _fitted_meta():
+    return FHModelMeta(
+        markets=["UK"],
+        outcome_ids=[OUTCOME_ID],
+        channels=CHANNELS,
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0],
+        dna_outcome_id=OUTCOME_ID,
+        dna_lag_weeks=0,
+        unpooled_markets=[],
+        control_names=[],
+    )
+
+
+def test_adopting_a_different_run_clears_previous_run_downstream_evidence(
+    monkeypatch, tmp_path
+):
+    """Regression for review PRRT_kwDOTd28Js6fnFak: adopting a durable fit
+    with a genuinely different run identity must clear scorecard,
+    diagnostics, approval readiness, the curve-bank reference, scenarios,
+    and the model approval bound to the PREVIOUS posterior - not just
+    model_approval - and tell the analyst what must be recomputed."""
+
+    project_name = "adoption-clear-project"
+    monkeypatch.setenv("ANCESTRY_MMM_FIT_JOB_ROOT", str(tmp_path))
+    base_frame = _frame()
+    store = FitJobStore(tmp_path, project_name)
+    record = _submit_completed_job(
+        store, project_name, base_frame, project_run_id="new-run-id"
+    )
+    store.transition(record.job_id, "running")
+    store.transition(record.job_id, "succeeded")
+
+    def fake_load_succeeded_fit(backend, job_id, **kwargs):
+        return object(), _fitted_meta(), backend.store.get(job_id)
+
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service.LocalFitJobBackend.load_succeeded_fit",
+        fake_load_succeeded_fit,
+    )
+    import ancestry_mmm.core.predict as predict
+
+    monkeypatch.setattr(predict, "extract_posterior_params", lambda *args: {"ok": 1})
+
+    at = _run_at(
+        project_name=project_name,
+        frame=base_frame,
+        model_run_id="old-run-id",
+        model_trained=True,
+        scorecard={"stale": "old"},
+        diagnostics_artefact={"stale": "old"},
+        approval_readiness={"overall_ready": True},
+        curve_bank_entry_id="old-entry",
+        scenarios=[{"name": "old-scenario"}],
+        model_approval={"approved_by": "Someone"},
+    )
+    adopt = next(
+        button for button in at.button if button.label == "Adopt completed fit"
+    )
+    at = adopt.click().run()
+
+    assert not at.exception, f"fit adoption raised: {at.exception}"
+    assert at.session_state["model_run_id"] == "new-run-id"
+    assert at.session_state["scorecard"] is None
+    assert at.session_state["diagnostics_artefact"] is None
+    assert at.session_state["approval_readiness"] is None
+    assert at.session_state["curve_bank_entry_id"] is None
+    assert at.session_state["scenarios"] == []
+    assert at.session_state["model_approval"] is None
+    assert any(
+        "cleared" in (w.value or "") and "diagnostics" in (w.value or "").lower()
+        for w in at.warning
+    )
+
+
+def test_readopting_the_same_run_after_session_recovery_preserves_evidence(
+    monkeypatch, tmp_path
+):
+    """Non-regression: re-adopting the SAME run identity - fingerprint-
+    verified recovery of an already-adopted job after a session/browser
+    loss, not a new fit - must not destroy valid diagnostics/approval/
+    curve/scenario evidence that still applies to that exact run."""
+
+    project_name = "adoption-recovery-project"
+    monkeypatch.setenv("ANCESTRY_MMM_FIT_JOB_ROOT", str(tmp_path))
+    base_frame = _frame()
+    store = FitJobStore(tmp_path, project_name)
+    record = _submit_completed_job(
+        store, project_name, base_frame, project_run_id="same-run-id"
+    )
+    store.transition(record.job_id, "running")
+    store.transition(record.job_id, "succeeded")
+    store.mark_adopted(record.job_id, "same-run-id")
+
+    def fake_load_succeeded_fit(backend, job_id, **kwargs):
+        return object(), _fitted_meta(), backend.store.get(job_id)
+
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service.LocalFitJobBackend.load_succeeded_fit",
+        fake_load_succeeded_fit,
+    )
+    import ancestry_mmm.core.predict as predict
+
+    monkeypatch.setattr(predict, "extract_posterior_params", lambda *args: {"ok": 1})
+
+    at = _run_at(
+        project_name=project_name,
+        frame=base_frame,
+        # This session's active run is already the same one being
+        # re-adopted (project_run_id="same-run-id" above).
+        model_run_id="same-run-id",
+        model_trained=True,
+        scorecard={"current": "still valid"},
+        diagnostics_artefact={"current": "still valid"},
+        approval_readiness={"overall_ready": True},
+        curve_bank_entry_id="current-entry",
+        scenarios=[{"name": "current-scenario"}],
+        model_approval={"approved_by": "Someone"},
+    )
+    adopt = next(
+        button for button in at.button if button.label == "Re-adopt completed fit"
+    )
+    at = adopt.click().run()
+
+    assert not at.exception, f"fit re-adoption raised: {at.exception}"
+    assert at.session_state["model_run_id"] == "same-run-id"
+    assert at.session_state["scorecard"] == {"current": "still valid"}
+    assert at.session_state["diagnostics_artefact"] == {"current": "still valid"}
+    assert at.session_state["approval_readiness"] == {"overall_ready": True}
+    assert at.session_state["curve_bank_entry_id"] == "current-entry"
+    assert at.session_state["scenarios"] == [{"name": "current-scenario"}]
+    assert at.session_state["model_approval"] == {"approved_by": "Someone"}
+    assert not any("cleared" in (w.value or "").lower() for w in at.warning), (
+        "recovery of the same run must not report evidence as cleared"
+    )
+
+
 def test_adopting_search_fit_keeps_unsliced_preparation_boundary_available(
     monkeypatch, tmp_path
 ):

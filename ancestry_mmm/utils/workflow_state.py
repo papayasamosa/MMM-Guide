@@ -359,13 +359,22 @@ def _official_curve_status(getter: StateGetter, key: str) -> WorkflowPageState:
     # path separators, ".." segments, or absolute-path syntax into a single
     # safe component before it is joined under the storage root, exactly as
     # utils.session_state.curve_artifact_store_dir() does for the same
-    # store. Imported locally (not at module top) to preserve this module's
-    # explicit Streamlit-independence without adding it to every caller's
-    # import graph.
+    # store. A store still sitting under the pre-canonicalisation literal
+    # name is migrated into the canonical directory the first time it is
+    # found here too, so this status reflects existing artifacts even
+    # before any page that writes to the store has been visited this
+    # session. Imported locally (not at module top) to preserve this
+    # module's explicit Streamlit-independence without adding it to every
+    # caller's import graph.
     from ancestry_mmm.application.fit_job_service import canonical_project_id
+    from ancestry_mmm.core.curve_artifact import migrate_legacy_curve_store_directory
 
-    project_name = _get(getter, "project_name", "default") or "default"
-    store_dir = Path(CURVE_ARTIFACT_ROOT) / canonical_project_id(str(project_name))
+    project_name = str(_get(getter, "project_name", "default") or "default")
+    canonical_root = Path(CURVE_ARTIFACT_ROOT)
+    canonical_name = canonical_project_id(project_name)
+    store_dir = canonical_root / canonical_name
+    if canonical_name != project_name:
+        migrate_legacy_curve_store_directory(canonical_root, project_name, store_dir)
     try:
         store = load_curve_artifact_store(store_dir, raise_on_malformed=False)
     except (OSError, TypeError, ValueError):

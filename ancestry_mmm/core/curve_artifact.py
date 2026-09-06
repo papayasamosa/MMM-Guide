@@ -29,8 +29,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Mapping, Sequence, Tuple, cast
 
@@ -207,6 +208,146 @@ def validate_portable_path_component(
         raise CurveArtifactStoreError(
             f"{label} must not be a reserved device name: {component!r}"
         )
+
+
+# Deliberately not a ".json" filename: utils.session_state.curve_bank_dir()
+# is also used as an exploratory curve-bank directory, whose loader
+# (core.curve_bank.load_all_entries) globs every "*.json" file in the
+# directory and would otherwise try (and fail) to parse this marker as a
+# curve-bank entry.
+LEGACY_CURVE_STORE_MIGRATION_MARKER_FILENAME = ".legacy_migration.marker"
+
+
+@dataclass(frozen=True)
+class LegacyCurveStoreMigrationResult:
+    """Result of one attempted legacy-directory-key migration.
+
+    ``migrated`` is true only for a genuine one-time move; ``reason``
+    explains any other outcome (nothing to migrate, already migrated, a
+    conflicting populated canonical store, or a safety rejection) so a
+    caller can decide whether to surface it, never silently.
+    """
+
+    migrated: bool
+    reason: str = ""
+
+
+def migrate_legacy_curve_store_directory(
+    root: Path, legacy_name: str, canonical_dir: Path
+) -> LegacyCurveStoreMigrationResult:
+    """One-time, safe migration of a pre-canonical-project-ID curve store.
+
+    Before ``canonical_project_id`` existed, a project's curve store lived
+    directly at ``root / <raw display name>``. That canonicalisation is now
+    the storage-path authority (a display name is untrusted metadata and
+    must never be used as a raw path component - see
+    ``application.fit_job_service.canonical_project_id`` and its callers in
+    ``utils.session_state``/``utils.workflow_state``), so an existing store
+    under the old literal name would otherwise become invisible after
+    upgrading, even though its artifacts are still on disk.
+
+    Safety, in order:
+
+    1. ``legacy_name`` must validate as a single safe path component
+       (``validate_portable_path_component``) - a name containing a path
+       separator, ``..``, an absolute-path prefix, or any other unsafe
+       character is rejected outright and never resolved, probed, or
+       touched at all. This is deliberately the same "can only ever be a
+       literal single directory name under root" property the storage-path
+       canonicalisation fix relies on - a legacy-directory check must not
+       reopen the exact traversal risk that fix closed.
+    2. The resolved candidate is additionally confirmed to stay under
+       ``root`` (defense in depth beyond step 1).
+    3. A populated canonical store is authoritative and is never
+       overwritten - if it already has content, migration is skipped and
+       the (now orphaned but intact) legacy directory is left for manual
+       review rather than silently merged or replaced. An empty canonical
+       directory (e.g. created by an earlier ``mkdir`` with nothing ever
+       written into it) is treated as absent for this purpose.
+    4. Nothing to migrate (no legacy directory, or an empty one) is a
+       normal no-op, not an error - including every call after the first
+       successful migration, since the legacy directory no longer exists.
+
+    The move itself is a single ``os.rename`` (atomic on the same
+    filesystem, which root/legacy/canonical always share here) after
+    confirming the destination does not exist - required cross-platform,
+    since Windows rejects a rename/replace onto an existing directory even
+    an empty one. A small audit marker is left inside the migrated
+    directory recording where it came from and when; failing to write that
+    marker does not undo an otherwise-successful migration.
+    """
+
+    root = Path(root)
+    canonical_dir = Path(canonical_dir)
+    try:
+        validate_portable_path_component(
+            legacy_name, label="legacy project directory name"
+        )
+    except CurveArtifactStoreError as exc:
+        return LegacyCurveStoreMigrationResult(
+            False, f"legacy name is not a safe path component: {exc}"
+        )
+
+    legacy_dir = root / legacy_name
+    try:
+        resolved_legacy = legacy_dir.resolve()
+        resolved_root = root.resolve()
+    except OSError as exc:
+        return LegacyCurveStoreMigrationResult(
+            False, f"could not resolve legacy directory: {exc}"
+        )
+    if (
+        resolved_legacy != resolved_root
+        and resolved_root not in resolved_legacy.parents
+    ):
+        return LegacyCurveStoreMigrationResult(
+            False, "legacy directory would not stay under the storage root"
+        )
+    if legacy_dir == canonical_dir:
+        return LegacyCurveStoreMigrationResult(
+            False, "legacy name is already the canonical directory"
+        )
+    if not legacy_dir.is_dir():
+        return LegacyCurveStoreMigrationResult(False, "no legacy directory found")
+    if not any(legacy_dir.iterdir()):
+        return LegacyCurveStoreMigrationResult(False, "legacy directory is empty")
+
+    if canonical_dir.exists():
+        if not canonical_dir.is_dir():
+            return LegacyCurveStoreMigrationResult(
+                False, "canonical path exists and is not a directory"
+            )
+        if any(canonical_dir.iterdir()):
+            return LegacyCurveStoreMigrationResult(
+                False,
+                "canonical store is already populated; left both directories "
+                "for manual review rather than merging or overwriting",
+            )
+        # Confirmed empty: clear the way so the destination does not exist
+        # before the rename (required on Windows even for an empty target).
+        canonical_dir.rmdir()
+
+    canonical_dir.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.rename(legacy_dir, canonical_dir)
+    except OSError as exc:
+        return LegacyCurveStoreMigrationResult(False, f"rename failed: {exc}")
+
+    try:
+        (canonical_dir / LEGACY_CURVE_STORE_MIGRATION_MARKER_FILENAME).write_text(
+            json.dumps(
+                {
+                    "migrated_from": legacy_name,
+                    "migrated_at": datetime.now(timezone.utc).isoformat(),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass  # the migration itself already succeeded; the marker is best-effort
+
+    return LegacyCurveStoreMigrationResult(True, "migrated")
 
 
 def _is_json_safe(payload: object) -> bool:
