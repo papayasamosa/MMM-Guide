@@ -202,6 +202,72 @@ class TestFailureDoesNotFakeCompletion:
         assert "failure()" in failure_step["if"]
 
 
+class TestCommentPostingUsesRestEndpoint:
+    """`gh pr comment` posts via the GraphQL `addComment` mutation, which two
+    separate genuine Codex-triggered runs against this exact workflow (runs
+    34045016022 and 34051339408) proved rejects an issues-write-only token
+    with "GraphQL: Resource not accessible by integration (addComment)".
+    Posting through the REST issue-comments endpoint instead lets
+    pull-requests stay read-only - see TestPermissionsAreMinimal."""
+
+    POSTING_STEP_NAMES = (
+        "Post Claude fallback review",
+        "Report stale fallback review",
+        "Report Claude fallback failure",
+    )
+
+    def test_gh_pr_comment_is_never_invoked(self):
+        text = _load_workflow_text()
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue  # explanatory comments are allowed to name it
+            assert "gh pr comment" not in stripped, (
+                f"gh pr comment must not be used - found: {line!r}"
+            )
+
+    def test_every_posting_step_uses_the_rest_issue_comments_endpoint(self):
+        doc = _load_workflow_yaml()
+        for name in self.POSTING_STEP_NAMES:
+            step = _step(doc, name)
+            run = step["run"]
+            assert "gh api" in run, f"{name!r} must post via gh api"
+            assert "--method POST" in run, f"{name!r} must POST"
+            assert "issues/${PR_NUMBER}/comments" in run, (
+                f"{name!r} must target the REST issue-comments endpoint"
+            )
+            assert "--input" in run, (
+                f"{name!r} must post a JSON file, not fragile shell interpolation"
+            )
+
+    def test_success_review_posting_builds_json_with_jq_not_raw_interpolation(self):
+        doc = _load_workflow_yaml()
+        step = _step(doc, "Post Claude fallback review")
+        assert "jq" in step["run"]
+
+    def test_stale_and_failure_messages_also_build_json_with_jq(self):
+        doc = _load_workflow_yaml()
+        for name in ("Report stale fallback review", "Report Claude fallback failure"):
+            step = _step(doc, name)
+            assert "jq -n" in step["run"], f"{name!r} must build its JSON body with jq"
+
+    def test_success_review_posting_preserves_the_exact_sha_marker(self):
+        doc = _load_workflow_yaml()
+        step = _step(doc, "Post Claude fallback review")
+        assert COMPLETION_MARKER_PREFIX in step["run"]
+        assert "${HEAD_SHA}" in step["run"]
+        # the marker must reach the same file that gets posted as the body
+        assert '"${REVIEW_FILE}.final"' in step["run"]
+
+    def test_no_posting_step_passes_a_secret_into_a_comment_body(self):
+        doc = _load_workflow_yaml()
+        for name in self.POSTING_STEP_NAMES:
+            step = _step(doc, name)
+            assert "secrets." not in step["run"], (
+                f"{name!r} must never place a secret value into a comment body"
+            )
+
+
 class TestSecretsAreNeverPrinted:
     def test_no_step_echoes_a_secret_directly(self):
         text = _load_workflow_text()
@@ -262,20 +328,20 @@ class TestPermissionsAreMinimal:
     default GitHub-side OIDC authentication (this workflow supplies no
     custom `github_token`), separately from claude_code_oauth_token which
     authenticates the Claude/Anthropic API side - see Anthropic's FAQ entry
-    "Why am I getting OIDC authentication errors?". pull-requests: write is
-    required for `gh pr comment` to post the review: it posts via the
-    GraphQL `addComment` mutation on the PullRequest node, which two
-    separate genuine Codex-triggered runs against this exact workflow
-    confirmed rejects an issues-write-only token with "GraphQL: Resource
-    not accessible by integration (addComment)". Every other scope stays at
-    the minimum each step actually uses."""
+    "Why am I getting OIDC authentication errors?". pull-requests stays
+    read-only: comments are posted via the REST issue-comments endpoint
+    (see TestCommentPostingUsesRestEndpoint), which GitHub's own REST docs
+    confirm accepts issues:write - `gh pr comment`'s GraphQL `addComment`
+    path is what actually needed pull-requests:write, and this workflow no
+    longer uses it. Every other scope stays at the minimum each step
+    actually uses."""
 
     def test_only_the_needed_scopes_are_granted(self):
         doc = _load_workflow_yaml()
         permissions = doc["permissions"]
         assert permissions == {
             "contents": "read",
-            "pull-requests": "write",
+            "pull-requests": "read",
             "issues": "write",
             "actions": "read",
             "id-token": "write",
@@ -293,9 +359,13 @@ class TestPermissionsAreMinimal:
         doc = _load_workflow_yaml()
         assert doc["permissions"]["contents"] != "write"
 
-    def test_pull_requests_permission_is_write_for_gh_pr_comment(self):
+    def test_pull_requests_permission_is_read_only(self):
         doc = _load_workflow_yaml()
-        assert doc["permissions"]["pull-requests"] == "write"
+        assert doc["permissions"]["pull-requests"] == "read"
+
+    def test_pull_requests_is_never_write(self):
+        doc = _load_workflow_yaml()
+        assert doc["permissions"]["pull-requests"] != "write"
 
     def test_issues_permission_is_write(self):
         doc = _load_workflow_yaml()
