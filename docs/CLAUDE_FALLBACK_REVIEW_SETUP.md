@@ -219,10 +219,23 @@ The workflow:
   `.github/claude/fallback-review-prompt.md` in its own diff
 - grants repository contents read-only access, and requests only the
   additional scopes actually used (`pull-requests: read` to resolve the PR
-  head/base SHAs, `issues: write` to post the review comment, `actions: read`
-  to let Claude inspect CI, `id-token: write` because the official Claude
-  GitHub App's default GitHub-side authentication requires it - see
-  [One-time Claude authentication](#one-time-claude-authentication) above)
+  head/base SHAs; `issues: write` to read prior comments for duplicate
+  detection *and* to post every PR conversation comment this workflow
+  sends; `actions: read` to let Claude inspect CI; `id-token: write`
+  because the official Claude GitHub App's default GitHub-side
+  authentication requires it - see
+  [One-time Claude authentication](#one-time-claude-authentication) above).
+  `pull-requests` stays read-only: GitHub represents PR conversation
+  comments as Issues-API objects even for pull requests, and its REST
+  "create an issue comment" endpoint documents accepting either
+  `issues: write` or `pull-requests: write` - so the workflow posts through
+  that REST endpoint (`gh api --method POST .../issues/{n}/comments`)
+  rather than `gh pr comment`. `gh pr comment` is intentionally avoided: it
+  posts via the GraphQL `addComment` mutation against the `PullRequest`
+  node instead of the REST issue-comments endpoint, and two genuine
+  Codex-triggered runs against this exact workflow (before this endpoint
+  switch) proved that mutation rejects an issues-write-only token with
+  "GraphQL: Resource not accessible by integration (addComment)"
 - disables Edit and Write tools
 - does not enable arbitrary Bash for Claude
 - tells Claude not to commit/push/merge

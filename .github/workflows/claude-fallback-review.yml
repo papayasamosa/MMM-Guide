@@ -16,12 +16,24 @@ concurrency:
   cancel-in-progress: false
 
 # Least-privilege token: contents:read is for checking out the PR head only
-# (Claude cannot push - see disallowedTools below); pull-requests:read is for
-# reading PR head/base SHAs via the API; issues:write is for posting the
-# final review comment and reading prior ones for duplicate detection (PR
-# conversation comments are Issues-API objects even for pull requests);
-# actions:read is forwarded to Claude via additional_permissions so it can
-# inspect CI results.
+# (Claude cannot push - see disallowedTools below); pull-requests:read is
+# for reading PR head/base SHAs via the API; actions:read is forwarded to
+# Claude via additional_permissions so it can inspect CI results.
+#
+# issues: write is what posts every PR conversation comment in this
+# workflow (the successful review, the stale-review notice, and the
+# failure notice). GitHub represents PR conversation comments as Issues-API
+# objects even when the number belongs to a pull request, and its REST
+# "create an issue comment" endpoint
+# (POST /repos/{owner}/{repo}/issues/{issue_number}/comments) documents
+# accepting either issues:write or pull-requests:write. We deliberately use
+# `gh api --method POST .../issues/{n}/comments` (the REST endpoint)
+# instead of `gh pr comment`, because `gh pr comment` posts via the
+# GraphQL `addComment` mutation against the PullRequest node, which two
+# separate genuine Codex-triggered runs against this exact workflow proved
+# rejects an issues-write-only token ("GraphQL: Resource not accessible by
+# integration (addComment)"). Using the REST endpoint directly lets
+# pull-requests stay read-only.
 #
 # id-token: write is required even though CLAUDE_CODE_OAUTH_TOKEN is set.
 # These are two separate authentication layers: claude_code_oauth_token
@@ -213,7 +225,11 @@ jobs:
             cat "${REVIEW_FILE}"
           } > "${REVIEW_FILE}.final"
 
-          gh pr comment "${PR_NUMBER}" --body-file "${REVIEW_FILE}.final"
+          jq -Rs '{body: .}' < "${REVIEW_FILE}.final" > "${RUNNER_TEMP}/comment.json"
+          gh api \
+            --method POST \
+            "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --input "${RUNNER_TEMP}/comment.json"
 
       - name: Report stale fallback review
         if: >-
@@ -224,10 +240,25 @@ jobs:
         env:
           REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
         run: |
-          gh pr comment "${PR_NUMBER}" --body             "Claude fallback finished reviewing \`${REVIEWED_HEAD_SHA}\`, but the PR head changed before the review could be posted. The stale review was discarded."
+          set -euo pipefail
+          jq -n --arg sha "${REVIEWED_HEAD_SHA}" \
+            '{body: ("Claude fallback finished reviewing `" + $sha + "`, but the PR head changed before the review could be posted. The stale review was discarded.")}' \
+            > "${RUNNER_TEMP}/comment.json"
+          gh api \
+            --method POST \
+            "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --input "${RUNNER_TEMP}/comment.json"
 
       - name: Report Claude fallback failure
         if: steps.duplicate.outputs.skip != 'true' && failure()
         shell: bash
         run: |
-          gh pr comment "${PR_NUMBER}" --body             "Claude fallback review could not complete after Codex reported exhausted review quota. Check GitHub Actions run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}. No fallback-complete marker was written, so a later Codex quota event can retry."
+          set -euo pipefail
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          jq -n --arg url "${RUN_URL}" \
+            '{body: ("Claude fallback review could not complete after Codex reported exhausted review quota. Check GitHub Actions run " + $url + ". No fallback-complete marker was written, so a later Codex quota event can retry.")}' \
+            > "${RUNNER_TEMP}/comment.json"
+          gh api \
+            --method POST \
+            "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --input "${RUNNER_TEMP}/comment.json"
