@@ -17,6 +17,10 @@ from streamlit.testing.v1 import AppTest
 
 from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.core.schema import ModelSpec
+from ancestry_mmm.core.search_intent_taxonomy import (
+    SEARCH_INTENT_GROUP_ID_BRAND,
+    SEARCH_INTENT_GROUP_ID_NON_BRAND,
+)
 
 st.page_link = lambda *a, **k: None
 
@@ -111,6 +115,85 @@ def test_save_does_not_fabricate_pooling_group_id_for_a_new_row():
     saved = at.session_state["activity_definitions"]
     assert len(saved) == 1
     assert saved[0]["pooling_group_id"] is None
+
+
+def test_search_reclassification_invalidates_a_trained_model():
+    df, spec = _base_state()
+    prepared_spec = ModelSpec(
+        date_col="date",
+        market_col="market",
+        markets=["UK"],
+        channels=["tv_spend", "unused_search_child"],
+        segment_outcomes={"New": "New"},
+    )
+    fitted_spec = spec.to_dict()
+    existing = ActivityDefinition(
+        activity_id="UK:paid-search",
+        market="UK",
+        channel="Paid Search",
+        model_input_column="tv_spend",
+        activity_ownership="paid",
+        model_role="intervention",
+        economic_treatment="paid_media_cost",
+        planning_eligibility="optimisable",
+        search_intent_group_id=SEARCH_INTENT_GROUP_ID_BRAND,
+        source="activity governance UI",
+    )
+    at = _run_at(
+        df,
+        ModelSpec.from_dict(fitted_spec),
+        activity_definitions=[existing.to_dict()],
+        search_intent_model_grain=[
+            SEARCH_INTENT_GROUP_ID_BRAND,
+            SEARCH_INTENT_GROUP_ID_NON_BRAND,
+        ],
+        model_trained=True,
+        model_approval={"approved_by": "reviewer"},
+        trace="fitted-trace",
+        prepared_model_spec=prepared_spec.to_dict(),
+        fitted_model_spec=fitted_spec,
+    )
+    assert not at.exception, f"initial page raised: {at.exception}"
+
+    search_group = next(
+        item for item in at.selectbox if item.label == "Search intent group"
+    )
+    search_group.set_value(SEARCH_INTENT_GROUP_ID_NON_BRAND)
+    next(
+        item for item in at.button if item.label == "Save activity mapping"
+    ).click().run()
+
+    assert not at.exception, f"reclassification save raised: {at.exception}"
+    assert at.session_state["model_trained"] is False
+    assert at.session_state["trace"] is None
+    assert at.session_state["model_approval"] is None
+    assert at.session_state["model_spec"]["channels"] == [
+        "tv_spend",
+        "unused_search_child",
+    ]
+    assert at.session_state["fitted_model_spec"] is None
+    assert any(
+        "fitted model" in (warning.value or "") and "invalidated" in warning.value
+        for warning in at.warning
+    )
+
+
+def test_default_empty_search_grain_does_not_invalidate_a_matching_fit():
+    """The empty persisted spelling resolves to the approved parent grain."""
+
+    df, spec = _base_state()
+    at = _run_at(
+        df,
+        spec,
+        search_intent_model_grain=[],
+        model_trained=True,
+        trace="fitted-trace",
+        model_approval={"approved_by": "reviewer"},
+    )
+
+    assert not at.exception, f"default grain page raised: {at.exception}"
+    assert at.session_state["model_trained"] is True
+    assert at.session_state["trace"] == "fitted-trace"
 
 
 def test_activity_mapping_is_reachable_before_model_structure():

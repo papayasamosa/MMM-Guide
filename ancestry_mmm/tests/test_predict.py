@@ -588,6 +588,63 @@ class TestPredictMuFailsClosedForNamedEvents:
         with pytest.raises(NamedEventReplayNotSupportedError):
             predict_mu(frame, named_event_meta, params)
 
+
+class TestPredictMuFailsClosedForAmbiguousSeoReplay:
+    """Explicit SEO replay must not reuse one vector for several groups."""
+
+    def test_multi_group_explicit_replay_requires_group_specific_values(
+        self, meta, params
+    ):
+        from ancestry_mmm.core.predict import CandidateAReplayNotSupportedError
+
+        frame = {
+            "X_media": np.zeros((3, len(CHANNELS))),
+            "market_bounds": [(0, 3)],
+            "market_idx": np.zeros(3, dtype=int),
+            "promo": np.zeros((3, len(OUTCOME_IDS))),
+            "trend": np.zeros(3),
+            "fourier": np.zeros((3, len(params.gamma_fourier["New"]))),
+            "markets": ["UK"],
+            "dates": pd.date_range("2026-01-05", periods=3, freq="W").values,
+        }
+        multi_group_meta = replace(
+            meta,
+            seo_fit_inputs_at_fit={
+                "groups": [
+                    {
+                        "seo_group_id": "brand",
+                        "model_markets": ["UK"] * 3,
+                        "model_weeks": ["2026-01-05", "2026-01-12", "2026-01-19"],
+                        "standardized_visibility": [0.1, 0.2, 0.3],
+                        "active_mask": [1.0, 1.0, 1.0],
+                    },
+                    {
+                        "seo_group_id": "non_brand",
+                        "model_markets": ["UK"] * 3,
+                        "model_weeks": ["2026-01-05", "2026-01-12", "2026-01-19"],
+                        "standardized_visibility": [0.4, 0.5, 0.6],
+                        "active_mask": [1.0, 1.0, 1.0],
+                    },
+                ]
+            },
+        )
+        multi_group_params = replace(
+            params,
+            seo_visibility_betas={
+                "brand": np.array([0.1, 0.2]),
+                "non_brand": np.array([0.3, 0.4]),
+            },
+        )
+
+        with pytest.raises(CandidateAReplayNotSupportedError, match="group-specific"):
+            predict_mu(
+                frame,
+                multi_group_meta,
+                multi_group_params,
+                seo_visibility_values=np.ones(3),
+                seo_visibility_active_mask=np.ones(3),
+            )
+
     def test_ordinary_fit_with_no_named_events_is_unaffected(self, meta, params):
         """Backward compatibility: a meta with the field left at its
         default empty list must not trigger the guard - every fit before

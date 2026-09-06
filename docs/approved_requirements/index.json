@@ -1421,7 +1421,7 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
-        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_search_004_indexed_and_classified_incomplete",
+        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_search_004_indexed_and_classified_partial",
         "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_all_three_records_reference_the_decision_package",
         "ancestry_mmm/tests/test_req_search_004_taxonomy_addendum.py::test_req_search_004_addendum_names_brand_non_brand_taxonomy",
         "ancestry_mmm/tests/test_req_search_004_taxonomy_addendum.py::test_req_search_004_addendum_treats_platform_as_orthogonal_axis",
@@ -1457,7 +1457,7 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
-        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_search_005_indexed_and_classified_incomplete",
+        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_search_005_indexed_and_classified_partial",
         "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_all_three_records_reference_the_decision_package"
       ]
     },
@@ -1483,7 +1483,7 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
-        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_seo_001_indexed_and_classified_incomplete",
+        "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_seo_001_indexed_and_classified_partial",
         "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_all_three_records_reference_the_decision_package",
         "ancestry_mmm/tests/test_search_seo_granularity_authority_reconciliation.py::TestSearchSeoGranularityOverlayReconciled::test_req_seo_001_records_approved_fit_role_and_open_estimand_direction",
         "ancestry_mmm/tests/test_req_seo_001_decisions_5_6_7_8.py::test_no_seo_5k_month_cost_assumption_in_active_code_or_docs",
@@ -1742,6 +1742,33 @@
         "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
         "ancestry_mmm/tests/test_planned_activity.py::TestMaterializePromoFutureIntegratesWithBuildFutureContext::test_real_end_to_end_wiring_into_build_future_context",
         "ancestry_mmm/tests/test_planned_activity.py::TestPromotionPeriodValidation::test_weeks_filters_to_range"
+      ]
+    },
+    {
+      "requirement_id": "REQ-NBT-004",
+      "status": "approved_for_implementation",
+      "record_path": "docs/approved_requirements/REQ-NBT-004.md",
+      "affected_modules": [
+        "ancestry_mmm/core/outcomes.py",
+        "ancestry_mmm/core/net_billthrough.py",
+        "ancestry_mmm/pages/03_Structure_Segments_Markets.py",
+        "ancestry_mmm/pages/05_Model_Training.py",
+        "ancestry_mmm/pages/08_Scenario_Planner.py",
+        "docs/approved_requirements/REQ-NBT-004.md",
+        "docs/approved_requirements/index.json",
+        "docs/decision_log.md"
+      ],
+      "required_tests": [
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_approved_requirements_readme_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_exists",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_index_json_is_valid",
+        "ancestry_mmm/tests/test_outcome_approval.py::TestAuthorityConsistency::test_indexed_records_exist",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_requirement_ids_are_unique",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_record_path_exists",
+        "ancestry_mmm/tests/test_requirements_index_conformance.py::test_every_indexed_test_node_is_collectable",
+        "ancestry_mmm/tests/test_uk_production_decisions.py::test_current_uk_production_uses_supplied_nbt_ids",
+        "ancestry_mmm/tests/test_uk_production_decisions.py::test_google_trends_expression_preserves_duplicate_term",
+        "ancestry_mmm/tests/test_uk_production_decisions.py::test_search_taxonomy_requires_explicit_deeper_child_parent"
       ]
     }
   ]

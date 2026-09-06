@@ -68,7 +68,13 @@ from .named_event_response import (
     EVENT_RESPONSE_SHRINKAGE_PRIOR_DEFAULT_SCALE,
     NAMED_EVENT_RESPONSE_STRUCTURE,
 )
-from .seo_visibility import SeoModelFitInputs
+from .seo_visibility import (
+    SeoModelFitInputs,
+    SeoModelFitInputsCollection,
+    normalise_seo_fit_inputs,
+    seo_group_variable_suffixes,
+    seo_fit_inputs_to_dict,
+)
 
 
 @dataclass
@@ -626,7 +632,7 @@ def build_fh_hierarchical_model(
     search_candidate_a: Optional[CandidateASearchFitInputs] = None,
     named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
     calibration_inputs: Optional[Sequence[ModelLiftTestCalibrationInput]] = None,
-    seo_fit_inputs: Optional[SeoModelFitInputs] = None,
+    seo_fit_inputs: Optional[SeoModelFitInputs | SeoModelFitInputsCollection] = None,
 ) -> "tuple[pm.Model, FHModelMeta]":
     """
     Build the joint hierarchical FH model.
@@ -1308,25 +1314,30 @@ def build_fh_hierarchical_model(
                 prior_config=prior_config,
             )
 
-        if seo_fit_inputs is not None:
-            seo_fit_inputs.validate_frame(
+        seo_groups = normalise_seo_fit_inputs(seo_fit_inputs)
+        seo_group_suffixes = seo_group_variable_suffixes(
+            [seo_group.seo_group_id for seo_group in seo_groups]
+        )
+        for group_index, seo_group in enumerate(seo_groups):
+            seo_group.validate_frame(
                 markets=[markets[int(index)] for index in market_idx],
                 weeks=[str(pd.Timestamp(value).date()) for value in frame["dates"]],
             )
             seo_feature = pt.constant(
-                np.asarray(seo_fit_inputs.standardized_visibility, dtype=float)
+                np.asarray(seo_group.standardized_visibility, dtype=float)
             )
-            seo_active = pt.constant(
-                np.asarray(seo_fit_inputs.active_mask, dtype=float)
-            )
+            seo_active = pt.constant(np.asarray(seo_group.active_mask, dtype=float))
+            suffix = seo_group_suffixes[seo_group.seo_group_id]
+            beta_name = f"seo_visibility_beta{suffix}"
+            eta_name = f"eta_seo_visibility{suffix}"
             seo_visibility_beta = pm.Normal(
-                "seo_visibility_beta",
+                beta_name,
                 mu=0,
                 sigma=prior_config.get("seo_visibility_sigma", 0.5),
                 dims="outcome",
             )
             eta_seo = pm.Deterministic(
-                "eta_seo_visibility",
+                eta_name,
                 seo_feature[:, None]
                 * seo_active[:, None]
                 * seo_visibility_beta[None, :],
@@ -1576,6 +1587,6 @@ def build_fh_hierarchical_model(
         ]
         if search_candidate_a is not None
         else [],
-        seo_fit_inputs_at_fit=(seo_fit_inputs.to_dict() if seo_fit_inputs else {}),
+        seo_fit_inputs_at_fit=seo_fit_inputs_to_dict(seo_fit_inputs),
     )
     return model, meta

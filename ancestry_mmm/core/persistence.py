@@ -6,7 +6,8 @@ Bundle layout (a single zip):
     data/raw_<source>.parquet          - each raw source, as uploaded
     data/transformed.parquet           - post-pipeline data
     config/pipeline_steps.json         - ordered transform steps
-    config/model_spec.json             - ModelSpec
+    config/model_spec.json             - unsliced preparation ModelSpec
+    config/fitted_model_spec.json      - optional Search-grain fit ModelSpec
     config/prior_config.json           - prior overrides + dna_lag_weeks
     config/model_run_id.json           - the fitted model's run ID, if trained
     config/model_meta.json             - FHModelMeta, if trained (lets a re-import
@@ -84,9 +85,18 @@ Bundle layout (a single zip):
                                           for every bundle exported before this
                                           capability existed, and for any current
                                           project with no Search objects governed
-                                          yet - "none governed yet" is a valid,
-                                          not-an-error reading (see
-                                          resolve_imported_search_objects below).
+                                           yet - "none governed yet" is a valid,
+                                           not-an-error reading (see
+                                           resolve_imported_search_objects below).
+    config/search_intent_groups.json   - REQ-SEARCH-004/005: the governed
+                                          Brand/Non-Brand taxonomy and any
+                                          explicitly supplied deeper children.
+                                          Missing files never authorize an
+                                          invented child or approval.
+    config/search_intent_group_versions.json - immutable taxonomy version
+                                          history, when supplied.
+    config/search_intent_model_grain.json - explicit selected Search model
+                                          grain; absent means approved parents.
     config/candidate_a_fit_inputs.json - REQ-SEARCH-002: the complete
                                           validated Candidate A observation
                                           boundary used for fitting, including
@@ -164,12 +174,13 @@ from .approval import (
 
 if TYPE_CHECKING:
     from .validation_policy import ApprovalReadiness, ThresholdPolicy
-from .activities import ActivityDefinition, activity_fit_fingerprint
+from .activities import activity_fit_fingerprint, resolve_imported_activity_definitions
 from .fingerprint import (
     fingerprint_dataframe,
     fingerprint_model_spec,
     fingerprint_posterior,
 )
+from .seo_visibility import seo_fit_inputs_fingerprint
 from .curve_artifact import (
     CurveArtifact,
     CurveArtifactStoreError,
@@ -190,6 +201,10 @@ from .pathways import MediaOutcomePathway, pathway_catalogue_fingerprint_payload
 from .pathways import (
     OutcomeReconciliationGroup,
     validate_reconciliation_groups,
+)
+from .search_intent_taxonomy import (
+    resolve_imported_search_intent_groups,
+    search_intent_taxonomy_fit_fingerprint,
 )
 from .planning.value import CurrencyContext, OutcomeValueMapping
 from .predict import extract_posterior_params
@@ -212,9 +227,14 @@ from .optimization import SpendConstraint
 # complete optional Candidate A fit-input boundary. 21 -> 22 for the
 # row-aligned, window-gated SEO visibility fit-input boundary. 22 -> 23 for
 # durable governed future-assumption bundles. 23 -> 24 for governed weekly
-# outcome valuation records. Older bundles remain importable
-# because these fields restore as None until explicitly reviewed.
-PROJECT_BUNDLE_SCHEMA_VERSION = 24
+# outcome valuation records. 24 -> 25 for the versioned Search intent
+# taxonomy and its persisted history. 25 -> 26 for the explicit Search
+# model/reporting grain. Older bundles remain importable
+# because these fields restore as None until explicitly reviewed. 26 -> 27
+# for the optional fitted Search-grain ModelSpec kept beside the unsliced
+# preparation boundary. 27 -> 28 for the optional human-readable project
+# display name used to restore durable fit-job identity after session loss.
+PROJECT_BUNDLE_SCHEMA_VERSION = 28
 PROJECT_APP_VERSION = "0.1.0"
 
 
@@ -276,6 +296,7 @@ def export_project(
     dna_lag_weeks: int,
     trace: Optional[az.InferenceData],
     scenarios: List[dict],
+    fitted_model_spec: Optional[dict] = None,
     curve_bank_source_dir: Optional[Path] = None,
     curve_artifact_store_source_dir: Optional[Path] = None,
     model_approval: Optional[dict] = None,
@@ -311,6 +332,9 @@ def export_project(
     outcome_valuation_records: Optional[List[dict]] = None,
     causal_graphs: Optional[List[dict]] = None,
     search_objects: Optional[List[dict]] = None,
+    search_intent_groups: Optional[List[dict]] = None,
+    search_intent_group_versions: Optional[List[dict]] = None,
+    search_intent_model_grain: Optional[List[str]] = None,
     search_candidate_a_spec: Optional[dict] = None,
     candidate_a_fit_inputs: Optional[dict] = None,
     search_identification_report: Optional[dict] = None,
@@ -337,6 +361,7 @@ def export_project(
     experiments: Optional[dict] = None,
     named_events: Optional[dict] = None,
     prefit_runs: Optional[List[dict]] = None,
+    project_display_name: Optional[str] = None,
 ) -> Path:
     output_path = Path(output_path)
     with tempfile.TemporaryDirectory() as tmp_str:
@@ -375,6 +400,10 @@ def export_project(
         if model_spec is not None:
             (tmp / "config" / "model_spec.json").write_text(
                 json.dumps(model_spec, indent=2, default=str)
+            )
+        if fitted_model_spec is not None:
+            (tmp / "config" / "fitted_model_spec.json").write_text(
+                json.dumps(fitted_model_spec, indent=2, default=str)
             )
         (tmp / "config" / "prior_config.json").write_text(
             json.dumps(
@@ -554,6 +583,21 @@ def export_project(
             (tmp / "config" / "search_objects.json").write_text(
                 json.dumps(search_objects, indent=2, default=str)
             )
+        # REQ-SEARCH-004/005: persist the governed taxonomy separately from
+        # Search object definitions. A missing file is a legacy/no-custom-
+        # taxonomy state, not permission to infer or fit additional groups.
+        if search_intent_groups is not None:
+            (tmp / "config" / "search_intent_groups.json").write_text(
+                json.dumps(search_intent_groups, indent=2, default=str)
+            )
+        if search_intent_group_versions is not None:
+            (tmp / "config" / "search_intent_group_versions.json").write_text(
+                json.dumps(search_intent_group_versions, indent=2, default=str)
+            )
+        if search_intent_model_grain is not None:
+            (tmp / "config" / "search_intent_model_grain.json").write_text(
+                json.dumps(search_intent_model_grain, indent=2, default=str)
+            )
         # REQ-SEARCH-002: Candidate A's typed formulation and identification
         # evidence travel with the governed Search objects. Missing files are
         # a legacy/no-engine state, never an implicit approval.
@@ -720,11 +764,13 @@ def export_project(
         manifest = {
             "schema_version": PROJECT_BUNDLE_SCHEMA_VERSION,
             "app_version": PROJECT_APP_VERSION,
+            "project_display_name": project_display_name,
             "workflow_checkpoint": (workflow_state or {}).get("checkpoint", "unknown"),
             "contains": {
                 "raw_data": bool(raw_sources),
                 "transformed_data": transformed_data is not None,
                 "model_spec": model_spec is not None,
+                "fitted_model_spec": fitted_model_spec is not None,
                 "outcome_groups": outcome_groups is not None and bool(outcome_groups),
                 "outcome_group_treatments": outcome_group_treatments is not None
                 and bool(outcome_group_treatments),
@@ -754,6 +800,12 @@ def export_project(
                 and bool(outcome_valuation_records),
                 "causal_graphs": causal_graphs is not None and bool(causal_graphs),
                 "search_objects": search_objects is not None and bool(search_objects),
+                "search_intent_groups": search_intent_groups is not None
+                and bool(search_intent_groups),
+                "search_intent_group_versions": search_intent_group_versions is not None
+                and bool(search_intent_group_versions),
+                "search_intent_model_grain": search_intent_model_grain is not None
+                and bool(search_intent_model_grain),
                 "search_candidate_a_spec": search_candidate_a_spec is not None,
                 "candidate_a_fit_inputs": candidate_a_fit_inputs is not None,
                 "search_identification_report": search_identification_report
@@ -806,6 +858,7 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         "transformed_data": None,
         "pipeline_steps": [],
         "model_spec": None,
+        "fitted_model_spec": None,
         "prior_config": {},
         "dna_lag_weeks": 4,
         "trace": None,
@@ -824,6 +877,7 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         "media_input_support": [],
         "monetary_spend_support": [],
         "activity_definitions": [],
+        "activity_definition_import_warnings": [],
         # Absent in bundles exported before the market-specific redesign's
         # Phase 2 - "shared" (Model A) is the correct default: every bundle
         # exported before Model C existed was necessarily a Model A fit.
@@ -849,6 +903,7 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         "media_outcome_pathways": None,
         "net_billthrough_metadata": None,
         "manifest": None,
+        "project_display_name": None,
         "workflow_state": None,
         "diagnostics": {},
         "notes": None,
@@ -892,6 +947,12 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         # existed - "no Search objects governed yet" is a valid,
         # not-an-error reading, same convention as causal_graphs above.
         "search_objects": None,
+        # REQ-SEARCH-004/005: absent for bundles exported before the governed
+        # custom taxonomy existed. The page restores the approved minimum
+        # separately and never fabricates persisted children.
+        "search_intent_groups": None,
+        "search_intent_group_versions": None,
+        "search_intent_model_grain": None,
         # REQ-SEARCH-002: None for bundles exported before Candidate A. The
         # absence is not approval and must keep official Search use blocked.
         "search_candidate_a_spec": None,
@@ -948,6 +1009,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
 
         if (tmp / "manifest.json").exists():
             result["manifest"] = json.loads((tmp / "manifest.json").read_text())
+            if isinstance(result["manifest"], Mapping):
+                result["project_display_name"] = result["manifest"].get(
+                    "project_display_name"
+                )
 
         data_dir = tmp / "data"
         if data_dir.exists():
@@ -982,6 +1047,10 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "model_spec.json").exists():
             result["model_spec"] = json.loads(
                 (config_dir / "model_spec.json").read_text()
+            )
+        if (config_dir / "fitted_model_spec.json").exists():
+            result["fitted_model_spec"] = json.loads(
+                (config_dir / "fitted_model_spec.json").read_text()
             )
         if (config_dir / "prior_config.json").exists():
             prior_data = json.loads((config_dir / "prior_config.json").read_text())
@@ -1023,10 +1092,23 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
             activity_payload = json.loads(
                 (config_dir / "activity_definitions.json").read_text()
             )
-            result["activity_definitions"] = [
-                ActivityDefinition.from_dict(item).to_dict()
-                for item in activity_payload
-            ]
+            # A malformed record used to raise straight out of
+            # ActivityDefinition.from_dict() here, crashing import_project()
+            # itself for every caller (page or otherwise) before any
+            # downstream quarantine handling ever ran. Self-quarantine here
+            # instead, mirroring every other governed payload's contract in
+            # this function. Unlike every other governed payload (which
+            # import_project() returns raw for the page's own
+            # resolve_imported_* call to validate and warn about),
+            # activity_definitions is uniquely pre-parsed/schema-migrated
+            # here already, so any quarantine warnings are captured under a
+            # dedicated key rather than silently discarded - a caller that
+            # doesn't check it loses nothing it had before this fix (the
+            # record is still safely dropped either way).
+            (
+                result["activity_definitions"],
+                result["activity_definition_import_warnings"],
+            ) = resolve_imported_activity_definitions(activity_payload)
         if (config_dir / "model_type.json").exists():
             result["model_type"] = json.loads(
                 (config_dir / "model_type.json").read_text()
@@ -1123,6 +1205,18 @@ def import_project(zip_path: Path) -> Dict[str, Any]:
         if (config_dir / "search_objects.json").exists():
             result["search_objects"] = json.loads(
                 (config_dir / "search_objects.json").read_text()
+            )
+        if (config_dir / "search_intent_groups.json").exists():
+            result["search_intent_groups"] = json.loads(
+                (config_dir / "search_intent_groups.json").read_text()
+            )
+        if (config_dir / "search_intent_group_versions.json").exists():
+            result["search_intent_group_versions"] = json.loads(
+                (config_dir / "search_intent_group_versions.json").read_text()
+            )
+        if (config_dir / "search_intent_model_grain.json").exists():
+            result["search_intent_model_grain"] = json.loads(
+                (config_dir / "search_intent_model_grain.json").read_text()
             )
         if (config_dir / "search_candidate_a_spec.json").exists():
             result["search_candidate_a_spec"] = json.loads(
@@ -1590,6 +1684,11 @@ def resolve_imported_search_objects(
     warnings: List[str] = []
     if not raw_objects:
         return [], warnings
+    if isinstance(raw_objects, (str, bytes)) or not isinstance(raw_objects, Sequence):
+        return [], [
+            "Search objects payload is not a sequence and was quarantined "
+            "(dropped, not silently kept)."
+        ]
 
     normalised: List[SearchObjectDefinition] = []
     for index, item in enumerate(raw_objects):
@@ -1820,6 +1919,11 @@ def resolve_imported_variable_coverage_matrices(
     warnings: List[str] = []
     if not raw_matrices:
         return [], warnings
+    if isinstance(raw_matrices, (str, bytes)) or not isinstance(raw_matrices, Sequence):
+        return [], [
+            "Variable coverage matrices payload is not a sequence and was "
+            "quarantined (dropped, not silently kept)."
+        ]
 
     normalised: List[dict] = []
     for index, item in enumerate(raw_matrices):
@@ -3200,7 +3304,14 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
                     for p in meta_dict["pathway_catalogue_at_fit"]
                 ]
             result["model_meta"] = FHModelMeta(**meta_dict)
-        except TypeError:
+        except (TypeError, ValueError, KeyError, AttributeError):
+            # Widened for the same reason as the frame-reconstruction except
+            # clause below: a malformed OutcomeDefinition/OutcomeGroupDefinition/
+            # OutcomeGroupTreatment/MediaOutcomePathway record inside a
+            # corrupted model_meta snapshot can raise ValueError from
+            # __post_init__ validation, not only TypeError from a missing
+            # required field - either must resolve to "no model_meta",
+            # never an uncaught crash, per this function's own contract.
             result["model_meta"] = None
 
     fit_input = (
@@ -3208,7 +3319,8 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
         if imported.get("official_prepared_data") is not None
         else imported.get("transformed_data")
     )
-    if fit_input is not None and imported.get("model_spec") is not None:
+    fitted_spec_dict = imported.get("fitted_model_spec") or imported.get("model_spec")
+    if fit_input is not None and fitted_spec_dict is not None:
         try:
             # Local import: `ancestry_mmm.data.preprocessor` imports `ancestry_mmm.core.schema`
             # at module level, so importing it at module level here would close a
@@ -3218,7 +3330,7 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
             from ..data.preprocessor import prepare_fh_modeling_frame
             from .outcomes import resolve_outcome_definitions
 
-            spec = ModelSpec.from_dict(imported["model_spec"])
+            spec = ModelSpec.from_dict(fitted_spec_dict)
             transformed_data = fit_input
             outcome_definitions = resolve_outcome_definitions(
                 imported.get("outcome_definitions"),
@@ -3240,7 +3352,20 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
                 if imported.get("official_prepared_data") is not None
                 else "exploratory"
             )
-        except (ValueError, KeyError):
+        except (TypeError, ValueError, KeyError, AttributeError):
+            # Independent-review finding: this function's own docstring
+            # promises "never raises - callers decide what an incomplete
+            # reconstruction means", but ModelSpec.from_dict(fitted_spec_dict)
+            # above raises TypeError (not ValueError/KeyError) for a
+            # malformed fitted_model_spec/model_spec payload - e.g. one
+            # missing required fields - which this except clause did not
+            # catch. That let a malformed spec crash every caller
+            # (09_Project_Export.py's import handler directly, and
+            # verify_imported_approval/audit_project_resumability via
+            # current_model_identity_fingerprints) instead of the documented
+            # "incomplete reconstruction, frame stays None" outcome. Widened
+            # to the same four-exception tuple used throughout this module's
+            # other malformed-payload quarantine points.
             result["frame"] = None
 
     if imported.get("trace") is not None and result["model_meta"] is not None:
@@ -3259,7 +3384,11 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
                 result["posterior_params"] = extract_posterior_params(
                     imported["trace"], result["model_meta"]
                 )
-        except (KeyError, ValueError):
+        except (TypeError, ValueError, KeyError, AttributeError):
+            # Same "never raises" contract as the frame reconstruction
+            # above - widened defensively for consistency, since a
+            # malformed/incompatible trace or model_meta could plausibly
+            # raise any of these from posterior-array reshaping.
             result["posterior_params"] = None
 
     return result
@@ -3329,8 +3458,12 @@ def current_model_identity_fingerprints(
             _resolved_coverage_matrices
         )
     )
+    fitted_spec_dict = imported.get("fitted_model_spec") or imported.get("model_spec")
+    taxonomy_groups = resolve_imported_search_intent_groups(
+        imported.get("search_intent_groups") or []
+    )
     spec_fp = fingerprint_model_spec(
-        imported.get("model_spec") or {},
+        fitted_spec_dict or {},
         imported.get("prior_config") or {},
         imported.get("dna_lag_weeks", 4),
         model_type=imported.get("model_type", "shared"),
@@ -3358,13 +3491,17 @@ def current_model_identity_fingerprints(
         search_object_fit_fingerprint=(
             search_object_fit_fingerprint(
                 imported["search_objects"],
-                consumed_model_input_columns=(imported.get("model_spec") or {}).get(
-                    "channels"
-                )
+                consumed_model_input_columns=(fitted_spec_dict or {}).get("channels")
                 or [],
             )
             if imported.get("search_objects")
             else None
+        ),
+        search_intent_taxonomy_fit_fingerprint=search_intent_taxonomy_fit_fingerprint(
+            imported.get("activity_definitions") or [],
+            taxonomy_groups,
+            imported.get("search_intent_group_versions") or [],
+            consumed_model_input_columns=(fitted_spec_dict or {}).get("channels") or [],
         ),
         variable_coverage_fingerprint=(
             VariableCoverageMatrix.from_dict(current_coverage_matrix_dict).fingerprint()
@@ -3372,6 +3509,7 @@ def current_model_identity_fingerprints(
             else None
         ),
         official_preparation_evidence=imported.get("official_preparation_result"),
+        seo_fit_fingerprint=seo_fit_inputs_fingerprint(imported.get("seo_fit_inputs")),
     )
     posterior_fp = fingerprint_posterior(posterior_params)
     return data_fp, spec_fp, posterior_fp

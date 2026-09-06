@@ -43,7 +43,10 @@ from ancestry_mmm.core.search_capacity import (
     identify_candidate_a_search,
     validate_candidate_a_spec,
 )
-from ancestry_mmm.core.seo_visibility import SeoModelFitInputs
+from ancestry_mmm.core.seo_visibility import (
+    SeoModelFitInputs,
+    SeoModelFitInputsCollection,
+)
 from ancestry_mmm.core.search_objects import SearchObjectDefinition
 
 MODEL_TYPE_SHARED = "shared"
@@ -170,7 +173,7 @@ def build_model_for_spec(
     candidate_a_fit_inputs: Optional[CandidateASearchFitInputs] = None,
     named_event_fit_inputs: Optional[NamedEventFitInputs] = None,
     calibration_inputs: Optional[Sequence[ModelLiftTestCalibrationInput]] = None,
-    seo_fit_inputs: Optional[SeoModelFitInputs] = None,
+    seo_fit_inputs: Optional[SeoModelFitInputs | SeoModelFitInputsCollection] = None,
 ) -> ModelFitResult:
     """The one place `pages/05_Model_Training.py` (or any non-Streamlit
     caller - a future FastAPI service, a batch job) should build a proposed

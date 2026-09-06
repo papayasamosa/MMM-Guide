@@ -32,6 +32,7 @@ import pandas as pd
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
+from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.core.curve_artifact import (
     CurveArtifactMetadata,
     compute_curve_artifact_fingerprints,
@@ -43,6 +44,7 @@ from ancestry_mmm.core.persistence import (
     import_project,
     resolve_imported_causal_graphs,
 )
+from ancestry_mmm.core.search_intent_taxonomy import SearchIntentGroup
 from ancestry_mmm.tests.support.lifecycle_fixture import (
     UNRELATED_ARTIFACT_ID,
     build_lifecycle_project,
@@ -233,6 +235,491 @@ def test_import_bundle_transactionally_replaces_the_destination_artifact_store(
     assert UNRELATED_ARTIFACT_ID not in replaced_ids
     assert replaced_ids == {"lifecycle-model-input", "lifecycle-monetary"}
     assert any("Restored 2 Planning Curve(s)" in (s.value or "") for s in at.success)
+
+
+def test_import_restores_custom_search_child_under_approved_parent(
+    monkeypatch, tmp_path
+):
+    """REQ-SEARCH-004: exercise the real clean-session import path."""
+
+    export_root = tmp_path / "exports"
+    artifact_root = tmp_path / "artifact-root"
+
+    import ancestry_mmm.utils as utils_pkg
+    import ancestry_mmm.utils.session_state as ss
+
+    monkeypatch.setattr(utils_pkg, "PROJECT_EXPORT_ROOT", export_root)
+    monkeypatch.setattr(ss, "CURVE_ARTIFACT_ROOT", artifact_root)
+
+    child = SearchIntentGroup(
+        search_intent_group_id="non_brand_search_genealogy",
+        search_intent_group_name="Genealogy Non-Brand",
+        brand_class="generic_non_brand",
+        parent_search_intent_group_id="non_brand_search",
+        business_description="Generic genealogy discovery terms.",
+        product_scope="Family History",
+        intent_type="genealogy",
+        owner="Search Governance",
+        search_intent_group_version=2,
+    )
+    activity = ActivityDefinition(
+        activity_id="paid-search-genealogy",
+        channel="Paid Search",
+        activity_ownership="paid",
+        model_role="intervention",
+        economic_treatment="paid_media_cost",
+        planning_eligibility="excluded",
+        source="sa360",
+        market="UK",
+        platform="SA360",
+        campaign_type="search",
+        product_advertised="Family History",
+        model_input_column="paid_search_genealogy",
+        search_intent_group_id=child.search_intent_group_id,
+        search_platform="google",
+    )
+    bundle_path = export_project(
+        tmp_path / "custom-search-child.zip",
+        raw_sources={},
+        transformed_data=None,
+        pipeline_steps=[],
+        model_spec=None,
+        prior_config=None,
+        dna_lag_weeks=0,
+        trace=None,
+        scenarios=[],
+        project_display_name="Imported Human Project",
+        activity_definitions=[activity.to_dict()],
+        search_intent_groups=[child.to_dict()],
+        search_intent_model_grain=[child.search_intent_group_id],
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.session_state["project_name"] = "UK Production 2026"
+    at.file_uploader[0].set_value(
+        (bundle_path.name, bundle_path.read_bytes(), "application/zip")
+    ).run()
+    next(
+        button for button in at.button if button.label == "Import bundle"
+    ).click().run()
+    assert not at.exception, f"import click raised: {at.exception}"
+
+    groups = at.session_state["search_intent_groups"]
+    group_ids = [group["search_intent_group_id"] for group in groups]
+    assert group_ids.count("non_brand_search") == 1
+    assert group_ids.count("brand_search") == 1
+    assert child.search_intent_group_id in group_ids
+    assert not any(
+        "Search intent taxonomy was quarantined" in (w.value or "") for w in at.warning
+    )
+    assert at.session_state["activity_definitions"][0]["search_platform"] == "google"
+    assert at.session_state["activity_definitions"][0]["platform"] == "SA360"
+    assert at.session_state["project_name"] == "Imported Human Project"
+    assert (
+        at.session_state["activity_definitions"][0]["model_input_column"]
+        == "paid_search_genealogy"
+    )
+
+
+def test_import_quarantines_malformed_search_taxonomy_history_only(
+    monkeypatch, tmp_path
+):
+    """Malformed audit history must not discard a valid current child."""
+
+    export_root = tmp_path / "exports"
+    monkeypatch.setattr("ancestry_mmm.utils.PROJECT_EXPORT_ROOT", export_root)
+    child = SearchIntentGroup(
+        search_intent_group_id="non_brand_search_genealogy",
+        search_intent_group_name="Genealogy Non-Brand",
+        brand_class="generic_non_brand",
+        parent_search_intent_group_id="non_brand_search",
+    )
+    bundle_path = export_project(
+        tmp_path / "malformed-taxonomy-history.zip",
+        raw_sources={},
+        transformed_data=None,
+        pipeline_steps=[],
+        model_spec=None,
+        prior_config=None,
+        dna_lag_weeks=0,
+        trace=None,
+        scenarios=[],
+        search_intent_groups=[child.to_dict()],
+        search_intent_group_versions=[
+            {**child.to_dict(), "search_intent_group_version": "bad"}
+        ],
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    at.file_uploader[0].set_value(
+        (bundle_path.name, bundle_path.read_bytes(), "application/zip")
+    ).run()
+    next(
+        button for button in at.button if button.label == "Import bundle"
+    ).click().run()
+
+    assert not at.exception, f"malformed history import raised: {at.exception}"
+    restored_ids = {
+        item["search_intent_group_id"]
+        for item in at.session_state["search_intent_groups"]
+    }
+    assert child.search_intent_group_id in restored_ids
+    assert at.session_state["search_intent_group_versions"] == []
+    assert any(
+        "version record" in (warning.value or "")
+        and "quarantined" in (warning.value or "")
+        for warning in at.warning
+    )
+
+
+def test_import_preserves_valid_taxonomy_when_only_grain_is_invalid(
+    monkeypatch, tmp_path
+):
+    """Regression for review PRRT_kwDOTd28Js6fkIJn: a valid current
+    taxonomy and version history must survive even when
+    search_intent_model_grain alone is malformed (references an unknown
+    group here) - only the grain is quarantined/reset, not the whole
+    taxonomy, and re-export must not lose the governed child."""
+
+    export_root = tmp_path / "exports"
+    monkeypatch.setattr("ancestry_mmm.utils.PROJECT_EXPORT_ROOT", export_root)
+    child = SearchIntentGroup(
+        search_intent_group_id="non_brand_search_genealogy",
+        search_intent_group_name="Genealogy Non-Brand",
+        brand_class="generic_non_brand",
+        parent_search_intent_group_id="non_brand_search",
+        business_description="Generic genealogy discovery terms.",
+    )
+    bundle_path = export_project(
+        tmp_path / "invalid-grain-only.zip",
+        raw_sources={},
+        transformed_data=None,
+        pipeline_steps=[],
+        model_spec=None,
+        prior_config=None,
+        dna_lag_weeks=0,
+        trace=None,
+        scenarios=[],
+        search_intent_groups=[child.to_dict()],
+        search_intent_group_versions=[child.to_dict()],
+        # References a group that does not exist in this catalogue.
+        search_intent_model_grain=["this_group_id_does_not_exist"],
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.file_uploader[0].set_value(
+        (bundle_path.name, bundle_path.read_bytes(), "application/zip")
+    ).run()
+    next(
+        button for button in at.button if button.label == "Import bundle"
+    ).click().run()
+
+    assert not at.exception, f"invalid-grain-only import raised: {at.exception}"
+    restored_ids = {
+        item["search_intent_group_id"]
+        for item in at.session_state["search_intent_groups"]
+    }
+    assert child.search_intent_group_id in restored_ids
+    assert "brand_search" in restored_ids
+    assert "non_brand_search" in restored_ids
+    restored_version_ids = {
+        item["search_intent_group_id"]
+        for item in at.session_state["search_intent_group_versions"]
+    }
+    assert child.search_intent_group_id in restored_version_ids
+    # The grain alone was reset to the approved parent grain (empty means
+    # "approved parent grain" per resolve_search_intent_model_grain).
+    assert at.session_state["search_intent_model_grain"] == []
+    assert any(
+        "grain" in (warning.value or "").lower()
+        and "quarantined" not in (warning.value or "").lower()
+        for warning in at.warning
+    ), "expected a grain-specific warning, not a whole-taxonomy quarantine message"
+    assert not any(
+        "Search intent taxonomy was quarantined" in (warning.value or "")
+        for warning in at.warning
+    ), "the valid catalogue must not be reported as quarantined"
+
+    # Re-export must not have lost the governed child.
+    reexport_path = export_project(
+        tmp_path / "reexported.zip",
+        raw_sources={},
+        transformed_data=None,
+        pipeline_steps=[],
+        model_spec=None,
+        prior_config=None,
+        dna_lag_weeks=0,
+        trace=None,
+        scenarios=[],
+        search_intent_groups=at.session_state["search_intent_groups"],
+        search_intent_group_versions=at.session_state["search_intent_group_versions"],
+        search_intent_model_grain=at.session_state["search_intent_model_grain"],
+    )
+    reimported = import_project(reexport_path)
+    reimported_ids = {
+        item["search_intent_group_id"] for item in reimported["search_intent_groups"]
+    }
+    assert child.search_intent_group_id in reimported_ids
+
+
+def test_import_quarantines_malformed_current_search_taxonomy_without_crashing_readiness(
+    monkeypatch, tmp_path
+):
+    """Regression for review 5120876238 (thread PRRT_kwDOTd28Js6fiZaZ):
+    quarantining a malformed *current* search_intent_groups record must not
+    just clear session state - `current_model_identity_fingerprints` (called
+    by `verify_imported_approval`/`audit_project_resumability` right after
+    this handler, in the same import) re-reads `imported["search_intent_groups"]`
+    directly, not session state. Leaving the raw malformed collection there
+    used to crash a bundle that also carries a model approval (or reaches
+    the official_curves/scenarios checkpoint) after the rest of the project
+    had already been installed, instead of completing the advertised
+    quarantine."""
+
+    export_root = tmp_path / "exports"
+    monkeypatch.setattr("ancestry_mmm.utils.PROJECT_EXPORT_ROOT", export_root)
+
+    project = build_lifecycle_project()
+    bundle_path = export_project(
+        tmp_path / "malformed-current-taxonomy.zip",
+        raw_sources={"joined": project.fitted.transformed_data.copy()},
+        transformed_data=project.fitted.transformed_data,
+        pipeline_steps=[],
+        model_spec=project.fitted.model_spec_dict,
+        prior_config=project.fitted.prior_config,
+        dna_lag_weeks=project.fitted.dna_lag_weeks,
+        trace=project.fitted.trace,
+        scenarios=[],
+        model_approval=project.approval.to_dict(),
+        model_run_id=project.fitted.model_run_id,
+        model_meta=project.fitted.meta,
+        # A current record missing required fields - SearchIntentGroup.from_dict
+        # raises constructing it, which resolve_imported_search_intent_groups
+        # turns into the ValueError this handler is meant to quarantine.
+        search_intent_groups=[{"search_intent_group_id": "malformed_record"}],
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.file_uploader[0].set_value(
+        (bundle_path.name, bundle_path.read_bytes(), "application/zip")
+    ).run()
+    next(
+        button for button in at.button if button.label == "Import bundle"
+    ).click().run()
+
+    assert not at.exception, (
+        "malformed current taxonomy import crashed downstream readiness/"
+        f"approval verification instead of completing the quarantine: {at.exception}"
+    )
+    assert at.session_state["search_intent_groups"] == []
+    assert at.session_state["search_intent_group_versions"] == []
+    # No explicit grain was supplied by this bundle, and grain validation is
+    # now independent of the (quarantined) current-groups validation above -
+    # an empty requested selection still resolves to its own default
+    # (the approved parent grain), it is not force-reset to [] merely
+    # because the unrelated current-groups catalogue was malformed.
+    assert at.session_state["search_intent_model_grain"] == [
+        "brand_search",
+        "non_brand_search",
+    ]
+    assert any(
+        "Search intent taxonomy was quarantined" in (w.value or "") for w in at.warning
+    )
+
+
+def test_import_quarantines_malformed_seo_fit_inputs_without_crashing_readiness(
+    monkeypatch, tmp_path
+):
+    """Regression for review PRRT_kwDOTd28Js6fnFan: a malformed
+    config/seo_fit_inputs.json (e.g. a group missing metric_definition)
+    reaches SeoModelFitInputs.from_dict() deep inside
+    current_model_identity_fingerprints's seo_fit_inputs_fingerprint() call
+    - called by verify_imported_approval/audit_project_resumability right
+    after this handler, in the same import - so a raw payload used to crash
+    an approved/reconstructable bundle's import after the rest of project
+    state had already been installed. The import handler must quarantine it
+    first, exactly like the Search taxonomy quarantine above."""
+
+    export_root = tmp_path / "exports"
+    monkeypatch.setattr("ancestry_mmm.utils.PROJECT_EXPORT_ROOT", export_root)
+
+    project = build_lifecycle_project()
+    bundle_path = export_project(
+        tmp_path / "malformed-seo.zip",
+        raw_sources={"joined": project.fitted.transformed_data.copy()},
+        transformed_data=project.fitted.transformed_data,
+        pipeline_steps=[],
+        model_spec=project.fitted.model_spec_dict,
+        prior_config=project.fitted.prior_config,
+        dna_lag_weeks=project.fitted.dna_lag_weeks,
+        trace=project.fitted.trace,
+        scenarios=[],
+        model_approval=project.approval.to_dict(),
+        model_run_id=project.fitted.model_run_id,
+        model_meta=project.fitted.meta,
+        # A group missing required fields - the exact example from the
+        # review. SeoModelFitInputs.from_dict() raises constructing it.
+        seo_fit_inputs={"groups": [{}]},
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.file_uploader[0].set_value(
+        (bundle_path.name, bundle_path.read_bytes(), "application/zip")
+    ).run()
+    next(
+        button for button in at.button if button.label == "Import bundle"
+    ).click().run()
+
+    assert not at.exception, (
+        "malformed SEO fit inputs crashed downstream readiness/approval "
+        f"verification instead of completing the quarantine: {at.exception}"
+    )
+    assert at.session_state["seo_fit_inputs"] is None
+    assert any(
+        "SEO fit inputs" in (w.value or "") and "quarantined" in (w.value or "")
+        for w in at.warning
+    )
+
+    # Valid, unrelated project data remains importable alongside the
+    # quarantine - the rest of the fitted/approved project state installed
+    # normally.
+    assert at.session_state["model_run_id"] == project.fitted.model_run_id
+    assert at.session_state["trace"] is not None
+
+    # Re-exporting the sanitized session state must not resurrect the
+    # malformed object.
+    reexport_path = export_project(
+        tmp_path / "seo-reexported.zip",
+        raw_sources={},
+        transformed_data=at.session_state["transformed_data"],
+        pipeline_steps=[],
+        model_spec=at.session_state["model_spec"],
+        prior_config=at.session_state["prior_config"],
+        dna_lag_weeks=at.session_state["dna_lag_weeks"],
+        trace=at.session_state["trace"],
+        scenarios=[],
+        seo_fit_inputs=at.session_state["seo_fit_inputs"],
+    )
+    reimported = import_project(reexport_path)
+    assert reimported["seo_fit_inputs"] is None
+
+
+def test_import_quarantines_malformed_search_objects_activities_and_coverage_matrices(
+    monkeypatch, tmp_path
+):
+    """Independent-review findings A/B/C: search_objects, activity_definitions,
+    and variable_coverage_matrices were each consumed raw (uncaught) by
+    current_model_identity_fingerprints (search_object_fit_fingerprint /
+    activity_fit_fingerprint) or by resolve_imported_variable_coverage_matrices
+    itself for a non-iterable top-level payload - the same crash-after-partial-
+    install failure mode already fixed for the Search taxonomy and SEO
+    fit-input payloads, just for three payloads that were missed the first
+    time. A single bundle exercises all three at once."""
+
+    export_root = tmp_path / "exports"
+    monkeypatch.setattr("ancestry_mmm.utils.PROJECT_EXPORT_ROOT", export_root)
+
+    project = build_lifecycle_project()
+    bundle_path = export_project(
+        tmp_path / "malformed-abc.zip",
+        raw_sources={"joined": project.fitted.transformed_data.copy()},
+        transformed_data=project.fitted.transformed_data,
+        pipeline_steps=[],
+        model_spec=project.fitted.model_spec_dict,
+        prior_config=project.fitted.prior_config,
+        dna_lag_weeks=project.fitted.dna_lag_weeks,
+        trace=project.fitted.trace,
+        scenarios=[],
+        model_approval=project.approval.to_dict(),
+        model_run_id=project.fitted.model_run_id,
+        model_meta=project.fitted.meta,
+        # A: non-iterable top-level payload.
+        variable_coverage_matrices=42,
+        # B: individually malformed record inside an otherwise-valid list.
+        search_objects=[{"not_a_valid": "record"}],
+        # C: individually malformed record inside an otherwise-valid list.
+        activity_definitions=[{"not_a_valid": "record"}],
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.file_uploader[0].set_value(
+        (bundle_path.name, bundle_path.read_bytes(), "application/zip")
+    ).run()
+    next(
+        button for button in at.button if button.label == "Import bundle"
+    ).click().run()
+
+    assert not at.exception, (
+        "malformed search_objects/activity_definitions/coverage_matrices "
+        f"crashed downstream verification instead of quarantining: {at.exception}"
+    )
+    assert at.session_state["search_objects"] == []
+    assert at.session_state["search_object_versions"] == []
+    assert at.session_state["activity_definitions"] == []
+    assert at.session_state["variable_coverage_matrix_versions"] == []
+    assert at.session_state["trace"] is not None
+    assert any(
+        "Activity definition" in (w.value or "") and "quarantined" in (w.value or "")
+        for w in at.warning
+    )
+
+
+def test_import_does_not_crash_on_a_malformed_fitted_model_spec(monkeypatch, tmp_path):
+    """Independent-review finding: reconstruct_model_state's own docstring
+    promises "never raises", but ModelSpec.from_dict(fitted_spec_dict)
+    raised an uncaught TypeError for a malformed fitted_model_spec (e.g.
+    missing required fields like date_col/market_col), which this handler
+    calls directly and unguarded at import - crashing the page after the
+    rest of project state had already been installed, the same failure
+    mode already fixed for every other malformed governed payload."""
+
+    export_root = tmp_path / "exports"
+    monkeypatch.setattr("ancestry_mmm.utils.PROJECT_EXPORT_ROOT", export_root)
+
+    project = build_lifecycle_project()
+    bundle_path = export_project(
+        tmp_path / "malformed-fitted-spec.zip",
+        raw_sources={"joined": project.fitted.transformed_data.copy()},
+        transformed_data=project.fitted.transformed_data,
+        pipeline_steps=[],
+        model_spec=project.fitted.model_spec_dict,
+        prior_config=project.fitted.prior_config,
+        dna_lag_weeks=project.fitted.dna_lag_weeks,
+        trace=project.fitted.trace,
+        scenarios=[],
+        model_approval=project.approval.to_dict(),
+        model_run_id=project.fitted.model_run_id,
+        model_meta=project.fitted.meta,
+        # Missing required fields (date_col/market_col) - ModelSpec.from_dict
+        # raises TypeError constructing it.
+        fitted_model_spec={"not_a_valid": "spec"},
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.file_uploader[0].set_value(
+        (bundle_path.name, bundle_path.read_bytes(), "application/zip")
+    ).run()
+    next(
+        button for button in at.button if button.label == "Import bundle"
+    ).click().run()
+
+    assert not at.exception, (
+        "malformed fitted_model_spec crashed the import instead of "
+        f"reconstruct_model_state resolving frame=None: {at.exception}"
+    )
 
 
 def test_import_clears_stale_cached_optimiser_results(monkeypatch, tmp_path):

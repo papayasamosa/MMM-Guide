@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, is_dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 import numpy as np
 import pandas as pd
@@ -130,6 +130,8 @@ def fingerprint_model_spec(
     official_preparation_evidence: Optional[Dict[str, Any]] = None,
     named_event_fit_fingerprint: Optional[str] = None,
     calibration_fit_fingerprint: Optional[str] = None,
+    seo_fit_fingerprint: Optional[str] = None,
+    search_intent_taxonomy_fit_fingerprint: Optional[str] = None,
 ) -> str:
     """
     Fingerprint the full set of inputs that determine how the model is
@@ -372,6 +374,12 @@ def fingerprint_model_spec(
     # exact experiment rows and target outcomes they consumed.
     if calibration_fit_fingerprint:
         payload["calibration_fit_fingerprint"] = calibration_fit_fingerprint
+    if seo_fit_fingerprint:
+        payload["seo_fit_fingerprint"] = seo_fit_fingerprint
+    if search_intent_taxonomy_fit_fingerprint:
+        payload["search_intent_taxonomy_fit_fingerprint"] = (
+            search_intent_taxonomy_fit_fingerprint
+        )
     blob = _canonical_json(payload)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
@@ -390,6 +398,46 @@ def _to_jsonable(obj: Any) -> Any:
     if isinstance(obj, (np.integer,)):
         return int(obj)
     return obj
+
+
+def fingerprint_candidate_a_fit_inputs(fit_inputs: Any) -> str:
+    """Fingerprint the complete governed Candidate A fit boundary.
+
+    Candidate A consumes more than the ordinary modelling frame: its
+    persisted Search observations, delivery/capacity/capture arrays, object
+    mappings, specification, row keys, and optional Google Trends anchor all
+    affect the linked posterior.  Use the object's explicit serialisation
+    contract so this identity is independent of object identity, repr(), and
+    dictionary insertion order.
+    """
+
+    if hasattr(fit_inputs, "to_dict"):
+        fit_inputs = fit_inputs.to_dict()
+    elif not isinstance(fit_inputs, Mapping):
+        raise TypeError("Candidate A fit inputs must be a mapping or expose to_dict().")
+    payload = {
+        "schema_version": 1,
+        "candidate_a_fit_inputs": _to_jsonable(fit_inputs),
+    }
+    blob = _canonical_json(payload)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def fingerprint_google_trends_anchor(anchor: Any) -> str:
+    """Return a canonical identity for one governed Google Trends anchor.
+
+    This is used for page-level invalidation when an already fitted Candidate A
+    project replaces its anchor.  It deliberately follows the same explicit
+    serialisation/canonical-JSON contract as the Candidate A fit boundary.
+    """
+
+    if hasattr(anchor, "to_dict"):
+        anchor = anchor.to_dict()
+    elif not isinstance(anchor, Mapping):
+        raise TypeError("Google Trends anchor must be a mapping or expose to_dict().")
+    payload = {"schema_version": 1, "google_trends_anchor": _to_jsonable(anchor)}
+    blob = _canonical_json(payload)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 def fingerprint_posterior(params: Any) -> str:

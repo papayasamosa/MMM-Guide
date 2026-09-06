@@ -57,6 +57,12 @@ from ancestry_mmm.core.pathways import (
     ResolvedPathwayMasks,
 )
 from ancestry_mmm.core.scenario_governance import CounterfactualPolicy
+from ancestry_mmm.core.seo_visibility import (
+    SEO_POSITIONAL_VISIBILITY_METRIC,
+    SeoModelFitInputs,
+    SeoPositionalVisibilityObservation,
+    seo_fit_inputs_fingerprint,
+)
 from ancestry_mmm.core.persistence import (
     UnsafeZipEntryError,
     _count_loaded_curve_artifacts,
@@ -394,6 +400,32 @@ def test_export_then_import_reproduces_config(tmp_path, sample_project):
     assert imported["prior_config"] == sample_project["prior_config"]
     assert imported["dna_lag_weeks"] == sample_project["dna_lag_weeks"]
     assert imported["model_approval"] == sample_project["model_approval"]
+
+
+def test_export_then_import_restores_human_project_display_name(
+    tmp_path, sample_project
+):
+    project = dict(sample_project)
+    project["project_display_name"] = "UK Production 2026"
+
+    imported = import_project(export_project(tmp_path / "named-project.zip", **project))
+
+    assert imported["project_display_name"] == "UK Production 2026"
+
+
+def test_export_then_import_preserves_distinct_fitted_model_spec(
+    tmp_path, sample_project
+):
+    """A Search-grain fit spec is durable alongside the full preparation spec."""
+
+    project = dict(sample_project)
+    fitted_spec = dict(project["model_spec"])
+    project["fitted_model_spec"] = fitted_spec
+
+    imported = import_project(export_project(tmp_path / "fit-spec.zip", **project))
+
+    assert imported["model_spec"] == project["model_spec"]
+    assert imported["fitted_model_spec"] == fitted_spec
 
 
 def test_media_input_and_cost_governance_round_trip(tmp_path, sample_project):
@@ -1659,6 +1691,40 @@ def test_export_then_import_search_objects_round_trip(tmp_path, sample_project):
     assert objects[0]["search_object_id"] == "uk_paid_search_spend"
 
 
+def test_export_then_import_search_intent_taxonomy_round_trip(tmp_path, sample_project):
+    """REQ-SEARCH-004/005: explicit Search taxonomy state and version history
+    remain durable without being folded into Search object definitions."""
+    from ancestry_mmm.core.search_intent_taxonomy import (
+        BRAND_SEARCH_INTENT_GROUP,
+        NON_BRAND_SEARCH_INTENT_GROUP,
+        SearchIntentGroup,
+    )
+
+    child = SearchIntentGroup(
+        search_intent_group_id="non_brand_genealogy",
+        search_intent_group_name="Genealogy",
+        brand_class="generic_non_brand",
+        parent_search_intent_group_id="non_brand_search",
+    )
+    project = dict(sample_project)
+    project["search_intent_groups"] = [
+        BRAND_SEARCH_INTENT_GROUP.to_dict(),
+        NON_BRAND_SEARCH_INTENT_GROUP.to_dict(),
+        child.to_dict(),
+    ]
+    project["search_intent_group_versions"] = [child.to_dict()]
+    project["search_intent_model_grain"] = ["non_brand_genealogy"]
+
+    imported = import_project(export_project(tmp_path / "taxonomy.zip", **project))
+
+    assert (
+        imported["search_intent_groups"][2]["search_intent_group_id"]
+        == "non_brand_genealogy"
+    )
+    assert imported["search_intent_group_versions"] == [child.to_dict()]
+    assert imported["search_intent_model_grain"] == ["non_brand_genealogy"]
+
+
 def test_export_then_import_candidate_a_search_configuration_round_trip(
     tmp_path, sample_project
 ):
@@ -1733,6 +1799,17 @@ def test_resolve_imported_search_objects_quarantines_malformed_records():
     assert len(warnings) == 3
     assert any("bad-role" in w for w in warnings)
     assert any("not a mapping" in w for w in warnings)
+
+
+def test_resolve_imported_search_objects_quarantines_non_sequence_top_level_payload():
+    """Independent-review finding: a non-iterable top-level search_objects
+    payload (e.g. an int, from a corrupted bundle) used to raise
+    `TypeError: 'int' object is not iterable` straight out of `enumerate()`,
+    uncaught - this must quarantine like every other malformed shape, not
+    crash the caller."""
+    objects, warnings = resolve_imported_search_objects({"search_objects": 42})
+    assert objects == []
+    assert any("not a sequence" in w for w in warnings)
 
 
 def test_resolve_imported_search_objects_quarantines_cross_object_column_alias():
@@ -2343,6 +2420,17 @@ def test_resolve_imported_variable_coverage_matrices_quarantines_malformed_recor
     assert len(warnings) == 2
     assert any("not a mapping" in w for w in warnings)
     assert any("incomplete" in w for w in warnings)
+
+
+def test_resolve_imported_variable_coverage_matrices_quarantines_non_sequence_payload():
+    """Independent-review finding: a non-iterable top-level payload used to
+    raise TypeError from enumerate(), uncaught, crashing
+    current_model_identity_fingerprints during import."""
+    matrices, warnings = resolve_imported_variable_coverage_matrices(
+        {"variable_coverage_matrices": 42}
+    )
+    assert matrices == []
+    assert any("not a sequence" in w for w in warnings)
 
 
 def test_export_then_import_join_config_round_trip(tmp_path, sample_project):
@@ -3053,6 +3141,8 @@ def _make_trace(
         "market_offset": rng.normal(size=(chains, draws, n_mkt, n_seg)),
         "gamma_fourier": rng.normal(size=(chains, draws, n_fourier, n_seg)),
     }
+    if meta.seo_fit_inputs_at_fit:
+        posterior["seo_visibility_beta"] = rng.normal(size=(chains, draws))
     coords = {
         "channel": meta.channels,
         "outcome": meta.outcome_ids,
@@ -3340,6 +3430,56 @@ def test_reconstruct_model_state_handles_missing_inputs_without_raising():
         "model_meta": None,
         "posterior_params": None,
     }
+
+
+def test_reconstruct_model_state_never_raises_on_malformed_fitted_spec():
+    """Independent-review finding: reconstruct_model_state's own docstring
+    promises "never raises - callers decide what an incomplete
+    reconstruction means", but ModelSpec.from_dict(fitted_spec_dict) raises
+    TypeError (not ValueError/KeyError) for a malformed
+    fitted_model_spec/model_spec payload - e.g. one missing required fields
+    like date_col/market_col - which the frame-reconstruction except clause
+    did not catch. This crashed every caller: 09_Project_Export.py's import
+    handler directly (uncaught, after the rest of project state was already
+    installed), and verify_imported_approval/audit_project_resumability via
+    current_model_identity_fingerprints."""
+    imported = {
+        "transformed_data": pd.DataFrame({"x": [1]}),
+        "official_prepared_data": None,
+        "fitted_model_spec": {"not_a_valid": "spec"},
+        "outcome_definitions": [],
+    }
+    result = reconstruct_model_state(imported)
+    assert result["frame"] is None
+
+
+def test_reconstruct_model_state_still_handles_malformed_outcome_catalogue_at_fit():
+    """Non-regression: model_meta reconstruction's except clause was
+    widened from `except TypeError` to the module's standard four-exception
+    tuple alongside the frame-reconstruction fix above, purely for
+    consistency/defense-in-depth (a malformed OutcomeDefinition/
+    OutcomeGroupDefinition/OutcomeGroupTreatment/MediaOutcomePathway record
+    could plausibly raise ValueError from __post_init__ validation, not
+    only TypeError) - this confirms the pre-existing TypeError case (a
+    non-mapping catalogue entry) still resolves to "no model_meta" rather
+    than raising, exactly as before."""
+    imported = {
+        "model_meta": {
+            "markets": ["UK"],
+            "outcome_ids": ["New"],
+            "channels": ["TV"],
+            "dna_channels": [],
+            "dna_channel_idx": [],
+            "non_dna_idx": [0],
+            "dna_outcome_id": "New",
+            "dna_lag_weeks": 4,
+            "unpooled_markets": [],
+            "control_names": [],
+            "outcome_catalogue_at_fit": [42],
+        },
+    }
+    result = reconstruct_model_state(imported)
+    assert result["model_meta"] is None
 
 
 class TestReconstructModelStateWithDnaKitOutcomes:
@@ -3678,6 +3818,165 @@ class TestVerifyImportedApproval:
         approval, message = verify_imported_approval(imported, reconstructed)
         assert approval is None
         assert "does not match" in message.lower()
+
+    def test_rejected_when_imported_seo_fit_inputs_differ(
+        self, tmp_path, consistent_project
+    ):
+        weeks = [
+            str(value.date())
+            for value in pd.date_range("2024-01-01", periods=8, freq="W")
+        ]
+        seo_inputs = SeoModelFitInputs.from_observations(
+            [
+                SeoPositionalVisibilityObservation(
+                    market="UK",
+                    week=week,
+                    weighted_avg_position=2.0,
+                    visibility_index=0.5,
+                    total_impressions=100.0,
+                    total_clicks=10.0,
+                    ctr=0.1,
+                )
+                for week in weeks
+            ],
+            model_markets=["UK"] * len(weeks),
+            model_weeks=weeks,
+            metric_definition=SEO_POSITIONAL_VISIBILITY_METRIC,
+        )
+        seo_payload = seo_inputs.to_dict()
+        project = dict(consistent_project)
+        project["seo_fit_inputs"] = seo_payload
+        project["model_meta"] = replace(
+            consistent_project["model_meta"],
+            seo_fit_inputs_at_fit=seo_payload,
+        )
+        project["trace"] = _make_trace(project["model_meta"])
+        project["model_approval"] = dict(consistent_project["model_approval"])
+        project["model_approval"]["model_spec_fingerprint"] = fingerprint_model_spec(
+            project["model_spec"],
+            project["prior_config"],
+            project["dna_lag_weeks"],
+            direct_dna_outcome_ids=project["model_meta"].direct_dna_outcome_ids,
+            seo_fit_fingerprint=seo_fit_inputs_fingerprint(seo_inputs),
+        )
+        project["model_approval"]["posterior_fingerprint"] = fingerprint_posterior(
+            extract_posterior_params(project["trace"], project["model_meta"])
+        )
+
+        imported = import_project(
+            export_project(tmp_path / "seo-boundary.zip", **project)
+        )
+        reconstructed = reconstruct_model_state(imported)
+        verified, message = verify_imported_approval(imported, reconstructed)
+        assert verified is not None, message
+
+        changed_seo = dict(imported["seo_fit_inputs"])
+        changed_seo["standardized_visibility"] = list(
+            changed_seo["standardized_visibility"]
+        )
+        changed_seo["standardized_visibility"][0] += 0.25
+        imported["seo_fit_inputs"] = changed_seo
+
+        rejected, rejection_message = verify_imported_approval(imported, reconstructed)
+        assert rejected is None
+        assert "does not match" in rejection_message.lower()
+
+    def test_malformed_seo_fit_inputs_crash_current_model_identity_fingerprints(
+        self, tmp_path, consistent_project
+    ):
+        """Documents the exact crash reported in review PRRT_kwDOTd28Js6fnFan:
+        without quarantining first, a malformed seo_fit_inputs record
+        reaches SeoModelFitInputs.from_dict() deep inside
+        current_model_identity_fingerprints and raises - core.persistence
+        itself does not (and should not) swallow this; the import boundary
+        (09_Project_Export.py) is responsible for quarantining before
+        calling verify_imported_approval/audit_project_resumability, which
+        the next test proves."""
+        project = dict(consistent_project)
+        project["seo_fit_inputs"] = {"groups": [{}]}
+        imported = import_project(
+            export_project(tmp_path / "malformed-seo-raw.zip", **project)
+        )
+        reconstructed = reconstruct_model_state(imported)
+        with pytest.raises((KeyError, TypeError, ValueError)):
+            verify_imported_approval(imported, reconstructed)
+
+    def test_approval_bound_to_a_real_seo_boundary_is_unverified_after_quarantine(
+        self, tmp_path, consistent_project
+    ):
+        """The fix's actual contract: once the import boundary has
+        quarantined a malformed seo_fit_inputs payload (sanitizing
+        `imported["seo_fit_inputs"]` to None, mirroring
+        core.seo_visibility.resolve_imported_seo_fit_inputs's contract), an
+        approval that was genuinely computed against a real, non-empty SEO
+        boundary must fail verification rather than being silently accepted
+        as if the model had no SEO input at all."""
+        weeks = [
+            str(value.date())
+            for value in pd.date_range("2024-01-01", periods=8, freq="W")
+        ]
+        seo_inputs = SeoModelFitInputs.from_observations(
+            [
+                SeoPositionalVisibilityObservation(
+                    market="UK",
+                    week=week,
+                    weighted_avg_position=2.0,
+                    visibility_index=0.5,
+                    total_impressions=100.0,
+                    total_clicks=10.0,
+                    ctr=0.1,
+                )
+                for week in weeks
+            ],
+            model_markets=["UK"] * len(weeks),
+            model_weeks=weeks,
+            metric_definition=SEO_POSITIONAL_VISIBILITY_METRIC,
+        )
+        seo_payload = seo_inputs.to_dict()
+        project = dict(consistent_project)
+        project["seo_fit_inputs"] = seo_payload
+        project["model_meta"] = replace(
+            consistent_project["model_meta"],
+            seo_fit_inputs_at_fit=seo_payload,
+        )
+        project["trace"] = _make_trace(project["model_meta"])
+        project["model_approval"] = dict(consistent_project["model_approval"])
+        project["model_approval"]["model_spec_fingerprint"] = fingerprint_model_spec(
+            project["model_spec"],
+            project["prior_config"],
+            project["dna_lag_weeks"],
+            direct_dna_outcome_ids=project["model_meta"].direct_dna_outcome_ids,
+            seo_fit_fingerprint=seo_fit_inputs_fingerprint(seo_inputs),
+        )
+        project["model_approval"]["posterior_fingerprint"] = fingerprint_posterior(
+            extract_posterior_params(project["trace"], project["model_meta"])
+        )
+
+        imported = import_project(
+            export_project(tmp_path / "seo-boundary-quarantined.zip", **project)
+        )
+        reconstructed = reconstruct_model_state(imported)
+        verified, message = verify_imported_approval(imported, reconstructed)
+        assert verified is not None, message
+
+        # Simulate the import boundary's now-corrupted-on-disk config: the
+        # analyst's config/seo_fit_inputs.json became malformed (a group
+        # missing metric_definition) between export and re-import.
+        imported["seo_fit_inputs"] = {"groups": [{}]}
+        from ancestry_mmm.core.seo_visibility import resolve_imported_seo_fit_inputs
+
+        try:
+            resolve_imported_seo_fit_inputs(imported["seo_fit_inputs"])
+        except ValueError:
+            # This is the quarantine 09_Project_Export.py's import handler
+            # performs before ever calling verify_imported_approval.
+            imported["seo_fit_inputs"] = None
+        else:
+            pytest.fail("expected the malformed SEO payload to be rejected")
+
+        rejected, rejection_message = verify_imported_approval(imported, reconstructed)
+        assert rejected is None
+        assert "does not match" in rejection_message.lower()
 
     def test_rejected_when_posterior_artefacts_differ(
         self, tmp_path, consistent_meta, consistent_project

@@ -6,6 +6,7 @@ catalogue, and the reporting roll-up hierarchy.
 
 import pytest
 
+from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.core.search_intent_taxonomy import (
     APPROVED_MINIMUM_SEARCH_INTENT_GROUPS,
     BRAND_CLASS_BRAND,
@@ -23,6 +24,11 @@ from ancestry_mmm.core.search_intent_taxonomy import (
     SearchReportingCell,
     new_search_intent_group_version,
     roll_up_paid_search_reporting,
+    roll_up_paid_search_reporting_hierarchy,
+    resolve_imported_search_intent_groups,
+    resolve_search_model_input_columns,
+    resolve_imported_search_intent_group_versions,
+    search_intent_taxonomy_fit_fingerprint,
     validate_activity_search_taxonomy,
 )
 
@@ -125,6 +131,70 @@ class TestNewSearchIntentGroupVersion:
             )
 
 
+def test_malformed_imported_taxonomy_history_is_quarantined_without_losing_valid_rows():
+    child = SearchIntentGroup(
+        search_intent_group_id="non_brand_genealogy",
+        search_intent_group_name="Genealogy",
+        brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+        parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+    )
+    valid = child.to_dict()
+    malformed_version = {**valid, "search_intent_group_version": "not-an-int"}
+    malformed_lineage = {
+        **valid,
+        "search_intent_group_version": 2,
+        "supersedes_search_intent_group_id": "missing-group",
+    }
+
+    restored, warnings = resolve_imported_search_intent_group_versions(
+        [valid, malformed_version, malformed_lineage],
+        current_groups=[child],
+    )
+
+    assert restored == [valid]
+    assert len(warnings) == 2
+    assert all("quarantined" in warning for warning in warnings)
+
+
+def test_history_lineage_cannot_rely_on_a_quarantined_record():
+    child = SearchIntentGroup(
+        search_intent_group_id="non_brand_genealogy",
+        search_intent_group_name="Genealogy",
+        brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+        parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+    )
+    dependent = {
+        **child.to_dict(),
+        "search_intent_group_id": "dependent",
+        "supersedes_search_intent_group_id": "quarantined",
+    }
+    quarantined = {
+        **child.to_dict(),
+        "search_intent_group_id": "quarantined",
+        "parent_search_intent_group_id": "missing-parent",
+    }
+
+    restored, warnings = resolve_imported_search_intent_group_versions(
+        [dependent, quarantined], current_groups=[child]
+    )
+
+    assert restored == []
+    assert len(warnings) == 2
+
+
+@pytest.mark.parametrize("malformed", [42, "not-a-record"])
+def test_malformed_current_taxonomy_records_are_rejected_and_quarantined(malformed):
+    with pytest.raises(ValueError, match="quarantined"):
+        resolve_imported_search_intent_groups([malformed])
+
+
+def test_malformed_current_taxonomy_mapping_is_rejected_and_quarantined():
+    with pytest.raises(ValueError, match="quarantined"):
+        resolve_imported_search_intent_groups(
+            [{"search_intent_group_id": "missing-required-fields"}]
+        )
+
+
 class _FakeActivity:
     def __init__(
         self,
@@ -132,11 +202,19 @@ class _FakeActivity:
         search_intent_group_id=None,
         search_platform="",
         campaign_type="",
+        planning_eligibility="excluded",
+        economic_treatment="response_only",
+        model_input_column="",
+        channel="search_input",
     ):
         self.activity_id = activity_id
         self.search_intent_group_id = search_intent_group_id
         self.search_platform = search_platform
         self.campaign_type = campaign_type
+        self.planning_eligibility = planning_eligibility
+        self.economic_treatment = economic_treatment
+        self.model_input_column = model_input_column
+        self.channel = channel
 
 
 class TestValidateActivitySearchTaxonomy:
@@ -182,6 +260,54 @@ class TestValidateActivitySearchTaxonomy:
         reference."""
         activities = [_FakeActivity("x", campaign_type="pmax")]
         assert validate_activity_search_taxonomy(activities) == []
+
+    def test_deeper_child_planning_and_cost_economics_fail_closed(self):
+        child = SearchIntentGroup(
+            search_intent_group_id="non_brand_generic_keywords",
+            search_intent_group_name="Non-Brand: Generic Keywords",
+            brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+            parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+        )
+        activity = _FakeActivity(
+            "child",
+            child.search_intent_group_id,
+            SEARCH_PLATFORM_GOOGLE,
+            planning_eligibility="optimisable",
+            economic_treatment="paid_media_cost",
+        )
+        issues = validate_activity_search_taxonomy(
+            [activity], (*APPROVED_MINIMUM_SEARCH_INTENT_GROUPS, child)
+        )
+        assert any("planning remains excluded" in issue for issue in issues)
+        assert any("cost-bearing economic_treatment" in issue for issue in issues)
+
+
+def test_search_taxonomy_fit_fingerprint_binds_consumed_group_metadata():
+    child = SearchIntentGroup(
+        search_intent_group_id="non_brand_generic_keywords",
+        search_intent_group_name="Non-Brand: Generic Keywords",
+        brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+        parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+    )
+    activity = _FakeActivity(
+        "child", child.search_intent_group_id, model_input_column="search_input"
+    )
+    first = search_intent_taxonomy_fit_fingerprint(
+        [activity],
+        [child],
+        [child.to_dict()],
+        consumed_model_input_columns=["search_input"],
+    )
+    changed = SearchIntentGroup(
+        **{**child.to_dict(), "search_intent_group_name": "Changed name"}
+    )
+    second = search_intent_taxonomy_fit_fingerprint(
+        [activity],
+        [changed],
+        [changed.to_dict()],
+        consumed_model_input_columns=["search_input"],
+    )
+    assert first != second
 
 
 class TestPaidSearchReportingRollup:
@@ -288,3 +414,238 @@ class TestPlatformAxisIsOrthogonal:
         value like 'google_brand'."""
         for platform in SEARCH_PLATFORMS:
             assert "brand" not in platform
+
+
+class TestHierarchicalPaidSearchReporting:
+    def test_parent_and_child_inputs_fail_closed_to_prevent_double_counting(self):
+        child = SearchIntentGroup(
+            search_intent_group_id="non_brand_generic_keywords",
+            search_intent_group_name="Non-Brand: Generic Keywords",
+            brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+            parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+        )
+        cells = [
+            SearchReportingCell(
+                SEARCH_INTENT_GROUP_ID_NON_BRAND, SEARCH_PLATFORM_GOOGLE, 100.0
+            ),
+            SearchReportingCell(
+                child.search_intent_group_id, SEARCH_PLATFORM_GOOGLE, 25.0
+            ),
+        ]
+        with pytest.raises(ValueError, match="double counting"):
+            roll_up_paid_search_reporting_hierarchy(
+                cells, (*APPROVED_MINIMUM_SEARCH_INTENT_GROUPS, child)
+            )
+
+
+def _search_activity(activity_id: str, column: str, group_id: str, market: str = "*"):
+    return ActivityDefinition(
+        activity_id=activity_id,
+        channel=column,
+        activity_ownership="paid",
+        model_role="intervention",
+        economic_treatment="paid_media_cost",
+        planning_eligibility="excluded",
+        source="test",
+        model_input_column=column,
+        search_intent_group_id=group_id,
+        search_platform=SEARCH_PLATFORM_GOOGLE,
+        market=market,
+    )
+
+
+class TestSearchModelInputResolution:
+    def test_selected_grain_is_applied_before_model_construction(self):
+        child = SearchIntentGroup(
+            search_intent_group_id="non_brand_search_genealogy",
+            search_intent_group_name="Genealogy Non-Brand",
+            brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+            parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+        )
+        groups = (*APPROVED_MINIMUM_SEARCH_INTENT_GROUPS, child)
+        activities = [
+            _search_activity("brand", "paid_brand", SEARCH_INTENT_GROUP_ID_BRAND),
+            _search_activity("child", "paid_genealogy", child.search_intent_group_id),
+        ]
+
+        assert resolve_search_model_input_columns(
+            ["paid_brand", "paid_genealogy", "TV"],
+            [SEARCH_INTENT_GROUP_ID_BRAND],
+            groups,
+            activities,
+        ) == ("paid_brand", "TV")
+        assert resolve_search_model_input_columns(
+            ["paid_brand", "paid_genealogy", "TV"],
+            [child.search_intent_group_id],
+            groups,
+            activities,
+        ) == ("paid_genealogy", "TV")
+
+    def test_shared_physical_input_fails_closed_for_mixed_search_grains(self):
+        activities = [
+            _search_activity("brand", "paid_search", SEARCH_INTENT_GROUP_ID_BRAND),
+            _search_activity(
+                "non-brand", "paid_search", SEARCH_INTENT_GROUP_ID_NON_BRAND
+            ),
+        ]
+
+        with pytest.raises(ValueError, match="both selected Search grain"):
+            resolve_search_model_input_columns(
+                ["paid_search", "TV"],
+                [SEARCH_INTENT_GROUP_ID_BRAND],
+                APPROVED_MINIMUM_SEARCH_INTENT_GROUPS,
+                activities,
+            )
+
+    def test_ragged_market_coverage_allows_parent_and_child_together(self):
+        """REQ-SEARCH-004 §4 / REQ-SEARCH-005 §2: GB fits the approved
+        Non-Brand parent while US fits an approved deeper child - a single
+        project-wide model-input resolution must include both columns
+        rather than forcing a common grain across markets."""
+        child = SearchIntentGroup(
+            search_intent_group_id="non_brand_search_genealogy",
+            search_intent_group_name="Genealogy Non-Brand",
+            brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+            parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+        )
+        groups = (*APPROVED_MINIMUM_SEARCH_INTENT_GROUPS, child)
+        activities = [
+            _search_activity(
+                "gb_non_brand",
+                "gb_paid_non_brand",
+                SEARCH_INTENT_GROUP_ID_NON_BRAND,
+                market="GB",
+            ),
+            _search_activity(
+                "us_genealogy",
+                "us_paid_genealogy",
+                child.search_intent_group_id,
+                market="US",
+            ),
+        ]
+
+        resolved = resolve_search_model_input_columns(
+            ["gb_paid_non_brand", "us_paid_genealogy", "TV"],
+            [SEARCH_INTENT_GROUP_ID_NON_BRAND, child.search_intent_group_id],
+            groups,
+            activities,
+        )
+
+        assert set(resolved) == {"gb_paid_non_brand", "us_paid_genealogy", "TV"}
+
+    def test_same_market_parent_and_child_overlap_still_fails_closed(self):
+        """Ragged coverage does not excuse a genuine same-market double fit:
+        one market whose activities resolve to both the parent and the
+        child must still be rejected."""
+        child = SearchIntentGroup(
+            search_intent_group_id="non_brand_search_genealogy",
+            search_intent_group_name="Genealogy Non-Brand",
+            brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+            parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+        )
+        groups = (*APPROVED_MINIMUM_SEARCH_INTENT_GROUPS, child)
+        activities = [
+            _search_activity(
+                "gb_non_brand",
+                "gb_paid_non_brand",
+                SEARCH_INTENT_GROUP_ID_NON_BRAND,
+                market="GB",
+            ),
+            _search_activity(
+                "gb_genealogy",
+                "gb_paid_genealogy",
+                child.search_intent_group_id,
+                market="GB",
+            ),
+        ]
+
+        with pytest.raises(ValueError, match="same market"):
+            resolve_search_model_input_columns(
+                ["gb_paid_non_brand", "gb_paid_genealogy", "TV"],
+                [SEARCH_INTENT_GROUP_ID_NON_BRAND, child.search_intent_group_id],
+                groups,
+                activities,
+            )
+
+    def test_selected_child_with_no_mapped_activity_is_rejected(self):
+        """Regression for review PRRT_kwDOTd28Js6fkIJp: selecting a deeper
+        child with no matching ActivityDefinition anywhere must fail
+        fitting explicitly, not silently proceed while the persisted grain
+        still claims that child was fit."""
+        child = SearchIntentGroup(
+            search_intent_group_id="non_brand_search_genealogy",
+            search_intent_group_name="Genealogy Non-Brand",
+            brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+            parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+        )
+        groups = (*APPROVED_MINIMUM_SEARCH_INTENT_GROUPS, child)
+        # Only Brand has a mapped activity - the selected child does not.
+        activities = [
+            _search_activity("brand", "paid_brand", SEARCH_INTENT_GROUP_ID_BRAND),
+        ]
+
+        with pytest.raises(
+            ValueError, match="no mapped physical model input"
+        ) as excinfo:
+            resolve_search_model_input_columns(
+                ["paid_brand", "TV"],
+                [SEARCH_INTENT_GROUP_ID_BRAND, child.search_intent_group_id],
+                groups,
+                activities,
+            )
+        assert child.search_intent_group_id in str(excinfo.value)
+
+    def test_selected_child_mapped_in_its_applicable_market_is_accepted(self):
+        """Non-regression: a selected deeper child that does have a mapped
+        activity in its applicable market must fit normally."""
+        child = SearchIntentGroup(
+            search_intent_group_id="non_brand_search_genealogy",
+            search_intent_group_name="Genealogy Non-Brand",
+            brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+            parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+        )
+        groups = (*APPROVED_MINIMUM_SEARCH_INTENT_GROUPS, child)
+        activities = [
+            _search_activity(
+                "genealogy",
+                "paid_genealogy",
+                child.search_intent_group_id,
+                market="GB",
+            ),
+        ]
+
+        resolved = resolve_search_model_input_columns(
+            ["paid_genealogy", "TV"],
+            [child.search_intent_group_id],
+            groups,
+            activities,
+        )
+
+        assert set(resolved) == {"paid_genealogy", "TV"}
+
+    def test_unrelated_non_search_column_does_not_mask_an_unresolved_child(self):
+        """A Brand, non-Search, or unclassified column keeping `resolved`
+        nonempty must not be mistaken for the explicitly selected deeper
+        child actually having a mapped input - the check is per group, not
+        merely whether anything at all was fit."""
+        child = SearchIntentGroup(
+            search_intent_group_id="non_brand_search_genealogy",
+            search_intent_group_name="Genealogy Non-Brand",
+            brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+            parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+        )
+        groups = (*APPROVED_MINIMUM_SEARCH_INTENT_GROUPS, child)
+        activities = [
+            _search_activity("brand", "paid_brand", SEARCH_INTENT_GROUP_ID_BRAND),
+        ]
+
+        with pytest.raises(ValueError, match="no mapped physical model input"):
+            resolve_search_model_input_columns(
+                # "TV" and "paid_brand" both remain in `resolved`, but
+                # neither is the selected child - `resolved` being nonempty
+                # must not paper over the child's missing mapping.
+                ["paid_brand", "TV", "unclassified_context_var"],
+                [SEARCH_INTENT_GROUP_ID_BRAND, child.search_intent_group_id],
+                groups,
+                activities,
+            )

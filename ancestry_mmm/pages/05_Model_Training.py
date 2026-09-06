@@ -1,9 +1,10 @@
 """Page 5: build and fit the joint hierarchical FH model, with a live progress indicator."""
 
 import sys
-import threading
 import time
 import uuid
+from dataclasses import replace
+from io import BytesIO
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -36,12 +37,18 @@ from ancestry_mmm.components import (
 )
 from ancestry_mmm.core.schema import ModelSpec
 from ancestry_mmm.core.causal_graph import GRAPH_STATUS_APPROVED, CausalGraph
-from ancestry_mmm.core.models import fit_model
 from ancestry_mmm.application.model_fit_service import (
     SEARCH_CANDIDATE_A_ENGINE,
     ModelFitServiceError,
     build_model_for_spec,
     resolve_engine,
+)
+from ancestry_mmm.application.fit_job_service import (
+    ACTIVE_JOB_STATES,
+    FitJobStore,
+    FitJobSubmission,
+    LocalFitJobBackend,
+    canonical_project_id,
 )
 from ancestry_mmm.core.predict import extract_posterior_params
 from ancestry_mmm.core.market_specific_predict import (
@@ -53,13 +60,24 @@ from ancestry_mmm.core.market_specific_diagnostics import (
 )
 from ancestry_mmm.core.diagnostics import compute_scorecard, prior_predictive_summary
 from ancestry_mmm.core.prefit_run import official_submission_allowed
-from ancestry_mmm.core.fingerprint import fingerprint_dataframe, fingerprint_model_spec
+from ancestry_mmm.core.fingerprint import (
+    fingerprint_candidate_a_fit_inputs,
+    fingerprint_dataframe,
+    fingerprint_model_spec,
+    fingerprint_google_trends_anchor,
+)
 from ancestry_mmm.core.outcomes import (
     outcome_catalogue_fingerprint_payload,
     resolve_outcome_definitions,
 )
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
-from ancestry_mmm.core.activities import activity_fit_fingerprint
+from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
+from ancestry_mmm.core.search_intent_taxonomy import (
+    resolve_imported_search_intent_groups,
+    resolve_search_intent_model_grain,
+    resolve_search_model_input_columns,
+    search_intent_taxonomy_fit_fingerprint,
+)
 from ancestry_mmm.core.search_objects import search_object_fit_fingerprint
 from ancestry_mmm.core.search_capacity import (
     CandidateASearchFitInputs,
@@ -70,16 +88,25 @@ from ancestry_mmm.application.candidate_a_input_service import (
     CANDIDATE_A_UPLOAD_COLUMNS,
     build_candidate_a_fit_inputs_from_frame,
 )
+from ancestry_mmm.application.migration_review_service import (
+    migration_review_after_fit_adoption,
+)
 from ancestry_mmm.core.google_trends_anchor import (
     GoogleTrendsAnchorFitInputs,
     GoogleTrendsQuerySetDefinition,
     GoogleTrendsRawObservation,
+    UK_BRAND_DEMAND_QUERY_EXPRESSION,
+    UK_BRAND_DEMAND_QUERY_SET_ID,
+    UK_BRAND_DEMAND_TERMS,
     compute_anchor_series,
 )
 from ancestry_mmm.core.seo_visibility import (
     GscPositionRow,
     SeoModelFitInputs,
+    SeoModelFitInputsCollection,
     compute_weekly_positional_visibility_series,
+    normalise_seo_fit_inputs,
+    seo_fit_inputs_fingerprint,
 )
 from ancestry_mmm.core.coverage import VariableCoverageMatrix
 from ancestry_mmm.data import (
@@ -133,6 +160,70 @@ render_workspace_note(
     "The prepared frame is read-only here; fitting creates the posterior evidence reviewed in Diagnostics.",
     kind="derived",
 )
+
+
+# Durable job state is initialised before the frame gate so a refresh or a
+# browser session loss still exposes active/orphaned/completed jobs.
+def _current_project_display_name() -> str:
+    value = get_state("project_name", "ancestry-fh-uk")
+    if isinstance(value, str) and value and value != "ancestry-fh-uk":
+        set_state("durable_project_id", canonical_project_id(value))
+        return value
+    display_name = value if isinstance(value, str) and value else "ancestry-fh-uk"
+    set_state("durable_project_id", canonical_project_id(display_name))
+    return display_name
+
+
+_fit_job_backend = LocalFitJobBackend(
+    FitJobStore(project_id=canonical_project_id(_current_project_display_name()))
+)
+_fit_job_backend.reconcile_active_jobs()
+
+
+def _render_durable_fit_jobs() -> None:
+    records = _fit_job_backend.store.list()
+    if not records:
+        return
+    with st.container(border=True):
+        st.markdown("### Durable fit jobs")
+        st.caption(
+            "Sampling runs in a separate local worker. This status is persisted "
+            "outside Streamlit and can be reattached after a refresh."
+        )
+        for record in records[:8]:
+            progress = record.progress
+            fraction = (
+                min(1.0, progress.completed_steps / progress.total_steps)
+                if progress.total_steps
+                else 0.0
+            )
+            label = f"{record.status.replace('_', ' ').title()} · {record.job_id[:8]}"
+            st.write(label)
+            if record.status in ACTIVE_JOB_STATES:
+                st.progress(fraction)
+                st.caption(
+                    f"{record.model_type} · {progress.completed_steps:,}/{progress.total_steps:,} "
+                    f"steps · PID {record.pid or 'pending'}"
+                )
+                if st.button(
+                    "Request cancellation", key=f"cancel_fit_job_{record.job_id}"
+                ):
+                    _fit_job_backend.cancel(record.job_id)
+                    st.rerun()
+            elif record.status in {"failed", "orphaned", "cancelled"}:
+                st.caption(
+                    record.error_summary
+                    or record.progress.message
+                    or "No further details."
+                )
+
+
+_render_durable_fit_jobs()
+
+_pending_fit_invalidation_notice = get_state("fit_invalidation_notice")
+if _pending_fit_invalidation_notice:
+    st.warning(_pending_fit_invalidation_notice)
+    set_state("fit_invalidation_notice", None)
 
 frame = get_state("frame")
 spec_dict = get_state("model_spec")
@@ -243,17 +334,17 @@ def _seo_fit_inputs_for_current_frame():
     payload = get_state("seo_fit_inputs")
     if payload is None:
         return None
-    if isinstance(payload, SeoModelFitInputs):
+    if isinstance(payload, (SeoModelFitInputs, SeoModelFitInputsCollection)):
         fit_inputs = payload
     else:
         if not isinstance(payload, dict):
             raise ValueError("seo_fit_inputs must be a serialized mapping")
-        fit_inputs = SeoModelFitInputs.from_dict(payload)
+        fit_inputs = SeoModelFitInputsCollection.from_dict(payload)
     fit_inputs.validate_frame(
         markets=[frame["markets"][int(index)] for index in frame["market_idx"]],
         weeks=_model_week_labels(),
     )
-    return fit_inputs
+    return fit_inputs.groups[0] if len(fit_inputs.groups) == 1 else fit_inputs
 
 
 def _candidate_a_fit_inputs_for_current_frame():
@@ -282,9 +373,112 @@ def _candidate_a_fit_inputs_for_current_frame():
             "The Google Trends Candidate A anchor does not cover the current "
             "model frame; upload one governed extraction for this frame."
         )
-    from dataclasses import replace
-
     return replace(fit_inputs, google_trends_anchor=anchor)
+
+
+def _fit_input_fingerprints_for_current_fit(
+    data_fingerprint: str, *, include_candidate_a: bool
+) -> dict[str, str]:
+    """Return the exact governed input identities required for adoption.
+
+    Candidate A has a linked Search boundary in addition to the ordinary
+    frame and SEO inputs.  Ordinary fits keep the historical identity shape;
+    Candidate A jobs opt into the complete serialized Search/anchor boundary.
+    """
+
+    fingerprints = {
+        "seo": seo_fit_inputs_fingerprint(_seo_fit_inputs_for_current_frame()),
+        "frame": data_fingerprint,
+    }
+    if include_candidate_a:
+        candidate_a_fit_inputs = _candidate_a_fit_inputs_for_current_frame()
+        if candidate_a_fit_inputs is None:
+            raise ValueError(
+                "Candidate A fit adoption requires its governed Search inputs."
+            )
+        fingerprints["candidate_a"] = fingerprint_candidate_a_fit_inputs(
+            candidate_a_fit_inputs
+        )
+    return fingerprints
+
+
+def _current_fit_uses_candidate_a() -> bool:
+    """Identify the engine that produced the current in-session fit."""
+
+    meta = get_state("model_meta")
+    if isinstance(meta, dict):
+        engine = meta.get("causal_graph_engine", "")
+    else:
+        engine = getattr(meta, "causal_graph_engine", "")
+    return (
+        bool(
+            get_state("model_trained")
+            or get_state("model_approval")
+            or get_state("trace") is not None
+        )
+        and engine == SEARCH_CANDIDATE_A_ENGINE
+    )
+
+
+def _canonical_seo_boundary_fingerprint(value) -> str:
+    """Hash SEO groups independently of legacy singular/collection shape."""
+
+    groups = normalise_seo_fit_inputs(value)
+    if not groups:
+        return ""
+    return seo_fit_inputs_fingerprint(SeoModelFitInputsCollection.from_groups(groups))
+
+
+def _fit_spec_and_frame_for_current_search_grain():
+    """Apply the governed Search grain at the engine input boundary."""
+
+    groups = resolve_imported_search_intent_groups(
+        get_state("search_intent_groups") or []
+    )
+    activities = [
+        ActivityDefinition.from_dict(item)
+        for item in (get_state("activity_definitions") or [])
+        if isinstance(item, dict)
+    ]
+    channels = resolve_search_model_input_columns(
+        spec.channels,
+        get_state("search_intent_model_grain") or [],
+        groups,
+        activities,
+    )
+    original_channel_indices = {
+        channel: index for index, channel in enumerate(spec.channels)
+    }
+    original_dna_indices = [
+        int(index)
+        for index in (frame.get("dna_channel_idx") or [])
+        if int(index) < len(spec.channels)
+    ]
+    if not original_dna_indices:
+        original_dna_indices = [
+            original_channel_indices[channel]
+            for channel in spec.dna_channels
+            if channel in original_channel_indices
+        ]
+    fit_spec = replace(
+        spec,
+        channels=list(channels),
+        dna_channels=[
+            spec.channels[index]
+            for index in original_dna_indices
+            if spec.channels[index] in channels
+        ],
+    )
+    channel_indices = [spec.channels.index(channel) for channel in channels]
+    fit_frame = dict(frame)
+    fit_frame["channels"] = list(channels)
+    fit_frame["X_media"] = frame["X_media"][:, channel_indices]
+    fit_frame["dna_channel_idx"] = [
+        channels.index(spec.channels[index])
+        for index in original_dna_indices
+        if spec.channels[index] in channels
+    ]
+    return fit_spec, fit_frame
 
 
 def _calibration_inputs_for_current_fit():
@@ -373,10 +567,15 @@ def _render_google_trends_candidate_a_boundary() -> None:
             key="google_trends_candidate_a_upload",
         )
         meta_cols = st.columns(3)
-        query_set_id = meta_cols[0].text_input("Query-set ID", key="gt_query_set_id")
+        query_set_id = meta_cols[0].text_input(
+            "Query-set ID", value=UK_BRAND_DEMAND_QUERY_SET_ID, key="gt_query_set_id"
+        )
         geography = meta_cols[1].text_input("Geography", key="gt_geography")
         terms_text = meta_cols[2].text_input(
-            "Approved branded terms (comma-separated)", key="gt_branded_terms"
+            "Approved branded query expression",
+            value=UK_BRAND_DEMAND_QUERY_EXPRESSION,
+            key="gt_branded_terms",
+            help="Preserve the exact supplied expression. The repeated `ancestry` term is intentional and will be warned about, not deduplicated.",
         )
         detail_cols = st.columns(3)
         category = detail_cols[0].text_input(
@@ -408,7 +607,7 @@ def _render_google_trends_candidate_a_boundary() -> None:
                 )
             else:
                 try:
-                    trends_frame = pd.read_csv(upload.getvalue())
+                    trends_frame = pd.read_csv(BytesIO(upload.getvalue()))
                     required = {"week", "raw_index"}
                     if not required.issubset(trends_frame.columns):
                         raise ValueError("CSV must contain week and raw_index columns")
@@ -416,7 +615,11 @@ def _render_google_trends_candidate_a_boundary() -> None:
                         query_set_id=query_set_id.strip(),
                         branded_terms=tuple(
                             term.strip()
-                            for term in terms_text.split(",")
+                            for term in (
+                                terms_text.split("+")
+                                if "+" in terms_text
+                                else terms_text.split(",")
+                            )
                             if term.strip()
                         ),
                         geography=geography.strip(),
@@ -426,6 +629,14 @@ def _render_google_trends_candidate_a_boundary() -> None:
                         search_property=search_property.strip(),
                         extraction_date=extraction_date.strip() or None,
                     )
+                    if (
+                        query_set.query_set_id != UK_BRAND_DEMAND_QUERY_SET_ID
+                        or query_set.branded_terms != UK_BRAND_DEMAND_TERMS
+                    ):
+                        raise ValueError(
+                            "Candidate A requires the approved UK Google Trends "
+                            "query-set ID and exact branded expression."
+                        )
                     raw = [
                         GoogleTrendsRawObservation(
                             query_set_id=query_set.query_set_id,
@@ -443,7 +654,33 @@ def _render_google_trends_candidate_a_boundary() -> None:
                         model_weeks=_model_week_labels(),
                         measurement_sigma=float(sigma),
                     )
+                    if query_set.duplicate_terms:
+                        st.warning(
+                            "The supplied Google Trends expression contains duplicate "
+                            f"term(s): {', '.join(query_set.duplicate_terms)}. The exact "
+                            "term list is preserved and was not deduplicated."
+                        )
+                    previous_anchor_payload = get_state("google_trends_anchor")
+                    previous_anchor_fingerprint = (
+                        fingerprint_google_trends_anchor(previous_anchor_payload)
+                        if previous_anchor_payload
+                        else ""
+                    )
+                    next_anchor_fingerprint = fingerprint_google_trends_anchor(anchor)
                     set_state("google_trends_anchor", anchor.to_dict())
+                    if (
+                        previous_anchor_fingerprint != next_anchor_fingerprint
+                        and _current_fit_uses_candidate_a()
+                    ):
+                        clear_model_state()
+                        set_state("scenarios", [])
+                        set_state(
+                            "fit_invalidation_notice",
+                            "The Google Trends Candidate A anchor changed, so the "
+                            "fitted model, approval, diagnostics, curves, and "
+                            "scenarios were cleared. Prepare the modelling frame "
+                            "and refit before relying on it.",
+                        )
                     st.success(
                         "Google Trends anchor validated and attached to the current "
                         "project; it will be included in the next fit and bundle."
@@ -536,7 +773,7 @@ def _render_candidate_a_observation_boundary() -> None:
             disabled=upload is None or spec is None or not demand_channels,
         ):
             try:
-                uploaded = pd.read_csv(upload.getvalue())
+                uploaded = pd.read_csv(BytesIO(upload.getvalue()))
                 fit_inputs = build_candidate_a_fit_inputs_from_frame(
                     uploaded,
                     model_frame=frame,
@@ -570,6 +807,12 @@ def _render_candidate_a_observation_boundary() -> None:
 
 _render_candidate_a_observation_boundary()
 
+st.caption(
+    "Experiments and lift-test calibration are not configured for the initial UK "
+    "production scope. Their absence does not block an ordinary supplied-NBT fit; "
+    "any later calibration requires a separately governed experiment record."
+)
+
 
 def _render_seo_visibility_boundary() -> None:
     """Load the governed GSC positional-visibility treatment boundary.
@@ -580,26 +823,37 @@ def _render_seo_visibility_boundary() -> None:
     """
     with st.expander("SEO visibility / ranking pathway", expanded=False):
         st.caption(
-            "Upload GSC rows with market, week, dimension_label, position, "
-            "impressions and optional clicks. The app computes the approved "
-            "impression-weighted positional-visibility index and fits it only "
-            "inside the observed window; missing weeks are not zero-filled. "
-            "SEO remains outside spend-based CPA/ROI and optimisation."
+            "SEO is a separate observed organic-search pathway, not spend. Upload "
+            "Brand/Non-Brand rows with an explicit `seo_group_id` (or the already-"
+            "aggregated group-level format). The app computes the approved "
+            "impression-weighted positional-visibility index, keeps group-specific "
+            "masks/windows, and never zero-fills missing weeks. SEO remains outside "
+            "spend-based CPA/ROI and optimisation."
         )
         current = get_state("seo_fit_inputs")
+        current_loaded = None
+        current_fingerprint = ""
         if current:
-            loaded = (
+            current_loaded = (
                 current
-                if isinstance(current, SeoModelFitInputs)
-                else SeoModelFitInputs.from_dict(current)
+                if isinstance(current, (SeoModelFitInputs, SeoModelFitInputsCollection))
+                else SeoModelFitInputsCollection.from_dict(current)
             )
-            observed = int(sum(loaded.active_mask))
+            current_fingerprint = _canonical_seo_boundary_fingerprint(current_loaded)
+            groups = normalise_seo_fit_inputs(current_loaded)
+            observed = int(sum(sum(group.active_mask) for group in groups))
             st.success(
                 f"SEO visibility boundary loaded: {observed} active row(s) across "
-                f"{len(loaded.window_by_market)} market(s)."
+                f"{len(groups)} selected group(s)."
             )
+        selected_text = st.text_input(
+            "SEO group IDs to include in the next fit (comma-separated)",
+            value=str(get_state("seo_selected_group_ids_text", "brand")),
+            help="Choose explicitly. For example: brand,non_brand. A parent and its deeper children must not be selected together unless a separate approved model grain permits it.",
+            key="seo_selected_group_ids_text",
+        )
         upload = st.file_uploader(
-            "GSC CSV (market, week, dimension_label, position, impressions, clicks)",
+            "GSC CSV (raw rows or aggregated market/week/SEO-group rows)",
             type=["csv"],
             key="seo_visibility_upload",
         )
@@ -608,52 +862,150 @@ def _render_seo_visibility_boundary() -> None:
                 st.error("Choose a GSC positional-visibility CSV first.")
             else:
                 try:
-                    seo_frame = pd.read_csv(upload.getvalue())
-                    required = {
-                        "market",
-                        "week",
-                        "dimension_label",
-                        "position",
-                        "impressions",
-                    }
-                    missing = sorted(required - set(seo_frame.columns))
+                    seo_frame = pd.read_csv(BytesIO(upload.getvalue()))
+                    base_required = {"market", "week", "impressions"}
+                    raw_required = {"dimension_label", "position"}
+                    aggregate_required = {"weighted_avg_position"}
+                    missing = sorted(base_required - set(seo_frame.columns))
                     if missing:
                         raise ValueError(
                             "GSC CSV is missing required source fields: "
                             + ", ".join(missing)
                         )
-                    rows_by_market_week = {}
+                    if not raw_required.issubset(
+                        seo_frame.columns
+                    ) and not aggregate_required.issubset(seo_frame.columns):
+                        raise ValueError(
+                            "GSC CSV must contain either raw `dimension_label` + `position` "
+                            "or aggregated `weighted_avg_position`."
+                        )
+                    group_column = next(
+                        (
+                            column
+                            for column in ("seo_group_id", "seo_group", "group")
+                            if column in seo_frame.columns
+                        ),
+                        None,
+                    )
+                    if group_column is None:
+                        seo_frame["__seo_group_id"] = "seo_visibility"
+                        group_column = "__seo_group_id"
+                    selected_groups = tuple(
+                        item.strip()
+                        for item in selected_text.split(",")
+                        if item.strip()
+                    )
+                    # Preserve compatibility with the pre-taxonomy uploader
+                    # when a legacy single-group file is supplied. This is a
+                    # deterministic source-shape fallback, not auto-fitting
+                    # every available group.
+                    if (
+                        selected_groups == ("brand",)
+                        and group_column == "__seo_group_id"
+                    ):
+                        selected_groups = ("seo_visibility",)
+                    if not selected_groups:
+                        raise ValueError(
+                            "Select at least one explicit SEO group to attach."
+                        )
+                    if group_column != "__seo_group_id":
+                        governed_groups = resolve_imported_search_intent_groups(
+                            get_state("search_intent_groups") or []
+                        )
+                        # ``seo_visibility`` is a private legacy fallback for
+                        # files with no group column.  Explicit upload group
+                        # IDs must instead resolve to the governed Search
+                        # taxonomy.  Accept the old human-facing parent
+                        # aliases while comparing parent/child overlap using
+                        # the repository IDs.
+                        seo_group_aliases = {
+                            "brand": "brand_search",
+                            "non_brand": "non_brand_search",
+                        }
+                        governed_selection = tuple(
+                            seo_group_aliases.get(group_id, group_id)
+                            for group_id in selected_groups
+                        )
+                        resolve_search_intent_model_grain(
+                            governed_selection, governed_groups
+                        )
+                    available_groups = {
+                        str(value).strip()
+                        for value in seo_frame[group_column].dropna().tolist()
+                    }
+                    unknown_groups = sorted(set(selected_groups) - available_groups)
+                    if unknown_groups:
+                        raise ValueError(
+                            "Selected SEO group(s) are not present in the upload: "
+                            + ", ".join(unknown_groups)
+                        )
                     model_markets = [
                         frame["markets"][int(index)] for index in frame["market_idx"]
                     ]
                     model_weeks = list(_model_week_labels())
+                    rows_by_group: dict[
+                        str, dict[tuple[str, str], list[GscPositionRow]]
+                    ] = {}
                     for row in seo_frame.to_dict("records"):
+                        group_id = str(row[group_column]).strip()
+                        if group_id not in selected_groups:
+                            continue
                         market = str(row["market"]).strip()
                         week = str(pd.Timestamp(row["week"]).date())
                         if market not in frame["markets"]:
                             raise ValueError(
                                 f"GSC row market {market!r} is not in the model frame."
                             )
-                        rows_by_market_week.setdefault((market, week), []).append(
+                        rows_by_group.setdefault(group_id, {}).setdefault(
+                            (market, week), []
+                        ).append(
                             GscPositionRow(
-                                dimension_label=str(row["dimension_label"]),
-                                position=float(row["position"]),
+                                dimension_label=str(
+                                    row.get("dimension_label", "aggregated")
+                                ),
+                                position=float(
+                                    row.get(
+                                        "position", row.get("weighted_avg_position")
+                                    )
+                                ),
                                 impressions=float(row["impressions"]),
                                 clicks=float(row.get("clicks", 0.0) or 0.0),
                             )
                         )
-                    observations = compute_weekly_positional_visibility_series(
-                        rows_by_market_week
-                    )
-                    fit_inputs = SeoModelFitInputs.from_observations(
-                        observations,
-                        model_markets=model_markets,
-                        model_weeks=model_weeks,
-                    )
-                    set_state("seo_fit_inputs", fit_inputs.to_dict())
+                    fit_groups = []
+                    total_observations = 0
+                    for group_id in selected_groups:
+                        observations = compute_weekly_positional_visibility_series(
+                            rows_by_group.get(group_id, {}),
+                            seo_group_id=group_id,
+                        )
+                        fit_groups.append(
+                            SeoModelFitInputs.from_observations(
+                                observations,
+                                model_markets=model_markets,
+                                model_weeks=model_weeks,
+                                seo_group_id=group_id,
+                            )
+                        )
+                        total_observations += len(observations)
+                    collection = SeoModelFitInputsCollection.from_groups(fit_groups)
+                    next_fingerprint = _canonical_seo_boundary_fingerprint(collection)
+                    set_state("seo_fit_inputs", collection.to_dict())
+                    if next_fingerprint != current_fingerprint and get_state(
+                        "model_trained"
+                    ):
+                        clear_model_state()
+                        set_state("scenarios", [])
+                        set_state(
+                            "fit_invalidation_notice",
+                            "The SEO visibility boundary changed, so the fitted model, "
+                            "approval, diagnostics, curves, and scenarios were cleared. "
+                            "Prepare the modelling frame and refit before relying on it.",
+                        )
                     st.success(
                         "SEO visibility validated and attached to the next fit. "
-                        f"Observed window cells: {len(observations)}."
+                        f"Selected groups: {', '.join(selected_groups)}. "
+                        f"Observed window cells: {total_observations}."
                     )
                     st.rerun()
                 except (ValueError, TypeError, KeyError) as exc:
@@ -661,6 +1013,31 @@ def _render_seo_visibility_boundary() -> None:
 
 
 _render_seo_visibility_boundary()
+
+
+def _fit_build_kwargs(build_model_type: str) -> dict:
+    """Return the immutable analytical snapshot passed to the worker."""
+    fit_spec, fit_frame = _fit_spec_and_frame_for_current_search_grain()
+    prior_config = get_state("prior_config")
+    dna_lag_weeks = get_state("dna_lag_weeks", 4)
+    direct_dna_outcome_ids = get_state("direct_dna_outcome_ids") or None
+    causal_graph = _resolve_causal_graph()
+    search_objects = get_state("search_objects") or []
+    return {
+        "frame": fit_frame,
+        "model_spec": fit_spec,
+        "model_type": build_model_type,
+        "dna_lag_weeks": dna_lag_weeks,
+        "dna_outcome_id": fit_spec.fh_dna_cross_sell_outcome_id,
+        "prior_config": prior_config,
+        "direct_dna_outcome_ids": direct_dna_outcome_ids,
+        "causal_graph": causal_graph,
+        "search_objects": search_objects,
+        "candidate_a_fit_inputs": _candidate_a_fit_inputs_for_current_frame(),
+        "named_event_fit_inputs": _named_event_fit_inputs_for_current_frame(),
+        "calibration_inputs": _calibration_inputs_for_current_fit(),
+        "seo_fit_inputs": _seo_fit_inputs_for_current_frame(),
+    }
 
 
 def _build_proposed_model(build_model_type: str):
@@ -679,30 +1056,7 @@ def _build_proposed_model(build_model_type: str):
     specific `ModelFitServiceError` rather than silently falling back to the
     ordinary builder.
     """
-    prior_config = get_state("prior_config")
-    dna_lag_weeks = get_state("dna_lag_weeks", 4)
-    direct_dna_outcome_ids = get_state("direct_dna_outcome_ids") or None
-    causal_graph = _resolve_causal_graph()
-    search_objects = get_state("search_objects") or []
-    named_event_fit_inputs = _named_event_fit_inputs_for_current_frame()
-    candidate_a_fit_inputs = _candidate_a_fit_inputs_for_current_frame()
-    seo_fit_inputs = _seo_fit_inputs_for_current_frame()
-    calibration_inputs = _calibration_inputs_for_current_fit()
-    result = build_model_for_spec(
-        frame=frame,
-        model_spec=spec,
-        model_type=build_model_type,
-        dna_lag_weeks=dna_lag_weeks,
-        dna_outcome_id=spec.fh_dna_cross_sell_outcome_id,
-        prior_config=prior_config,
-        direct_dna_outcome_ids=direct_dna_outcome_ids,
-        causal_graph=causal_graph,
-        search_objects=search_objects,
-        candidate_a_fit_inputs=candidate_a_fit_inputs,
-        named_event_fit_inputs=named_event_fit_inputs,
-        calibration_inputs=calibration_inputs,
-        seo_fit_inputs=seo_fit_inputs,
-    )
+    result = build_model_for_spec(**_fit_build_kwargs(build_model_type))
     return result.model, result.meta
 
 
@@ -754,13 +1108,14 @@ def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
     every rerun (hashing only, no PyMC model build) purely to detect
     whether the proposal has since changed."""
     causal_graph = _resolve_causal_graph()
+    fit_spec, _fit_frame = _fit_spec_and_frame_for_current_search_grain()
     activity_definitions = get_state("activity_definitions") or []
     search_objects = get_state("search_objects") or []
     coverage_matrix_dict = get_state("variable_coverage_matrix")
     named_event_fit_inputs = _named_event_fit_inputs_for_current_frame()
     calibration_inputs = _calibration_inputs_for_current_fit()
     model_spec_fingerprint = fingerprint_model_spec(
-        spec_dict,
+        fit_spec.to_dict(),
         get_state("prior_config") or {},
         int(get_state("dna_lag_weeks", 4)),
         model_type=fingerprint_model_type,
@@ -784,10 +1139,18 @@ def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
         ),
         search_object_fit_fingerprint=(
             search_object_fit_fingerprint(
-                search_objects, consumed_model_input_columns=spec.channels
+                search_objects, consumed_model_input_columns=fit_spec.channels
             )
             if search_objects
             else None
+        ),
+        search_intent_taxonomy_fit_fingerprint=(
+            search_intent_taxonomy_fit_fingerprint(
+                activity_definitions,
+                get_state("search_intent_groups") or [],
+                get_state("search_intent_group_versions") or [],
+                consumed_model_input_columns=fit_spec.channels,
+            )
         ),
         variable_coverage_fingerprint=(
             VariableCoverageMatrix.from_dict(coverage_matrix_dict).fingerprint()
@@ -801,6 +1164,9 @@ def _proposed_model_fingerprint(fingerprint_model_type: str) -> str:
             else None
         ),
         calibration_fit_fingerprint=calibration_inputs_fingerprint(calibration_inputs),
+        seo_fit_fingerprint=seo_fit_inputs_fingerprint(
+            _seo_fit_inputs_for_current_frame()
+        ),
     )
     return f"{fingerprint_dataframe(frame['df'])}:{model_spec_fingerprint}"
 
@@ -816,10 +1182,17 @@ except ModelFitServiceError as _engine_error:
 if _resolved_engine == SEARCH_CANDIDATE_A_ENGINE:
     st.info(
         "This project's approved causal graph requires the **Candidate A Search "
-        "mediation/capacity engine** (REQ-SEARCH-002), not the ordinary shared/"
-        "market-specific engine. Candidate A Search planning and cap optimisation "
-        "remain disabled regardless of fit outcome; see "
-        "`REPO_REVIEW_AND_NEXT_STEPS.md` for current integration status."
+        "mediation/capacity engine** (REQ-SEARCH-002). The engine capability is "
+        "available, but current UK production eligibility is unavailable until "
+        "governed historical cap evidence and its cap-hit rule are supplied. "
+        "This does not change the ordinary NBT outcome definition; if this graph "
+        "requires Candidate A, fitting remains fail-closed until the evidence is present."
+    )
+elif not get_state("candidate_a_fit_inputs"):
+    st.caption(
+        "Candidate A capability is retained but not configured for this project. "
+        "Missing cap evidence does not block an ordinary UK NBT fit; Search planning "
+        "and optimisation remain unavailable until their independent evidence gates pass."
     )
 
 st.markdown("---")
@@ -882,9 +1255,10 @@ if st.button("Preview prior predictive (no fitting)"):
     else:
         try:
             with st.spinner("Sampling priors..."):
+                _fit_spec, _fit_frame = _fit_spec_and_frame_for_current_search_grain()
                 preview_result = prior_predictive_summary(
                     preview_model,
-                    frame,
+                    _fit_frame,
                     preview_meta,
                     n_samples=int(preview_n_samples),
                     random_seed=int(preview_seed),
@@ -1027,8 +1401,143 @@ elif _preview and _preview.get("status") == "computed":
 
 st.markdown("### Fit action")
 st.caption(
-    "Build the proposed model and start sampling. A new fit creates a new run identity and clears any previous approval."
+    "Build a frozen proposal and submit a durable worker job. A new fit creates a new run identity and clears any previous approval when adopted."
 )
+
+for _completed_job in _fit_job_backend.store.list(statuses={"succeeded"}):
+    if _completed_job.adopted_at:
+        st.info(
+            f"Fit job `{_completed_job.job_id[:8]}` was adopted previously. "
+            "It remains available for fingerprint-verified recovery after a "
+            "session loss."
+        )
+    else:
+        st.info(
+            f"Fit job `{_completed_job.job_id[:8]}` completed. Review its persisted "
+            "identity before adopting it into the current project."
+        )
+    _adoption_label = (
+        "Re-adopt completed fit" if _completed_job.adopted_at else "Adopt completed fit"
+    )
+    if st.button(_adoption_label, key=f"adopt_fit_job_{_completed_job.job_id}"):
+        try:
+            _current_identity = _proposed_model_fingerprint(model_type)
+            _current_data_fp, _current_spec_fp = _current_identity.split(":", 1)
+            _trace, _meta, _record = _fit_job_backend.load_succeeded_fit(
+                _completed_job.job_id,
+                expected_data_fingerprint=_current_data_fp,
+                expected_model_spec_fingerprint=_current_spec_fp,
+                expected_fit_input_fingerprints=(
+                    _fit_input_fingerprints_for_current_fit(
+                        _current_data_fp,
+                        include_candidate_a=(
+                            _completed_job.engine == SEARCH_CANDIDATE_A_ENGINE
+                        ),
+                    )
+                ),
+            )
+            _posterior_params = (
+                extract_market_specific_posterior_params(_trace, _meta)
+                if model_type == "market_specific"
+                else extract_posterior_params(_trace, _meta)
+            )
+            _fit_build_kwargs = _fit_job_backend.store.load_build_kwargs(_record.job_id)
+            _fitted_frame = _fit_build_kwargs.get("frame")
+            if not isinstance(_fitted_frame, dict):
+                raise ValueError(
+                    "Fit artifact is missing its persisted frozen modelling frame."
+                )
+            _fitted_model_spec = _fit_build_kwargs.get("model_spec")
+            if isinstance(_fitted_model_spec, ModelSpec):
+                _fitted_model_spec = _fitted_model_spec.to_dict()
+            elif isinstance(_fitted_model_spec, dict):
+                _fitted_model_spec = ModelSpec.from_dict(_fitted_model_spec).to_dict()
+            else:
+                raise ValueError(
+                    "Fit artifact is missing its persisted frozen model specification."
+                )
+            _prepared_model_spec = get_state("prepared_model_spec")
+            if _prepared_model_spec is None:
+                _prepared_model_spec = get_state("model_spec")
+            _prepared_frame = get_state("prepared_frame")
+            if _prepared_frame is None:
+                _prepared_frame = get_state("frame")
+            _fitted_channels = list(getattr(_meta, "channels", ()) or ())
+            if _fitted_channels and list(_fitted_frame.get("channels") or ()) != (
+                _fitted_channels
+            ):
+                raise ValueError(
+                    "Fit artifact frame channels do not match its persisted model metadata."
+                )
+            if _fitted_channels and list(_fitted_model_spec.get("channels") or []) != (
+                _fitted_channels
+            ):
+                raise ValueError(
+                    "Fit artifact model specification does not match its persisted model metadata."
+                )
+            # The worker fits the Search-grain-sliced frame from its immutable
+            # payload. Restore the paired frozen specification and frame before
+            # downstream diagnostics, curves, and planning replay the posterior;
+            # the live session may still contain the unsliced preparation pair.
+            _adopted_model_run_id = _record.project_run_id or str(uuid.uuid4())
+            # A genuinely new posterior (a different run identity than what
+            # this session currently has active) must not let diagnostics,
+            # approval, curves, or scenarios computed against the *previous*
+            # posterior keep displaying as if they still applied - reuse the
+            # same fit-invalidation mechanism every other trigger in this app
+            # uses (grain change, Candidate A anchor change, activity mapping
+            # change), rather than a second, narrower ad hoc clearing list.
+            # Re-adopting the *same* run identity (fingerprint-verified
+            # recovery of an already-adopted job after a session/browser
+            # loss) is not a new fit - clearing here would destroy valid,
+            # still-current evidence for no reason, so it is skipped only in
+            # that exact case.
+            if get_state("model_run_id") != _adopted_model_run_id:
+                clear_model_state()
+                set_state("scenarios", [])
+                set_state(
+                    "fit_invalidation_notice",
+                    "A new fit was adopted, so the previous run's approval, "
+                    "diagnostics, curves, and scenarios were cleared. "
+                    "Recompute diagnostics and re-approve before relying on "
+                    "curves, planning, or scenarios for this run.",
+                )
+            set_state("prepared_model_spec", _prepared_model_spec)
+            set_state("prepared_frame", _prepared_frame)
+            set_state("fitted_model_spec", _fitted_model_spec)
+            set_state("model_spec", _fitted_model_spec)
+            set_state("frame", _fitted_frame)
+            set_state("model", None)
+            set_state("model_meta", _meta)
+            set_state("trace", _trace)
+            set_state("model_trained", True)
+            set_state("posterior_params", _posterior_params)
+            set_state("model_type", model_type)
+            set_state("model_run_id", _adopted_model_run_id)
+            _fitted_settings = dict(_record.sampler_settings)
+            set_state("mcmc_draws", int(_fitted_settings.get("draws", 1000)))
+            set_state("mcmc_tune", int(_fitted_settings.get("tune", 1000)))
+            set_state("mcmc_chains", int(_fitted_settings.get("chains", 2)))
+            set_state(
+                "mcmc_target_accept",
+                float(_fitted_settings.get("target_accept", 0.9)),
+            )
+            if _record.random_seed is not None:
+                set_state("mcmc_random_seed", int(_record.random_seed))
+            set_state(
+                "migration_review",
+                migration_review_after_fit_adoption(
+                    get_state("migration_review"), get_state("model_run_id")
+                ),
+            )
+            _fit_job_backend.store.mark_adopted(
+                _record.job_id, get_state("model_run_id")
+            )
+            st.success("Fit artifact adopted into the current project.")
+            st.rerun()
+        except (ValueError, TypeError, KeyError) as exc:
+            st.error(f"Fit adoption failed; the previous model was preserved: {exc}")
+
 _official_result = get_state("official_preparation_result")
 _frame_mode = frame.get("preparation_mode")
 # UX-017 fix: this gate exists to block an *official* fit while official
@@ -1096,14 +1605,12 @@ if _official_fit_gate_blocked:
 if (not _official_fit_gate_blocked) and st.button("Build & fit model", type="primary"):
     try:
         with st.spinner("Building model..."):
-            model, meta = _build_proposed_model(model_type)
+            _build_proposed_model(model_type)
     except ValueError as e:
         st.error(
             f"Could not build the model: {e} Set the FH DNA cross-sell outcome on the Structure page if needed, and try again."
         )
         st.stop()
-    st.success(f"Model built ({MODEL_TYPE_LABELS[model_type]}).")
-
     # Read MCMC settings on the main thread: st.session_state (get_state) is
     # bound to Streamlit's script-run context, which a plain background
     # thread doesn't have - calling get_state() from inside _run() silently
@@ -1113,77 +1620,45 @@ if (not _official_fit_gate_blocked) and st.button("Build & fit model", type="pri
     mcmc_chains = get_state("mcmc_chains")
     mcmc_target_accept = get_state("mcmc_target_accept")
 
-    progress_state = {"done": 0, "total": 1, "error": None, "trace": None}
-
-    def _run():
-        try:
-            trace = fit_model(
-                model,
-                draws=mcmc_draws,
-                tune=mcmc_tune,
-                chains=mcmc_chains,
-                target_accept=mcmc_target_accept,
-                progress_callback=lambda done, total: progress_state.update(
-                    done=done, total=total
+    _combined_identity = _proposed_model_fingerprint(model_type)
+    _data_fingerprint, _model_spec_fingerprint = _combined_identity.split(":", 1)
+    try:
+        _project_display_name = _current_project_display_name()
+        _fit_engine = resolve_engine(
+            causal_graph=_resolve_causal_graph(),
+            search_objects=get_state("search_objects") or [],
+        )
+        _record = _fit_job_backend.submit(
+            FitJobSubmission(
+                project_id=canonical_project_id(_project_display_name),
+                project_display_name=_project_display_name,
+                engine=_fit_engine,
+                model_type=model_type,
+                sampler_settings={
+                    "draws": int(mcmc_draws),
+                    "tune": int(mcmc_tune),
+                    "chains": int(mcmc_chains),
+                    "target_accept": float(mcmc_target_accept),
+                },
+                random_seed=int(get_state("mcmc_random_seed", 42)),
+                data_fingerprint=_data_fingerprint,
+                model_spec_fingerprint=_model_spec_fingerprint,
+                fit_input_fingerprints=_fit_input_fingerprints_for_current_fit(
+                    _data_fingerprint,
+                    include_candidate_a=(_fit_engine == SEARCH_CANDIDATE_A_ENGINE),
                 ),
-                cores=1,
+                project_run_id=str(uuid.uuid4()),
+                build_kwargs=_fit_build_kwargs(model_type),
             )
-            progress_state["trace"] = trace
-        except Exception as e:  # surfaced in the UI, not swallowed
-            progress_state["error"] = str(e)
-
-    thread = threading.Thread(target=_run, daemon=True)
-    thread.start()
-
-    progress_bar = st.progress(0.0)
-    status = st.empty()
-    while thread.is_alive():
-        frac = min(1.0, progress_state["done"] / max(progress_state["total"], 1))
-        progress_bar.progress(frac)
-        status.caption(
-            f"Sampling: {format_number(progress_state['done'])} / {format_number(progress_state['total'])} draws"
         )
-        time.sleep(0.5)
-    thread.join()
-    progress_bar.progress(1.0)
-
-    if progress_state["error"]:
-        st.error(
-            f"Sampling failed: {progress_state['error']} Try fewer draws/chains, or simplify the hierarchy, and fit again."
-        )
+    except Exception as exc:
+        st.error(f"Could not submit the durable fit job: {exc}")
     else:
-        trace = progress_state["trace"]
-        posterior_params = (
-            extract_market_specific_posterior_params(trace, meta)
-            if model_type == "market_specific"
-            else extract_posterior_params(trace, meta)
+        st.success(
+            f"Fit job `{_record.job_id[:8]}` submitted. Sampling continues in a "
+            "separate worker; refresh this page to reattach."
         )
-        set_state("model", model)
-        set_state("model_meta", meta)
-        set_state("trace", trace)
-        set_state("model_trained", True)
-        set_state("posterior_params", posterior_params)
-        set_state("model_type", model_type)
-        # A fresh fit is a new model run, full stop - mint a new identity and
-        # drop any approval that was sitting in session state, even if this
-        # is a re-run of the same spec on the same data (retraining always
-        # invalidates the previous approval; clear_model_state() covers the
-        # "upstream config changed" path, this covers "user just refit").
-        set_state("model_run_id", str(uuid.uuid4()))
-        set_state("model_approval", None)
-        migration_review = get_state("migration_review")
-        if (
-            isinstance(migration_review, dict)
-            and migration_review.get("migration_review_status")
-            == "reviewed_refit_required"
-        ):
-            migration_review = dict(migration_review)
-            migration_review.update(
-                migration_review_status="refit_completed",
-                replacement_model_run_id=get_state("model_run_id"),
-            )
-            set_state("migration_review", migration_review)
-        st.success(f"Model trained ({MODEL_TYPE_LABELS[model_type]}).")
+        st.rerun()
 
 if get_state("model_trained"):
     st.markdown("---")

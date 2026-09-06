@@ -35,6 +35,7 @@ class ProjectExportInput:
     dna_lag_weeks: int
     trace: Optional[az.InferenceData]
     scenarios: List[dict]
+    fitted_model_spec: Optional[dict] = None
     curve_bank_source_dir: Optional[str] = None
     curve_artifact_store_source_dir: Optional[str] = None
     model_approval: Optional[dict] = None
@@ -73,6 +74,9 @@ class ProjectExportInput:
     search_candidate_a_spec: Optional[dict] = None
     causal_graphs: Optional[List[dict]] = None
     search_objects: Optional[List[dict]] = None
+    search_intent_groups: Optional[List[dict]] = None
+    search_intent_group_versions: Optional[List[dict]] = None
+    search_intent_model_grain: Optional[List[str]] = None
     source_versions: Optional[List[dict]] = None
     source_definitions: Optional[List[dict]] = None
     variable_coverage_matrices: Optional[List[dict]] = None
@@ -90,6 +94,15 @@ class ProjectExportInput:
     include_excel: bool = False
     excel_sheets: Optional[Dict[str, Optional[pd.DataFrame]]] = None
     excel_output_path: Optional[str] = None
+    # Human-readable display metadata only - never the durable-job or
+    # curve-store filesystem namespace (canonical_project_id derives that
+    # from it on import; see utils.session_state/application.fit_job_
+    # service). Appended at the end (not inserted alphabetically among the
+    # other optional fields above) so existing positional/keyword callers
+    # of this dataclass are unaffected; omitting it preserves the prior
+    # default (export_project() falls back to None, matching the manifest
+    # before this field existed).
+    project_display_name: Optional[str] = None
 
 
 @dataclass
@@ -165,6 +178,7 @@ class ProjectService:
                 exp_input.dna_lag_weeks,
                 exp_input.trace,
                 exp_input.scenarios,
+                fitted_model_spec=exp_input.fitted_model_spec,
                 curve_bank_source_dir=cb_path,
                 curve_artifact_store_source_dir=curve_artifact_store_path,
                 model_approval=exp_input.model_approval,
@@ -203,6 +217,9 @@ class ProjectService:
                 search_candidate_a_spec=exp_input.search_candidate_a_spec,
                 causal_graphs=exp_input.causal_graphs,
                 search_objects=exp_input.search_objects,
+                search_intent_groups=exp_input.search_intent_groups,
+                search_intent_group_versions=exp_input.search_intent_group_versions,
+                search_intent_model_grain=exp_input.search_intent_model_grain,
                 source_versions=exp_input.source_versions,
                 source_definitions=exp_input.source_definitions,
                 variable_coverage_matrices=exp_input.variable_coverage_matrices,
@@ -217,6 +234,7 @@ class ProjectService:
                 standard_context_data=exp_input.standard_context_data,
                 context_variable_metadata=exp_input.context_variable_metadata,
                 source_domain_semantics=exp_input.source_domain_semantics,
+                project_display_name=exp_input.project_display_name,
             )
         except Exception as exc:
             errors.append(f"Project export failed: {exc}")

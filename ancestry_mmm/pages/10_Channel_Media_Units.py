@@ -64,8 +64,15 @@ from ancestry_mmm.core.search_objects import (
 )
 from ancestry_mmm.core.search_intent_taxonomy import (
     APPROVED_MINIMUM_SEARCH_INTENT_GROUPS,
+    BRAND_CLASS_GENERIC_NON_BRAND,
+    SEARCH_INTENT_GROUP_ID_BRAND,
+    SEARCH_INTENT_GROUP_ID_NON_BRAND,
+    SearchIntentGroup,
     SEARCH_PLATFORMS,
+    governed_search_intent_groups,
+    resolve_search_intent_model_grain,
     validate_activity_search_taxonomy,
+    validate_search_intent_group_catalogue,
 )
 from ancestry_mmm.data import detect_column_types
 
@@ -87,7 +94,7 @@ render_workspace_note(
     kind="governed",
 )
 
-spec_dict = get_state("model_spec")
+spec_dict = get_state("prepared_model_spec") or get_state("model_spec")
 df = get_state("transformed_data")
 if df is None:
     st.markdown("---")
@@ -124,6 +131,19 @@ if spec is not None:
     for input_column in spec.channels:
         if input_column not in available_model_inputs:
             available_model_inputs.append(input_column)
+
+try:
+    _custom_search_groups = [
+        SearchIntentGroup.from_dict(item)
+        for item in (get_state("search_intent_groups") or [])
+        if isinstance(item, dict)
+        and str(item.get("search_intent_group_id", ""))
+        not in {SEARCH_INTENT_GROUP_ID_BRAND, SEARCH_INTENT_GROUP_ID_NON_BRAND}
+    ]
+    search_intent_groups = governed_search_intent_groups(_custom_search_groups)
+except (TypeError, ValueError) as exc:
+    search_intent_groups = APPROVED_MINIMUM_SEARCH_INTENT_GROUPS
+    st.error(f"Stored Search intent taxonomy is invalid and cannot be used: {exc}")
 render_definition_help(
     "a response curve",
     "A range of predicted incremental outcomes as a media input changes. It is interpreted on the outcome scale and carries its own observed-support and governance status.",
@@ -203,6 +223,128 @@ render_technical_details(
         "Provenance": "Source, effective dates, approval fields, and cost-mapping assumptions remain part of the governed mapping record.",
     }
 )
+
+with st.expander("Governed deeper Non-Brand intent groups", expanded=False):
+    st.caption(
+        "Brand and Non-Brand are the approved minimum. Add a deeper Non-Brand "
+        "child only when the source supports that exact group; the child starts "
+        "as draft and inherits no reporting, economics, planning, or optimisation "
+        "eligibility. Parent and child are never fitted flat together."
+    )
+    child_id = st.text_input("Child group ID", key="new_search_child_id")
+    child_name = st.text_input("Child group name", key="new_search_child_name")
+    child_description = st.text_area(
+        "Business description", key="new_search_child_description"
+    )
+    if st.button("Save Non-Brand child as draft", key="save_search_child"):
+        try:
+            if not child_id.strip() or not child_name.strip():
+                raise ValueError("Child group ID and name are required.")
+            if child_id.strip() in {
+                group.search_intent_group_id for group in search_intent_groups
+            }:
+                raise ValueError("That Search intent group ID already exists.")
+            child = SearchIntentGroup(
+                search_intent_group_id=child_id.strip(),
+                search_intent_group_name=child_name.strip(),
+                brand_class=BRAND_CLASS_GENERIC_NON_BRAND,
+                parent_search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+                business_description=child_description.strip(),
+                product_scope="Family History / DNA as explicitly observed",
+                owner="",
+                approval_status="draft",
+            )
+            candidate_groups = _custom_search_groups + [child]
+            issues = validate_search_intent_group_catalogue(
+                tuple(APPROVED_MINIMUM_SEARCH_INTENT_GROUPS) + tuple(candidate_groups)
+            )
+            if issues:
+                raise ValueError("; ".join(issues))
+            set_state(
+                "search_intent_groups", [item.to_dict() for item in candidate_groups]
+            )
+            existing_versions = {
+                (
+                    str(item.get("search_intent_group_id")),
+                    int(item.get("search_intent_group_version", 1)),
+                ): item
+                for item in (get_state("search_intent_group_versions") or [])
+                if isinstance(item, dict)
+            }
+            for item in candidate_groups:
+                existing_versions[item.version_key] = item.to_dict()
+            set_state(
+                "search_intent_group_versions",
+                list(existing_versions.values()),
+            )
+            st.success("Saved the deeper Non-Brand group as a governed draft.")
+            st.rerun()
+        except ValueError as exc:
+            st.error(f"Could not save Search intent group: {exc}")
+
+_model_grain_options = [group.search_intent_group_id for group in search_intent_groups]
+_saved_model_grain = tuple(get_state("search_intent_model_grain") or ())
+_model_grain_default = [
+    group_id for group_id in _saved_model_grain if group_id in _model_grain_options
+]
+if not _model_grain_default:
+    _model_grain_default = ["brand_search", "non_brand_search"]
+_selected_model_grain = st.multiselect(
+    "Explicit Search model/reporting grain",
+    options=_model_grain_options,
+    default=_model_grain_default,
+    key="search_intent_model_grain_input",
+    help="Select parent Brand/Non-Brand or an explicitly governed deeper child. Parent and child cannot be fitted together.",
+)
+try:
+    # Compare semantic grains, not their raw serialized form.  The empty
+    # saved value is the legacy/default spelling of the approved parent
+    # grain, so opening this page must not invalidate a fit merely because
+    # the current UI resolves that empty value to its explicit parents.
+    _saved_resolved_model_grain = resolve_search_intent_model_grain(
+        _saved_model_grain,
+        search_intent_groups,
+        existing_activity_items,
+    )
+    _resolved_model_grain = resolve_search_intent_model_grain(
+        _selected_model_grain,
+        search_intent_groups,
+        existing_activity_items,
+    )
+except ValueError as exc:
+    st.error(f"Search model grain is invalid: {exc}")
+else:
+    _grain_changed = tuple(_resolved_model_grain) != tuple(_saved_resolved_model_grain)
+    set_state("search_intent_model_grain", list(_resolved_model_grain))
+    if _grain_changed and get_state("model_trained"):
+        clear_model_state()
+        set_state("scenarios", [])
+        set_state(
+            "activity_mapping_notice",
+            {
+                "kind": "warning",
+                "message": (
+                    "The Search model/reporting grain changed, so the fitted model, "
+                    "approval, curves, and scenarios were invalidated. Refit before "
+                    "relying on the updated grain."
+                ),
+            },
+        )
+        st.rerun()
+    st.caption(
+        "The selected grain is explicit and persisted. Deeper-child economics, "
+        "planning, and optimisation remain unavailable until that child has its "
+        "own observed and governed cost support; parent totals are not duplicated."
+    )
+
+if _custom_search_groups:
+    st.caption(
+        "Project Search intent groups: "
+        + ", ".join(
+            f"{item.search_intent_group_id} ({item.approval_status})"
+            for item in _custom_search_groups
+        )
+    )
 
 st.markdown("### 1. Activities")
 with SectionCard(
@@ -427,8 +569,7 @@ with SectionCard(
         )
         search_a, search_b = st.columns(2)
         search_group_options = [""] + [
-            group.search_intent_group_id
-            for group in APPROVED_MINIMUM_SEARCH_INTENT_GROUPS
+            group.search_intent_group_id for group in search_intent_groups
         ]
         search_intent_group_id = search_a.selectbox(
             "Search intent group",
@@ -444,7 +585,7 @@ with SectionCard(
                 else next(
                     (
                         group.search_intent_group_name
-                        for group in APPROVED_MINIMUM_SEARCH_INTENT_GROUPS
+                        for group in search_intent_groups
                         if group.search_intent_group_id == value
                     ),
                     value,
@@ -628,7 +769,7 @@ with SectionCard(
                 seen_keys.add(item.activity_key)
                 seen_inputs.add((item.market, item.resolved_model_input_column))
             search_taxonomy_errors = validate_activity_search_taxonomy(
-                updated, APPROVED_MINIMUM_SEARCH_INTENT_GROUPS
+                updated, search_intent_groups
             )
             if search_taxonomy_errors:
                 raise ValueError("; ".join(search_taxonomy_errors))
@@ -856,7 +997,7 @@ with st.expander(
         "Choose one Search object at a time. The overview compares saved objects; "
         "the detail form keeps identity, measurement, planning, validity, and review fields readable."
     )
-    with st.form("search_object_detail_form", clear_on_submit=False):
+    with st.container(border=True):
         st.markdown("#### Identity and role")
         identity_a, identity_b = st.columns(2)
         search_object_id = identity_a.text_input(
@@ -961,17 +1102,15 @@ with st.expander(
             "Approved on", value=_search_text(detail.approved_at)
         )
 
-        with st.expander("Technical details", expanded=False):
-            source = st.text_input(
-                "Source / provenance", value=_search_text(detail.source)
-            )
-            grain = st.text_input("Data grain", value=_search_text(detail.grain))
-            st.caption(
-                f"Current saved version: {detail.search_object_version}. "
-                "Saving a change creates a new version and retains the previous record."
-            )
+        st.markdown("#### Technical details")
+        source = st.text_input("Source / provenance", value=_search_text(detail.source))
+        grain = st.text_input("Data grain", value=_search_text(detail.grain))
+        st.caption(
+            f"Current saved version: {detail.search_object_version}. "
+            "Saving a change creates a new version and retains the previous record."
+        )
 
-        save_search = st.form_submit_button("Save Search setup", type="primary")
+        save_search = st.button("Save Search setup", type="primary")
 
 if save_search:
     try:

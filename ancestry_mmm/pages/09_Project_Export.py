@@ -96,7 +96,11 @@ from ancestry_mmm.core.curve_artifact import (
     governed_context_fields,
     load_curve_artifact_store,
 )
-from ancestry_mmm.core.activities import ActivityDefinition, activity_fit_fingerprint
+from ancestry_mmm.core.activities import (
+    ActivityDefinition,
+    activity_fit_fingerprint,
+    resolve_imported_activity_definitions,
+)
 from ancestry_mmm.core.attribution import (
     compute_shapley_contributions,
     total_fh_contribution,
@@ -127,6 +131,12 @@ from ancestry_mmm.core.search_objects import (
     search_object_fit_fingerprint,
     search_object_versions_for_export,
 )
+from ancestry_mmm.core.search_intent_taxonomy import (
+    resolve_imported_search_intent_groups,
+    resolve_imported_search_intent_group_versions,
+    resolve_search_intent_model_grain,
+    search_intent_taxonomy_fit_fingerprint,
+)
 from ancestry_mmm.core.coverage import (
     VariableCoverageMatrix,
     current_variable_coverage_matrix_from_resolved_versions,
@@ -139,6 +149,10 @@ from ancestry_mmm.core.outcomes import (
     fh_gsa_outcome_ids,
     outcome_catalogue_fingerprint_payload,
     resolve_outcome_definitions,
+)
+from ancestry_mmm.core.seo_visibility import (
+    resolve_imported_seo_fit_inputs,
+    seo_fit_inputs_fingerprint,
 )
 from ancestry_mmm.core.pathways import (
     MediaOutcomePathway,
@@ -165,6 +179,7 @@ _CONTAINS_LABELS = {
     "raw_data": "Original source files and tables",
     "transformed_data": "Prepared modelling data",
     "model_spec": "Model definition (segments, markets, channels)",
+    "fitted_model_spec": "Fitted Search-grain model definition",
     "posterior": "Fitted model and posterior draws",
     "diagnostics": "Diagnostics scorecard / backtest results",
     "curves": "Exploratory curve snapshots",
@@ -183,6 +198,9 @@ _CONTAINS_LABELS = {
     "value_mapping": "Outcome value mapping",
     "causal_graphs": "Causal graph versions",
     "search_objects": "Search definitions and versions",
+    "search_intent_groups": "Search intent taxonomy",
+    "search_intent_group_versions": "Search intent taxonomy versions",
+    "search_intent_model_grain": "Search intent model grain",
     "source_versions": "Source file version history",
     "source_definitions": "Source categories and roles",
     "variable_coverage_matrices": "Coverage and frequency review history",
@@ -390,12 +408,22 @@ def _resolve_official_curve_artifact_rows() -> list[dict]:
                     if search_objects
                     else None
                 ),
+                search_intent_taxonomy_fit_fingerprint=search_intent_taxonomy_fit_fingerprint(
+                    activity_definitions,
+                    get_state("search_intent_groups") or [],
+                    get_state("search_intent_group_versions") or [],
+                    consumed_model_input_columns=spec_dict.get("channels") or [],
+                ),
                 variable_coverage_fingerprint=(
                     VariableCoverageMatrix.from_dict(coverage_matrix_dict).fingerprint()
                     if coverage_matrix_dict
                     else None
                 ),
                 official_preparation_evidence=get_state("official_preparation_result"),
+                seo_fit_fingerprint=seo_fit_inputs_fingerprint(
+                    get_state("seo_fit_inputs")
+                    or getattr(meta, "seo_fit_inputs_at_fit", None)
+                ),
                 calibration_fit_fingerprint=(
                     getattr(meta, "calibration_fit_fingerprint", "") or None
                 ),
@@ -661,6 +689,13 @@ with SectionCard(
         "Finance approval is recorded."
     ),
 ):
+    st.caption(
+        "UK reporting convention for an approved currency view: source GBP is "
+        "translated to USD using `USD = GBP × approved GBP-to-USD rate`, by "
+        "calendar year (January–December). No live-rate fallback is used; a "
+        "pending or unapproved rate set cannot drive official reporting. NBT "
+        "count fitting is unaffected by FX readiness."
+    )
     _fx_current = get_state("fx_rate_set")
     if _fx_current:
         st.caption(
@@ -778,11 +813,13 @@ if st.button("Build export bundle", type="primary"):
             raw_sources=get_state("raw_sources") or {},
             transformed_data=get_state("transformed_data"),
             pipeline_steps=get_state("pipeline_steps") or [],
-            model_spec=get_state("model_spec"),
+            model_spec=(get_state("prepared_model_spec") or get_state("model_spec")),
+            fitted_model_spec=get_state("fitted_model_spec"),
             prior_config=get_state("prior_config"),
             dna_lag_weeks=get_state("dna_lag_weeks", 4),
             trace=get_state("trace"),
             scenarios=get_state("scenarios") or [],
+            project_display_name=project_name,
             curve_bank_source_dir=curve_bank_dir(),
             curve_artifact_store_source_dir=curve_artifact_store_dir(),
             model_approval=get_state("model_approval"),
@@ -880,6 +917,10 @@ if st.button("Build export bundle", type="primary"):
                 current_definitions=get_state("search_objects") or [],
                 version_history=get_state("search_object_versions"),
             ),
+            search_intent_groups=get_state("search_intent_groups") or [],
+            search_intent_group_versions=get_state("search_intent_group_versions")
+            or [],
+            search_intent_model_grain=get_state("search_intent_model_grain") or [],
             google_trends_anchor=get_state("google_trends_anchor"),
             seo_fit_inputs=get_state("seo_fit_inputs"),
             future_assumption_bundles=get_state("future_assumption_bundles"),
@@ -1045,6 +1086,23 @@ if uploaded_zip is not None and st.button("Import bundle"):
     except UnsafeZipEntryError as e:
         st.error(f"Refusing to import this bundle: {e}")
     else:
+        # project_display_name is untrusted display metadata from the
+        # bundle manifest - never a filesystem path component. A value such
+        # as "../../target" is installed verbatim here, but every reader
+        # that derives a storage path from `project_name` (curve_bank_dir,
+        # curve_artifact_store_dir, _official_curve_status) canonicalises it
+        # first via `canonical_project_id`, so a raw display name can never
+        # escape the intended storage root regardless of what is stored
+        # here. This still strips control characters and caps length as
+        # display hygiene, since the raw value is rendered directly in the
+        # UI (e.g. the "Project name" caption below).
+        _imported_display_name = imported.get("project_display_name")
+        if isinstance(_imported_display_name, str):
+            _sanitized_display_name = "".join(
+                ch for ch in _imported_display_name if ch.isprintable()
+            ).strip()[:200]
+            if _sanitized_display_name:
+                set_state("project_name", _sanitized_display_name)
         set_state("raw_sources", imported["raw_sources"])
 
         # Replay promotion-event pipeline steps fresh against the imported
@@ -1110,7 +1168,16 @@ if uploaded_zip is not None and st.button("Import bundle"):
             ),
         )
         set_state("pipeline_steps", imported["pipeline_steps"])
-        set_state("model_spec", imported["model_spec"])
+        # Keep the durable preparation boundary separate from the optional
+        # Search-grain specification that produced the persisted posterior.
+        # Pages that replay the fit use the latter; Model Structure can still
+        # recover the complete unsliced configuration after invalidation.
+        set_state("prepared_model_spec", imported["model_spec"])
+        set_state("fitted_model_spec", imported.get("fitted_model_spec"))
+        set_state(
+            "model_spec",
+            imported.get("fitted_model_spec") or imported["model_spec"],
+        )
         set_state("prior_config", imported["prior_config"])
         set_state("dna_lag_weeks", imported["dna_lag_weeks"])
         set_state("scenarios", imported["scenarios"])
@@ -1125,10 +1192,30 @@ if uploaded_zip is not None and st.button("Import bundle"):
             "monetary_spend_support",
             imported.get("monetary_spend_support") or [],
         )
-        set_state(
-            "activity_definitions",
-            imported.get("activity_definitions") or [],
+        # Previously installed verbatim with no parsing at all - and
+        # separately, import_project() itself used to raise straight out of
+        # ActivityDefinition.from_dict() for a malformed record, crashing
+        # every caller before any page-level handling could run at all
+        # (fixed at that root in core.persistence.import_project, which now
+        # quarantines there and reports under
+        # "activity_definition_import_warnings"). Re-validate here too as a
+        # defense-in-depth safety net for any caller that builds an
+        # `imported`-shaped dict without going through import_project(), and
+        # mirror the sanitized value into `imported` itself (not just
+        # session state) so current_model_identity_fingerprints's
+        # activity_fit_fingerprint() call further down this same import
+        # never re-reads a raw payload either - the same failure mode
+        # already fixed for the Search taxonomy and SEO fit-input payloads.
+        _resolved_activity_definitions, _activity_definition_warnings = (
+            resolve_imported_activity_definitions(imported.get("activity_definitions"))
         )
+        imported["activity_definitions"] = _resolved_activity_definitions
+        set_state("activity_definitions", _resolved_activity_definitions)
+        for _activity_definition_warning in (
+            *(imported.get("activity_definition_import_warnings") or []),
+            *_activity_definition_warnings,
+        ):
+            st.warning(_activity_definition_warning)
         set_state("model_type", imported["model_type"])
         set_state("outcome_definitions", imported["outcome_definitions"])
         _resolved_outcome_groups, _outcome_group_warnings = (
@@ -1232,6 +1319,16 @@ if uploaded_zip is not None and st.button("Import bundle"):
             resolve_imported_search_objects(imported)
         )
         set_state("search_object_versions", _resolved_search_objects)
+        # Mirror the sanitized, quarantine-checked history into `imported`
+        # itself (not just session state): current_model_identity_
+        # fingerprints re-reads imported["search_objects"] directly to
+        # compute search_object_fit_fingerprint, bypassing this function
+        # entirely - leaving the raw payload there let a malformed record
+        # that was already correctly quarantined for session state above
+        # crash verify_imported_approval/audit_project_resumability later
+        # in the same import, the same failure mode fixed for the Search
+        # taxonomy and SEO fit-input payloads.
+        imported["search_objects"] = _resolved_search_objects
         set_state(
             "search_objects",
             [
@@ -1241,7 +1338,91 @@ if uploaded_zip is not None and st.button("Import bundle"):
         )
         set_state("search_candidate_a_spec", imported.get("search_candidate_a_spec"))
         set_state("google_trends_anchor", imported.get("google_trends_anchor"))
-        set_state("seo_fit_inputs", imported.get("seo_fit_inputs"))
+        # A malformed seo_fit_inputs record (e.g. a group missing
+        # metric_definition) reaches SeoModelFitInputs.from_dict() deep
+        # inside current_model_identity_fingerprints's
+        # seo_fit_inputs_fingerprint() call, well after this handler - a raw
+        # payload therefore crashed import outside any try/except here,
+        # after the rest of project state had already been installed.
+        # Parse and sanitize it here instead, and mirror the sanitized
+        # value into `imported` (not just session state) so downstream
+        # resumability/readiness/approval verification never re-reads the
+        # malformed raw payload: an approval or curve bound to the
+        # malformed SEO boundary then genuinely fails its fingerprint
+        # match (fails closed as unverified/stale) rather than crashing.
+        try:
+            _sanitized_seo_fit_inputs = resolve_imported_seo_fit_inputs(
+                imported.get("seo_fit_inputs")
+            )
+        except ValueError as _seo_exc:
+            set_state("seo_fit_inputs", None)
+            imported["seo_fit_inputs"] = None
+            st.warning(f"Persisted SEO fit inputs were quarantined: {_seo_exc}")
+        else:
+            _sanitized_seo_fit_inputs = _sanitized_seo_fit_inputs or None
+            set_state("seo_fit_inputs", _sanitized_seo_fit_inputs)
+            imported["seo_fit_inputs"] = _sanitized_seo_fit_inputs
+        # REQ-SEARCH-004/005: restore only valid, explicitly persisted custom
+        # taxonomy records. The approved minimum is supplied by the taxonomy
+        # module; malformed children are quarantined and named.
+        #
+        # Catalogue/history validation and grain validation are deliberately
+        # independent try/except boundaries, not one shared block: the
+        # current taxonomy and its version history can be entirely valid
+        # while only `search_intent_model_grain` references an unknown
+        # group or an invalid parent/child overlap (e.g. from a hand-edited
+        # or partially-upgraded bundle). A single shared try/except would
+        # let that grain-only failure erase an otherwise-valid, already-
+        # governed catalogue and history - a real loss of governed data on
+        # a bundle that is re-exported afterward. Each stage instead
+        # quarantines only its own malformed piece and downstream readers
+        # (session state and `imported`, which `current_model_identity_
+        # fingerprints` re-reads directly) always see a mutually consistent,
+        # already-validated result.
+        _raw_search_intent_groups = imported.get("search_intent_groups") or []
+        try:
+            _governed_groups = resolve_imported_search_intent_groups(
+                _raw_search_intent_groups
+            )
+        except (TypeError, ValueError) as _taxonomy_exc:
+            _governed_groups = ()
+            set_state("search_intent_groups", [])
+            imported["search_intent_groups"] = []
+            st.warning(
+                f"Persisted Search intent taxonomy was quarantined: {_taxonomy_exc}"
+            )
+        else:
+            _governed_group_dicts = [group.to_dict() for group in _governed_groups]
+            set_state("search_intent_groups", _governed_group_dicts)
+            imported["search_intent_groups"] = _governed_group_dicts
+
+        _resolved_group_versions, _group_version_warnings = (
+            resolve_imported_search_intent_group_versions(
+                imported.get("search_intent_group_versions"),
+                current_groups=_governed_groups,
+            )
+        )
+        set_state("search_intent_group_versions", _resolved_group_versions)
+        imported["search_intent_group_versions"] = _resolved_group_versions
+        for _group_version_warning in _group_version_warnings:
+            st.warning(_group_version_warning)
+
+        try:
+            _resolved_model_grain = resolve_search_intent_model_grain(
+                imported.get("search_intent_model_grain") or (),
+                _governed_groups,
+                imported.get("activity_definitions") or (),
+            )
+        except (TypeError, ValueError) as _grain_exc:
+            set_state("search_intent_model_grain", [])
+            imported["search_intent_model_grain"] = []
+            st.warning(
+                "Persisted Search model/reporting grain was invalid and was "
+                f"reset to the approved parent grain: {_grain_exc}"
+            )
+        else:
+            set_state("search_intent_model_grain", list(_resolved_model_grain))
+            imported["search_intent_model_grain"] = list(_resolved_model_grain)
         set_state(
             "future_assumption_bundles", imported.get("future_assumption_bundles")
         )
@@ -1651,19 +1832,36 @@ with SectionCard(
 ):
     model_type_for_export = get_state("model_type", "shared")
     if get_state("trace") is not None and get_state("model_spec"):
-        _export_spec = ModelSpec.from_dict(get_state("model_spec"))
-        render_drift_status(
-            resolve_outcome_definitions(
-                get_state("outcome_definitions"),
-                _export_spec.segment_outcomes,
-                _export_spec.segment_ltv,
-            ),
-            get_state("model_meta"),
-        )
-        _current_pathways = [
-            MediaOutcomePathway.from_dict(p)
-            for p in (get_state("media_outcome_pathways") or [])
-        ]
+        # Independent-review finding: this drift-status display reads
+        # session state's model_spec/media_outcome_pathways directly and
+        # unguarded, on every render (not only right after an import) -
+        # a malformed model_spec (e.g. missing required fields, however it
+        # got into session state) used to crash the whole page here rather
+        # than degrading gracefully, the same "never let malformed
+        # persisted data crash a render" contract every other quarantine
+        # point in this page already follows.
+        try:
+            _export_spec = ModelSpec.from_dict(get_state("model_spec"))
+            _current_pathways = [
+                MediaOutcomePathway.from_dict(p)
+                for p in (get_state("media_outcome_pathways") or [])
+            ]
+        except (TypeError, ValueError, KeyError, AttributeError) as _drift_exc:
+            st.warning(
+                "Could not compute drift status: the current model "
+                f"specification or pathway catalogue is malformed: {_drift_exc}"
+            )
+            _export_spec = None
+            _current_pathways = []
+        if _export_spec is not None:
+            render_drift_status(
+                resolve_outcome_definitions(
+                    get_state("outcome_definitions"),
+                    _export_spec.segment_outcomes,
+                    _export_spec.segment_ltv,
+                ),
+                get_state("model_meta"),
+            )
         _pathway_drift_df = pathways_drift_dataframe(
             _current_pathways, get_state("model_meta")
         )

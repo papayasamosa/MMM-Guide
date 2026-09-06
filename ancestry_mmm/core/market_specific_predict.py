@@ -13,6 +13,7 @@ matching core.market_specific_model's structure exactly.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Dict, List, Optional
 
 import arviz as az
@@ -75,6 +76,7 @@ class FHMarketSpecificPosteriorParams:
     # this dict, same as core.predict's).
     event_coefs: Dict[str, Dict[str, np.ndarray]] = field(default_factory=dict)
     seo_visibility_beta: Optional[np.ndarray] = None
+    seo_visibility_betas: Dict[str, np.ndarray] = field(default_factory=dict)
 
 
 def extract_market_specific_posterior_params(
@@ -167,13 +169,29 @@ def extract_market_specific_posterior_params(
 
     event_coefs = extract_event_coefs(trace, meta, at=at)
     seo_visibility_beta = None
-    if getattr(meta, "seo_fit_inputs_at_fit", None):
-        if "seo_visibility_beta" not in post:
-            raise ValueError(
-                "This fit records SEO visibility inputs but its trace is missing "
-                "seo_visibility_beta."
+    seo_visibility_betas: Dict[str, np.ndarray] = {}
+    seo_payload = getattr(meta, "seo_fit_inputs_at_fit", None) or {}
+    if seo_payload:
+        group_payloads = (
+            list(seo_payload.get("groups") or ())
+            if "groups" in seo_payload
+            else [seo_payload]
+        )
+        for group_payload in group_payloads:
+            group_id = str(group_payload.get("seo_group_id") or "seo_visibility")
+            suffix = (
+                ""
+                if len(group_payloads) == 1
+                else "_" + re.sub(r"[^A-Za-z0-9_]", "_", group_id)
             )
-        seo_visibility_beta = np.asarray(_reduce(post["seo_visibility_beta"]).values)
+            variable = f"seo_visibility_beta{suffix}"
+            if variable not in post:
+                raise ValueError(
+                    f"This fit records SEO group '{group_id}' but its trace is missing {variable}."
+                )
+            seo_visibility_betas[group_id] = np.asarray(_reduce(post[variable]).values)
+        if len(seo_visibility_betas) == 1:
+            seo_visibility_beta = next(iter(seo_visibility_betas.values()))
 
     return FHMarketSpecificPosteriorParams(
         decay_rate=decay_rate,
@@ -191,6 +209,7 @@ def extract_market_specific_posterior_params(
         outcome_control_coef=outcome_control_coef,
         event_coefs=event_coefs,
         seo_visibility_beta=seo_visibility_beta,
+        seo_visibility_betas=seo_visibility_betas,
     )
 
 

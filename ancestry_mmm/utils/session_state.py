@@ -48,6 +48,9 @@ def init_session_state():
         "join_diagnostics": None,
         "data_loaded": False,
         "project_name": "ancestry-fh-uk",
+        # Durable fit-job recovery may repopulate this independently of the
+        # disposable display-name input after a browser/session loss.
+        "durable_project_id": None,
         # Transformation pipeline
         "pipeline_steps": [],  # list of TransformStep dicts
         "transformed_data": None,
@@ -63,6 +66,14 @@ def init_session_state():
         "validation_issues": [],
         # Structural model spec (core.schema.ModelSpec as a dict)
         "model_spec": None,
+        # The prepared structural boundary is kept separately from the
+        # Search-grain-sliced spec temporarily installed while a durable fit
+        # is adopted.  This lets a later invalidation restore the complete
+        # preparation boundary instead of treating a fitted subset as the
+        # project's only model configuration.
+        "prepared_model_spec": None,
+        "prepared_frame": None,
+        "fitted_model_spec": None,
         # Market-specific redesign, Phase 1: market descriptors, currency and
         # channel media-unit mappings (core.market_config.MarketSpecConfig as
         # a dict). Optional and not yet consumed by the fitting pipeline -
@@ -129,6 +140,12 @@ def init_session_state():
         # "causal_graph"/"causal_graph_versions" below.
         "search_objects": [],
         "search_object_versions": [],
+        # REQ-SEARCH-004/005: explicit user-defined intent-group lineage.
+        # The approved minimum Brand/Non-Brand records live in core; this
+        # list stores only project-specific deeper children and their drafts.
+        "search_intent_groups": [],
+        "search_intent_group_versions": [],
+        "search_intent_model_grain": [],
         # Optional Candidate A identity restored separately from its
         # observations so the analyst can attach a new exact observation
         # upload without inventing a Search object mapping.
@@ -200,6 +217,9 @@ def init_session_state():
         "mcmc_tune": DEFAULT_PARAMS["mcmc_tune"],
         "mcmc_chains": DEFAULT_PARAMS["mcmc_chains"],
         "mcmc_target_accept": DEFAULT_PARAMS["mcmc_target_accept"],
+        # Durable fit identity: the worker records this seed with the
+        # sampler settings so a completed artifact is reproducible/auditable.
+        "mcmc_random_seed": 42,
         # "shared" (Model A, core.hierarchical_model) or "market_specific"
         # (Model C, core.market_specific_model) - a user preference like the
         # priors above, not a per-fit artifact, so clear_model_state() does
@@ -282,20 +302,67 @@ def update_state(**kwargs) -> None:
         st.session_state[key] = value
 
 
+def _canonical_store_dir_with_legacy_migration(root: Path, raw_name: str) -> Path:
+    """Resolve ``root / canonical_project_id(raw_name)``, migrating a
+    pre-canonicalisation store still sitting at ``root / raw_name`` into it
+    first when one exists and it is safe to do so - see
+    ``core.curve_artifact.migrate_legacy_curve_store_directory`` for the
+    full safety contract (an untrusted ``raw_name`` can never be used to
+    probe or touch anything outside ``root``). A migration attempt is only
+    worth making when canonicalisation actually changed the name - an
+    already-safe name is its own canonical directory, so there is nothing
+    to migrate from."""
+    from ancestry_mmm.application.fit_job_service import canonical_project_id
+    from ancestry_mmm.core.curve_artifact import migrate_legacy_curve_store_directory
+
+    name = canonical_project_id(raw_name)
+    canonical_dir = root / name
+    if name != raw_name:
+        migrate_legacy_curve_store_directory(root, raw_name, canonical_dir)
+    return canonical_dir
+
+
 def curve_bank_dir() -> Path:
-    """Per-project curve bank directory (created on first write)."""
-    name = get_state("project_name", "default")
-    return CURVE_BANK_ROOT / name
+    """Per-project curve bank directory (created on first write).
+
+    ``project_name`` is display metadata that can arrive from an imported
+    bundle's manifest (an untrusted display name), so it is never used as a
+    raw path component here - ``canonical_project_id`` collapses any path
+    separators, ``..`` segments, or absolute-path syntax into a single safe
+    component before it is joined under the storage root (see
+    ``application.fit_job_service.canonical_project_id``, the same
+    canonicalisation durable fit-job storage already relies on). A store
+    still sitting under the pre-canonicalisation literal name is migrated
+    into the canonical directory the first time it is found - see
+    ``_canonical_store_dir_with_legacy_migration``.
+    """
+    raw_name = str(get_state("project_name") or "default")
+    return _canonical_store_dir_with_legacy_migration(CURVE_BANK_ROOT, raw_name)
 
 
 def curve_artifact_store_dir() -> Path:
-    """Per-project official curve artifact store directory (created on first write)."""
-    name = get_state("project_name", "default")
-    return CURVE_ARTIFACT_ROOT / name
+    """Per-project official curve artifact store directory (created on first write).
+
+    See ``curve_bank_dir`` above: ``project_name`` is untrusted display
+    metadata and must never be used as a raw path component, and a legacy
+    (pre-canonicalisation) store is migrated in place the first time it is
+    found.
+    """
+    raw_name = str(get_state("project_name") or "default")
+    return _canonical_store_dir_with_legacy_migration(CURVE_ARTIFACT_ROOT, raw_name)
 
 
 def clear_model_state() -> None:
     """Clear all model-related state (useful when data or spec changes)."""
+    prepared_model_spec = st.session_state.get("prepared_model_spec")
+    if prepared_model_spec is not None:
+        # A durable Search-grain fit temporarily replaces model_spec with the
+        # sliced spec that matches its posterior.  Once that fit is invalid,
+        # restore the unsliced preparation boundary before clearing the
+        # fitted artefacts so excluded channels remain available for the next
+        # preparation rather than being lost from the project.
+        st.session_state["model_spec"] = prepared_model_spec
+    st.session_state["fitted_model_spec"] = None
     model_keys = [
         "frame",
         "official_prepared_data",

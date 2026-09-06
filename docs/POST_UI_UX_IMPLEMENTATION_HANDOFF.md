@@ -327,7 +327,7 @@ SEO, Candidate A, FX, valuations, experiments, COGS, or profit optimisation.
 | Input | Exact fields / grain / validation | Current path/template | Feature unavailable and core-fit impact |
 |---|---|---|---|
 | FH New, DNA cross-sell, Winback segmentation | Separate outcome columns and dictionary rows with explicit `segment_dimension` and `segment`; market-week counts. DNA may be New Customer vs Existing Family History Customer where supported; no self/gifted/unactivated split without approval. | Outcomes workbook and catalogue review. | Missing segment is not fitted/reported; supplied core outcomes can still fit. |
-| FH LTR and DNA revenue valuation | `valuation_kind, market, week, segment, denominator_outcome_id, quality_status, segment_dimension, aggregate_value, currency, source, source_version, schema_version, horizon_months`. FH LTR requires `horizon_months=48`; DNA revenue leaves it blank. Aggregate monetary totals, not per-customer values; non-negative, ISO-3 currency, governed source/version. | Optional Data Sources uploader; blank `ancestry-mmm-outcome-valuation-template.xlsx`; exact records persist in bundle schema 24. | Monetary value/ROI curves unavailable; count fit unaffected. No historical realised value is copied as a future assumption. |
+| FH LTR and DNA revenue valuation | `valuation_kind, market, week, segment, denominator_outcome_id, quality_status, segment_dimension, aggregate_value, currency, source, source_version, schema_version, horizon_months`. FH LTR requires `horizon_months=48`; DNA revenue leaves it blank. Aggregate monetary totals, not per-customer values; non-negative, ISO-3 currency, governed source/version. | Optional Data Sources uploader; blank `ancestry-mmm-outcome-valuation-template.xlsx`; exact records persist in the current bundle schema (26). | Monetary value/ROI curves unavailable; count fit unaffected. No historical realised value is copied as a future assumption. |
 | Paid Search Brand/Non-Brand taxonomy | Activity dictionary exact identity fields plus approved Brand/Non-Brand intent/campaign classification, model input column/measure/unit and planning eligibility; market-week-activity. | Existing Activity workbook and Activity Mapping page. | Search intent rollups unavailable; other channels can fit. |
 | Google Trends Candidate A anchor | CSV `week, raw_index`, plus approved query-set ID, exact branded terms, geography, category, search property, extraction date, time range and measurement sigma. Relative 0-100 index, not searches/clicks; one unique weekly extraction/query set. | Model Training boundary; persisted metadata and observations. No live values are present. | Candidate A anchor/fit remains fail-closed; ordinary MMM unaffected. |
 | Candidate A Search observations and cap | CSV `period_start, market, paid_search_delivery, paid_search_cap, organic_search_capture, direct_navigation_capture`; explicit Search object IDs, cap unit, cap-to-delivery scale, provenance and approved upstream demand channel mapping. Delivery `<= cap * scale`; no missing/negative cells, no cap-from-spend derivation, no zero-fill. | Model Training importer and blank `ancestry-mmm-candidate-a-observations-template.xlsx`; exact payload and row keys persist. Fold paths slice this pinned payload and anchor without refetching. | Candidate A Search mediation, capacity, official curves, attribution and Search planning unavailable; ordinary core fit unaffected unless Candidate A is selected. |
@@ -425,4 +425,26 @@ placeholders are not accepted data and no business value is implied.
 - **Profit:** send the approved profit definition plus COGS/margin/contribution
   inputs with currency, source/version and matching market/outcome/time
   coverage. Until then, `maximise_profit` remains unavailable and no profit
-  proxy is used.
+proxy is used.
+
+## 2026-09-04 UK production decisions and durable-fit continuation
+
+`REQ-NBT-004` now records the current UK production KPI authority: the
+supplied canonical NBT outcomes for New, DNA cross-sell, and Winback. GSA is a
+distinct secondary/context measure; the historical-test 14-day completeness
+rule is not a production default, and no NBT/GSA reconstruction is performed.
+
+Model Training now submits an immutable proposal to a separate local worker
+process. Job state, sampler identity, progress/NUTS geometry, PID, logs,
+fingerprints, cancellation, orphan recovery, and validated ArviZ artifacts are
+durable outside Streamlit. A completed job is adopted only after current
+project identity checks; a mismatch preserves the existing model.
+
+The SEO boundary now supports explicitly selected Brand/Non-Brand groups,
+already-aggregated market/week/group inputs, group-specific masks/windows, and
+one coefficient per selected group without zero-filling or spend economics.
+The Search taxonomy supports explicitly governed deeper Non-Brand children,
+separate Google/Bing axes, ragged parent roll-ups, and parent/child model-grain
+exclusion. Candidate A remains cap-evidence gated, FX remains manual and
+pending until approved, experiments remain inactive for initial UK scope, and
+profit optimisation remains fail-closed.

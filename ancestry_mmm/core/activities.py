@@ -299,6 +299,58 @@ class ActivityDefinition:
         return cls(**{key: value for key, value in payload.items() if key in known})
 
 
+def resolve_imported_activity_definitions(
+    values: Iterable[ActivityDefinition | Mapping[str, object]] | None,
+) -> tuple[list[dict], list[str]]:
+    """Validate an imported ``activity_definitions`` payload before it can
+    reach model-identity reconstruction.
+
+    Previously the import handler installed this payload into session
+    state verbatim, with no parsing at all, and
+    ``activity_fit_fingerprint`` (consumed by
+    ``core.persistence.current_model_identity_fingerprints``) called
+    ``ActivityDefinition.from_dict`` on each raw record with no
+    try/except - a malformed record crashed deep inside
+    ``verify_imported_approval``/``audit_project_resumability`` during
+    import, after the rest of project state had already been installed,
+    the same failure mode already fixed for the Search taxonomy and SEO
+    fit-input payloads. Mirrors those functions' quarantine contract: a
+    non-mapping top-level payload, or a malformed individual record, is
+    named and dropped (never silently kept) rather than raised past the
+    caller. Absent/empty input resolves to ``([], [])`` - "no activities
+    yet" is not an error.
+    """
+    if not values:
+        return [], []
+    if isinstance(values, (str, bytes)) or not isinstance(values, Iterable):
+        return [], [
+            "Activity definitions payload is not a sequence and was "
+            "quarantined (dropped, not silently kept)."
+        ]
+    normalised: list[dict] = []
+    warnings: list[str] = []
+    for index, item in enumerate(values):
+        if isinstance(item, ActivityDefinition):
+            normalised.append(item.to_dict())
+            continue
+        if not isinstance(item, Mapping):
+            warnings.append(
+                f"Activity definition record {index} is not a mapping and "
+                "was quarantined (dropped, not silently kept)."
+            )
+            continue
+        try:
+            normalised.append(ActivityDefinition.from_dict(item).to_dict())
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            activity_id = item.get("activity_id", "<unknown>")
+            warnings.append(
+                f"Activity definition record {index} "
+                f"(activity_id={activity_id!r}) was malformed and was "
+                f"quarantined (dropped, not silently kept): {exc}"
+            )
+    return normalised, warnings
+
+
 def activity_definitions_fingerprint(
     definitions: Iterable[ActivityDefinition | Mapping[str, object]],
 ) -> str:
@@ -382,6 +434,10 @@ def activity_fit_fingerprint(
                 "model_role": definition.model_role,
                 "model_input_column": definition.resolved_model_input_column,
                 "pathway_ids": sorted(definition.pathway_ids),
+                # Search intent classification is part of the governed model
+                # boundary: the selected Search grain can resolve a different
+                # set of input columns after this field changes.
+                "search_intent_group_id": definition.search_intent_group_id,
             }
         )
     payload.sort(key=lambda item: (item["market"], item["activity_id"]))
@@ -632,6 +688,9 @@ _INVALIDATION_MATRIX = {
     "model_role": (True, True, True, True),
     "model_input_column": (True, True, True, True),
     "pathway_ids": (True, True, True, True),
+    # A Search reclassification can move an activity into or out of the
+    # selected Search model grain, changing the columns fitted by the model.
+    "search_intent_group_id": (True, True, True, True),
     # pooling_group_id (REQ-DATAIN-001) is deliberately absent here - it is
     # descriptive/identity metadata never read by modelling code, so
     # editing it must never trigger a refit or rebuild prompt (which would

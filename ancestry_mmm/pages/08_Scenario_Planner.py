@@ -49,6 +49,9 @@ from ancestry_mmm.core.search_objects import (
     SearchObjectDefinition,
     search_object_fit_fingerprint,
 )
+from ancestry_mmm.core.search_intent_taxonomy import (
+    search_intent_taxonomy_fit_fingerprint,
+)
 from ancestry_mmm.core.coverage import VariableCoverageMatrix
 from ancestry_mmm.core.fingerprint import (
     fingerprint_dataframe,
@@ -70,6 +73,7 @@ from ancestry_mmm.core.outcome_approval import (
     PlanningGovernanceError,
 )
 from ancestry_mmm.core.pathways import pathway_catalogue_fingerprint_payload
+from ancestry_mmm.core.seo_visibility import seo_fit_inputs_fingerprint
 from ancestry_mmm.core.planning.value import (
     DNA_VALUE_MODE_OVERALL,
     DNA_VALUE_MODE_SEGMENT_SPECIFIC,
@@ -993,12 +997,22 @@ if model_run_id and spec_dict is not None:
                 if search_objects
                 else None
             ),
+            search_intent_taxonomy_fit_fingerprint=search_intent_taxonomy_fit_fingerprint(
+                activity_definitions,
+                get_state("search_intent_groups") or [],
+                get_state("search_intent_group_versions") or [],
+                consumed_model_input_columns=spec_dict.get("channels") or [],
+            ),
             variable_coverage_fingerprint=(
                 VariableCoverageMatrix.from_dict(coverage_matrix_dict).fingerprint()
                 if coverage_matrix_dict
                 else None
             ),
             official_preparation_evidence=get_state("official_preparation_result"),
+            seo_fit_fingerprint=seo_fit_inputs_fingerprint(
+                get_state("seo_fit_inputs")
+                or getattr(meta, "seo_fit_inputs_at_fit", None)
+            ),
             calibration_fit_fingerprint=(
                 getattr(meta, "calibration_fit_fingerprint", "") or None
             ),
@@ -1824,6 +1838,11 @@ objective_display_kind = st.radio(
     horizontal=True,
     format_func=lambda x: _objective_labels[x],
     help=FIELD_HELP["ltv"],
+)
+st.caption(
+    "Profit optimisation is fail-closed until a governed margin/COGS definition "
+    "and approved value mapping are available. This does not block ordinary UK "
+    "NBT onboarding or count-based planning."
 )
 # REQ-OPT-001 Requirement 1 (Decision 16): maximise_revenue/maximise_profit/
 # maximise_roi/minimise_cpa all resolve to the same governed value/return

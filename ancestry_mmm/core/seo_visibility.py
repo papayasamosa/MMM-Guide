@@ -48,6 +48,9 @@ Formula summary (see the decision record for the full reasoning):
 from __future__ import annotations
 
 import math
+import hashlib
+import json
+import re
 from dataclasses import asdict, dataclass
 from typing import Any, List, Mapping, Optional, Sequence, Tuple, cast
 
@@ -60,6 +63,13 @@ from .seo_partial_window_policy import (
 )
 
 SEO_VISIBILITY_SCHEMA_VERSION = 1
+
+# SEO groups are observed organic-search diagnostics/treatments, never spend
+# channels.  Keeping the IDs explicit makes a Brand/Non-Brand split (and any
+# approved deeper group) survive model, report, and persistence boundaries.
+SEO_GROUP_BRAND = "brand"
+SEO_GROUP_NON_BRAND = "non_brand"
+SEO_GROUPS = (SEO_GROUP_BRAND, SEO_GROUP_NON_BRAND)
 
 # ---------------------------------------------------------------------------
 # REQ-SEO-001 §5 causal-role / directionality vocabulary. `CAUSAL_ROLES`
@@ -229,12 +239,18 @@ class SeoPositionalVisibilityObservation:
     coverage_state: Optional[str] = None
     methodology_version: str = "1.0.0"
     schema_version: int = SEO_VISIBILITY_SCHEMA_VERSION
+    seo_group_id: str = "seo_visibility"
+    seo_group_name: str = ""
 
     def __post_init__(self) -> None:
         if not self.market:
             raise ValueError("SeoPositionalVisibilityObservation requires a market.")
         if not self.week:
             raise ValueError("SeoPositionalVisibilityObservation requires a week.")
+        if not self.seo_group_id:
+            raise ValueError(
+                "SeoPositionalVisibilityObservation requires seo_group_id."
+            )
         if (
             self.coverage_state is not None
             and self.coverage_state not in COVERAGE_STATES
@@ -315,6 +331,8 @@ def compute_weekly_positional_visibility(
     *,
     market: str,
     week: str,
+    seo_group_id: str = "seo_visibility",
+    seo_group_name: str = "",
 ) -> SeoPositionalVisibilityObservation:
     """Deterministically compute one `market x week` positional-visibility
     observation from raw GSC-shaped rows, per this module's approved
@@ -343,6 +361,8 @@ def compute_weekly_positional_visibility(
             total_clicks=total_clicks,
             ctr=None,
             coverage_state=STATE_OBSERVED_ZERO,
+            seo_group_id=seo_group_id,
+            seo_group_name=seo_group_name,
         )
 
     weighted_avg_position = (
@@ -360,11 +380,16 @@ def compute_weekly_positional_visibility(
         total_clicks=total_clicks,
         ctr=ctr,
         coverage_state=None,
+        seo_group_id=seo_group_id,
+        seo_group_name=seo_group_name,
     )
 
 
 def compute_weekly_positional_visibility_series(
     rows_by_market_week: Mapping[Tuple[str, str], Sequence[GscPositionRow]],
+    *,
+    seo_group_id: str = "seo_visibility",
+    seo_group_name: str = "",
 ) -> List[SeoPositionalVisibilityObservation]:
     """Convenience wrapper applying `compute_weekly_positional_visibility`
     over every supplied `(market, week)` cell, in a stable, deterministic
@@ -372,7 +397,13 @@ def compute_weekly_positional_visibility_series(
     absent from the result - this function never invents a cell that
     wasn't given to it."""
     return [
-        compute_weekly_positional_visibility(rows, market=market, week=week)
+        compute_weekly_positional_visibility(
+            rows,
+            market=market,
+            week=week,
+            seo_group_id=seo_group_id,
+            seo_group_name=seo_group_name,
+        )
         for (market, week) in sorted(rows_by_market_week)
         for rows in [rows_by_market_week[(market, week)]]
     ]
@@ -401,6 +432,8 @@ class SeoModelFitInputs:
     standardization_scale: float
     pathway_id: str = "seo_visibility_to_organic_outcome_v1"
     schema_version: int = SEO_VISIBILITY_SCHEMA_VERSION
+    seo_group_id: str = "seo_visibility"
+    seo_group_name: str = ""
 
     def __post_init__(self) -> None:
         n = len(self.model_weeks)
@@ -412,6 +445,8 @@ class SeoModelFitInputs:
             raise ValueError(
                 "SeoModelFitInputs.raw_visibility must be row-aligned to model weeks."
             )
+        if not self.seo_group_id:
+            raise ValueError("SeoModelFitInputs requires seo_group_id.")
         if (
             not np.isfinite(self.standardization_center)
             or not np.isfinite(self.standardization_scale)
@@ -440,6 +475,8 @@ class SeoModelFitInputs:
         model_markets: Sequence[str],
         model_weeks: Sequence[str],
         metric_definition: SeoVisibilityMetricDefinition = SEO_POSITIONAL_VISIBILITY_METRIC,
+        seo_group_id: Optional[str] = None,
+        seo_group_name: str = "",
     ) -> "SeoModelFitInputs":
         if not model_markets or not model_weeks:
             raise ValueError("SEO model inputs require non-empty markets and weeks.")
@@ -452,11 +489,26 @@ class SeoModelFitInputs:
             )
         )
         by_key: dict[tuple[str, str], SeoPositionalVisibilityObservation] = {}
+        observed_group_ids = set()
+        observed_group_names = set()
         for source_observation in observations:
             key = (source_observation.market, source_observation.week)
             if key in by_key:
                 raise ValueError(f"Duplicate SEO observation for {key}.")
             by_key[key] = source_observation
+            observed_group_ids.add(source_observation.seo_group_id)
+            if source_observation.seo_group_name:
+                observed_group_names.add(source_observation.seo_group_name)
+        if len(observed_group_ids) > 1:
+            raise ValueError("SeoModelFitInputs cannot mix SEO groups.")
+        resolved_group_id = seo_group_id or next(
+            iter(observed_group_ids), "seo_visibility"
+        )
+        if observed_group_ids and resolved_group_id not in observed_group_ids:
+            raise ValueError(
+                "SEO observations do not match the requested seo_group_id."
+            )
+        resolved_group_name = seo_group_name or next(iter(observed_group_names), "")
 
         values: list[Optional[float]] = []
         active: list[float] = []
@@ -507,6 +559,8 @@ class SeoModelFitInputs:
             window_by_market=windows,
             standardization_center=center,
             standardization_scale=scale,
+            seo_group_id=resolved_group_id,
+            seo_group_name=resolved_group_name,
         )
 
     def validate_frame(self, *, markets: Sequence[str], weeks: Sequence[str]) -> None:
@@ -533,6 +587,8 @@ class SeoModelFitInputs:
             "standardization_scale": self.standardization_scale,
             "pathway_id": self.pathway_id,
             "schema_version": self.schema_version,
+            "seo_group_id": self.seo_group_id,
+            "seo_group_name": self.seo_group_name,
         }
 
     @classmethod
@@ -560,13 +616,192 @@ class SeoModelFitInputs:
         )
 
 
+@dataclass(frozen=True)
+class SeoModelFitInputsCollection:
+    """Explicitly selected set of independently modelled SEO groups."""
+
+    groups: Tuple[SeoModelFitInputs, ...]
+    schema_version: int = SEO_VISIBILITY_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if not self.groups:
+            raise ValueError("SeoModelFitInputsCollection requires at least one group.")
+        ids = [group.seo_group_id for group in self.groups]
+        if len(set(ids)) != len(ids):
+            raise ValueError("SEO model groups must have unique seo_group_id values.")
+        object.__setattr__(
+            self,
+            "groups",
+            tuple(sorted(self.groups, key=lambda item: item.seo_group_id)),
+        )
+
+    @classmethod
+    def from_groups(
+        cls, groups: Sequence[SeoModelFitInputs]
+    ) -> "SeoModelFitInputsCollection":
+        return cls(tuple(groups))
+
+    def validate_frame(self, *, markets: Sequence[str], weeks: Sequence[str]) -> None:
+        for group in self.groups:
+            group.validate_frame(markets=markets, weeks=weeks)
+
+    def to_dict(self) -> dict:
+        return {
+            "schema_version": self.schema_version,
+            "groups": [group.to_dict() for group in self.groups],
+        }
+
+    @classmethod
+    def from_dict(cls, values: Mapping[str, Any]) -> "SeoModelFitInputsCollection":
+        if "groups" not in values:
+            # Accept both the legacy singular payload and an explicit
+            # group-id -> payload mapping used by early onboarding exports.
+            if "metric_definition" in values:
+                return cls((SeoModelFitInputs.from_dict(values),))
+            return cls(
+                tuple(
+                    SeoModelFitInputs.from_dict(
+                        dict(
+                            payload, seo_group_id=payload.get("seo_group_id", group_id)
+                        )
+                    )
+                    for group_id, payload in values.items()
+                    if isinstance(payload, Mapping)
+                )
+            )
+        return cls(
+            tuple(
+                SeoModelFitInputs.from_dict(item) for item in values.get("groups") or ()
+            )
+        )
+
+
+def normalise_seo_fit_inputs(
+    value: Optional[
+        SeoModelFitInputs | SeoModelFitInputsCollection | Mapping[str, Any]
+    ],
+) -> Tuple[SeoModelFitInputs, ...]:
+    """Return the selected SEO groups, retaining legacy singular payloads."""
+    if value is None:
+        return ()
+    if isinstance(value, SeoModelFitInputsCollection):
+        return value.groups
+    if isinstance(value, SeoModelFitInputs):
+        return (value,)
+    if isinstance(value, Mapping):
+        return SeoModelFitInputsCollection.from_dict(value).groups
+    raise TypeError("Unsupported SEO fit-input payload.")
+
+
+def seo_group_variable_suffixes(group_ids: Sequence[str]) -> dict[str, str]:
+    """Return deterministic PyMC-name suffixes, rejecting normalized clashes.
+
+    PyMC variable names use a restricted representation of the governed SEO
+    group ID.  Distinct IDs such as ``non-brand`` and ``non.brand`` must not
+    silently register the same variable name in a multi-group model.
+    """
+
+    ids = tuple(str(group_id) for group_id in group_ids)
+    suffixes: dict[str, str] = {}
+    ids_by_suffix: dict[str, str] = {}
+    for group_id in ids:
+        suffix = "" if len(ids) == 1 else "_" + re.sub(r"[^A-Za-z0-9_]", "_", group_id)
+        prior_id = ids_by_suffix.get(suffix)
+        if prior_id is not None and prior_id != group_id:
+            raise ValueError(
+                "SEO group IDs "
+                f"{prior_id!r} and {group_id!r} collide after PyMC "
+                "variable-name normalization."
+            )
+        ids_by_suffix[suffix] = group_id
+        suffixes[group_id] = suffix
+    return suffixes
+
+
+def seo_fit_inputs_to_dict(
+    value: Optional[
+        SeoModelFitInputs | SeoModelFitInputsCollection | Mapping[str, Any]
+    ],
+) -> dict:
+    groups = normalise_seo_fit_inputs(value)
+    if not groups:
+        return {}
+    if len(groups) == 1:
+        return groups[0].to_dict()
+    return SeoModelFitInputsCollection.from_groups(groups).to_dict()
+
+
+def seo_fit_inputs_fingerprint(
+    value: Optional[
+        SeoModelFitInputs | SeoModelFitInputsCollection | Mapping[str, Any]
+    ],
+) -> str:
+    if value is None or (isinstance(value, Mapping) and not value):
+        return ""
+    payload = seo_fit_inputs_to_dict(value)
+    if not payload:
+        return ""
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def resolve_imported_seo_fit_inputs(value: Optional[Mapping[str, Any]]) -> dict:
+    """Validate an imported ``seo_fit_inputs`` payload before it can reach
+    model-identity reconstruction.
+
+    ``seo_fit_inputs_fingerprint``/``seo_fit_inputs_to_dict`` parse a raw
+    imported mapping through ``SeoModelFitInputs.from_dict`` internally
+    (e.g. a group missing ``metric_definition`` raises ``KeyError``) - a
+    malformed record therefore used to raise straight out of
+    ``current_model_identity_fingerprints`` during import, after session
+    state had already been partially replaced. Callers must catch
+    ``ValueError`` here and quarantine (drop, not silently keep) the
+    payload - mirroring
+    ``core.search_intent_taxonomy.resolve_imported_search_intent_groups``'s
+    quarantine contract - rather than letting the underlying parse
+    exception surface from deep inside identity reconstruction.
+
+    Returns ``{}`` for an absent/empty payload (never fabricated) or the
+    validated, canonical payload dict for a valid one - never the raw
+    input unchanged, so a legacy single-group shape and an explicit
+    ``{"groups": [...]}`` collection both resolve to the same
+    representation ``seo_fit_inputs_fingerprint`` would compute from it.
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError(
+            "SEO fit inputs payload is not a mapping and was quarantined "
+            "(dropped, not silently kept)."
+        )
+    if not value:
+        return {}
+    try:
+        return seo_fit_inputs_to_dict(value)
+    except (TypeError, ValueError, KeyError, AttributeError) as exc:
+        raise ValueError(
+            "SEO fit inputs payload was malformed and was quarantined "
+            f"(dropped, not silently kept): {exc}"
+        ) from exc
+
+
 __all__ = [
     "CAUSAL_ROLE_MEDIATOR_OR_CAPTURE_EFFICIENCY_STATE",
+    "SEO_GROUP_BRAND",
+    "SEO_GROUP_NON_BRAND",
+    "SEO_GROUPS",
     "GscPositionRow",
     "SEO_POSITIONAL_VISIBILITY_METRIC",
     "SeoModelFitInputs",
+    "SeoModelFitInputsCollection",
     "SeoPositionalVisibilityObservation",
     "SeoVisibilityMetricDefinition",
     "compute_weekly_positional_visibility",
     "compute_weekly_positional_visibility_series",
+    "normalise_seo_fit_inputs",
+    "resolve_imported_seo_fit_inputs",
+    "seo_group_variable_suffixes",
+    "seo_fit_inputs_fingerprint",
+    "seo_fit_inputs_to_dict",
 ]

@@ -13,9 +13,9 @@ v1.8 §16.20, §16.21, `API-029` — reconciled by Work Package 1 of
 ## Approval and traceability
 
 Approved for implementation by the task-specific implementation brief
-cited above (2026-08-28). Target-state architecture contract for the
-governed **data and provenance shape** of an SEO visibility/ranking
-metric definition and its observed values, as objects distinct from —
+cited above (2026-08-28). The current implementation covers the governed
+**data and provenance shape** of observed SEO visibility/ranking values, as
+objects distinct from —
 and never a proxy for — organic Search capture (`REQ-SEARCH-001` §1.5).
 
 This record approves the shape only. It does not approve, select, or
@@ -34,8 +34,12 @@ binding.
 
 ## Capability status
 
-Zero implementation. No SEO-visibility object, metric-definition record,
-or observation-fact table exists anywhere in this repository.
+Partial implementation. `core.seo_visibility` provides the approved
+positional-visibility metric, provenance-aware observations, raw or
+aggregated upload handling, explicit SEO groups, group-specific masks and
+windows, persisted standardisation, one fitted term per selected group, and
+diagnostic-only clicks. A separate metric-definition registry and any
+controllable SEO intervention remain unimplemented and deferred.
 
 ## Requirement
 
@@ -157,6 +161,15 @@ Modelling / Platform engineering
 ## Approval date
 
 2026-08-28
+
+## Implementation update, 2026-09-04
+
+The approved positional/visibility metric and mediator/capture-efficiency
+boundary are implemented in `core.seo_visibility`, including provenance-aware
+raw or aggregated observations, explicit Brand/Non-Brand groups, row-aligned
+window masks, persisted standardisation, and grouped model coefficients. SEO
+remains distinct from organic Search capture, outside spend CPA/ROI, and
+non-controllable until separately approved.
 
 ## Addendum, 2026-08-30: metric type, causal role, and cost policy approved (resolves D1, D2; confirms §7/§8 audit clean)
 

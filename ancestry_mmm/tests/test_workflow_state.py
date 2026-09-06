@@ -333,3 +333,136 @@ def test_end_of_workflow_has_no_further_required_target():
     assert nav.kind == "done"
     assert nav.target is None
     assert nav.optional_targets == ()
+
+
+class TestOfficialCurveStatusRejectsPathTraversalInProjectName:
+    """Regression: an imported bundle's untrusted display name must never
+    let the official curve artifact store's read path escape
+    CURVE_ARTIFACT_ROOT, mirroring the same fix in
+    utils.session_state.curve_artifact_store_dir()."""
+
+    def _approved_getter(self, extra):
+        state = {"model_approval": {"status": "approved"}}
+        state.update(extra)
+        return _getter(state)
+
+    def _resolved_store_dir(self, monkeypatch, project_name):
+        from pathlib import Path
+
+        import ancestry_mmm.utils.workflow_state as workflow_state_module
+
+        captured = {}
+
+        class _FakeStore:
+            loaded = False
+            audit = None
+
+        def fake_load(store_dir, raise_on_malformed=False):
+            captured["store_dir"] = Path(store_dir)
+            return _FakeStore()
+
+        monkeypatch.setattr(
+            workflow_state_module, "load_curve_artifact_store", fake_load
+        )
+        getter = self._approved_getter({"project_name": project_name})
+        state = workflow_page_state("official_curve_generation", getter=getter)
+        assert state.access_status != "blocked", (
+            "test setup did not satisfy _model_approval_is_current"
+        )
+        return captured["store_dir"]
+
+    def test_posix_style_traversal_stays_under_curve_artifact_root(self, monkeypatch):
+        from ancestry_mmm.utils.config import CURVE_ARTIFACT_ROOT
+
+        store_dir = self._resolved_store_dir(monkeypatch, "../../target")
+        root = CURVE_ARTIFACT_ROOT.resolve()
+        resolved = store_dir.resolve()
+        assert resolved == root or root in resolved.parents
+        assert len(resolved.relative_to(root).parts) == 1
+
+    def test_absolute_windows_path_stays_under_curve_artifact_root(self, monkeypatch):
+        from ancestry_mmm.utils.config import CURVE_ARTIFACT_ROOT
+
+        store_dir = self._resolved_store_dir(monkeypatch, "C:\\Windows\\System32")
+        root = CURVE_ARTIFACT_ROOT.resolve()
+        resolved = store_dir.resolve()
+        assert resolved == root or root in resolved.parents
+        assert len(resolved.relative_to(root).parts) == 1
+
+    def test_normal_name_still_resolves_under_curve_artifact_root(self, monkeypatch):
+        from ancestry_mmm.utils.config import CURVE_ARTIFACT_ROOT
+
+        store_dir = self._resolved_store_dir(monkeypatch, "UK Production 2026")
+        root = CURVE_ARTIFACT_ROOT.resolve()
+        resolved = store_dir.resolve()
+        assert resolved == root or root in resolved.parents
+        assert len(resolved.relative_to(root).parts) == 1
+
+    def test_legacy_official_curve_store_migrates_before_status_is_computed(
+        self, monkeypatch, tmp_path
+    ):
+        """Regression for review PRRT_kwDOTd28Js6fnFam (official-curve-store
+        side): a legacy store must be migrated here too, not only through
+        utils.session_state.curve_artifact_store_dir() - the sidebar/Home
+        status can otherwise show "not_started" for a project whose
+        artifacts genuinely exist under the old literal-name directory."""
+        import ancestry_mmm.utils.workflow_state as workflow_state_module
+        from ancestry_mmm.application.fit_job_service import canonical_project_id
+        from ancestry_mmm.core.curve_artifact import (
+            CurveArtifactMetadata,
+            compute_curve_artifact_fingerprints,
+            write_curve_artifact,
+        )
+        import dataclasses
+        import pandas as pd
+
+        monkeypatch.setattr(workflow_state_module, "CURVE_ARTIFACT_ROOT", tmp_path)
+        project_name = "UK Production 2026"
+        legacy_dir = tmp_path / project_name
+        artifact_dir = legacy_dir / "art-1"
+        metadata = CurveArtifactMetadata(
+            artifact_id="art-1",
+            creation_timestamp="2026-08-01T00:00:00+00:00",
+            model_identity_snapshot={"model_run_id": "run-1"},
+            outcome_definition_snapshot={
+                "outcome_id": "fh_new_gsa",
+                "definition_version": "1.0",
+            },
+            outcome_approval_snapshot={
+                "approval_id": "apr-1",
+                "allowed_uses": ["curve_publication"],
+            },
+        )
+        metadata = dataclasses.replace(
+            metadata, fingerprints=dict(compute_curve_artifact_fingerprints(metadata))
+        )
+        row = {
+            "model_run_id": "run-1",
+            "reference_context_id": "ctx-1",
+            "market": "UK",
+            "product": "fh",
+            "segment": "New",
+            "outcome_id": "fh_new_gsa",
+            "metric_key": "fh_gsa",
+            "channel": "TV",
+            "component_type": "direct",
+            "pathway_role": "primary",
+            "spend_point": 0,
+            "posterior_draw": 0,
+            "incremental_response": 1.0,
+        }
+        draws = pd.DataFrame([row])
+        summaries = pd.DataFrame(
+            [{k: v for k, v in row.items() if k != "posterior_draw"}]
+        )
+        write_curve_artifact(
+            artifact_dir, metadata=metadata, draws=draws, summaries=summaries
+        )
+
+        getter = self._approved_getter({"project_name": project_name})
+        state = workflow_page_state("official_curve_generation", getter=getter)
+
+        canonical_dir = tmp_path / canonical_project_id(project_name)
+        assert not legacy_dir.exists()
+        assert (canonical_dir / "art-1").is_dir()
+        assert state.display_status not in ("not_started", "blocked", "unavailable")

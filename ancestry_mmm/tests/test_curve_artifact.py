@@ -41,6 +41,8 @@ from ancestry_mmm.core.curve_artifact import (
     load_curve_artifact_store,
     migrate_curve_artifact_metadata,
     migrate_curve_artifact_store,
+    migrate_legacy_curve_store_directory,
+    LegacyCurveStoreMigrationResult,
     read_curve_artifact,
     verify_curve_artifact_fingerprints,
     verify_curve_artifact_fingerprints_allow_legacy,
@@ -1041,3 +1043,149 @@ class TestStoreImportMigrationAudit:
         with pytest.raises(CurveArtifactStoreError) as excinfo:
             migrate_curve_artifact_store(tmp_path)
         assert "art-bad-1" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# Legacy (pre-canonical-project-ID) curve store directory migration
+# ---------------------------------------------------------------------------
+
+
+class TestLegacyCurveStoreDirectoryMigration:
+    """Regression for review PRRT_kwDOTd28Js6fnFam: canonical_project_id
+    changed the storage key for a project's curve stores, so an existing
+    store still sitting under the old literal display-name directory would
+    silently become invisible after upgrading, even though its artifacts
+    remain on disk."""
+
+    def test_a_populated_legacy_store_migrates_to_the_canonical_directory(
+        self, tmp_path
+    ):
+        legacy_name = "UK Production 2026"
+        canonical_dir = tmp_path / "UK_Production_2026--deadbeefcafe"
+        legacy_dir = tmp_path / legacy_name
+        legacy_dir.mkdir(parents=True)
+        (legacy_dir / "note.txt").write_text("artifact payload", encoding="utf-8")
+
+        result = migrate_legacy_curve_store_directory(
+            tmp_path, legacy_name, canonical_dir
+        )
+
+        assert result == LegacyCurveStoreMigrationResult(True, "migrated")
+        assert not legacy_dir.exists()
+        assert canonical_dir.is_dir()
+        assert (canonical_dir / "note.txt").read_text(encoding="utf-8") == (
+            "artifact payload"
+        )
+        assert (canonical_dir / ".legacy_migration.marker").exists()
+
+    def test_subsequent_call_is_a_no_op_after_migration(self, tmp_path):
+        legacy_name = "UK Production 2026"
+        canonical_dir = tmp_path / "canonical-dir"
+        legacy_dir = tmp_path / legacy_name
+        legacy_dir.mkdir(parents=True)
+        (legacy_dir / "note.txt").write_text("artifact payload", encoding="utf-8")
+        first = migrate_legacy_curve_store_directory(
+            tmp_path, legacy_name, canonical_dir
+        )
+        assert first.migrated
+
+        second = migrate_legacy_curve_store_directory(
+            tmp_path, legacy_name, canonical_dir
+        )
+
+        assert second.migrated is False
+        assert (canonical_dir / "note.txt").exists()
+
+    def test_no_legacy_directory_is_a_harmless_no_op(self, tmp_path):
+        result = migrate_legacy_curve_store_directory(
+            tmp_path, "never-existed", tmp_path / "canonical-dir"
+        )
+        assert result.migrated is False
+
+    def test_empty_legacy_directory_is_not_migrated(self, tmp_path):
+        legacy_dir = tmp_path / "empty-project"
+        legacy_dir.mkdir(parents=True)
+
+        result = migrate_legacy_curve_store_directory(
+            tmp_path, "empty-project", tmp_path / "canonical-dir"
+        )
+
+        assert result.migrated is False
+        assert legacy_dir.exists()
+
+    @pytest.mark.parametrize(
+        "adversarial_name",
+        [
+            "../../target",
+            "..\\..\\target",
+            "/etc/passwd",
+            "C:\\Windows\\System32",
+            "..",
+        ],
+    )
+    def test_path_traversal_names_cannot_reach_outside_the_root(
+        self, tmp_path, adversarial_name
+    ):
+        """A name that is not a single safe path component must never be
+        resolved, probed, or migrated - regardless of what may or may not
+        exist at that location outside the storage root."""
+        outside_marker = tmp_path.parent / "outside-canary"
+        outside_marker.mkdir(exist_ok=True)
+        (outside_marker / "should-not-be-touched.txt").write_text(
+            "do not move me", encoding="utf-8"
+        )
+        root = tmp_path / "storage-root"
+        root.mkdir()
+
+        result = migrate_legacy_curve_store_directory(
+            root, adversarial_name, root / "canonical-dir"
+        )
+
+        assert result.migrated is False
+        # The canary directory outside root is untouched either way - the
+        # real assertion is that this call never raised, never wrote
+        # anything under `root`, and never deleted/moved anything outside
+        # it.
+        assert (outside_marker / "should-not-be-touched.txt").exists()
+        assert list(root.iterdir()) == []
+
+    def test_both_legacy_and_populated_canonical_store_fails_closed(self, tmp_path):
+        """Neither directory may be silently merged, overwritten, or
+        dropped when both already have (different) content - the conflict
+        is left for manual review."""
+        legacy_name = "UK Production 2026"
+        legacy_dir = tmp_path / legacy_name
+        legacy_dir.mkdir(parents=True)
+        (legacy_dir / "legacy.txt").write_text("legacy payload", encoding="utf-8")
+        canonical_dir = tmp_path / "canonical-dir"
+        canonical_dir.mkdir(parents=True)
+        (canonical_dir / "canonical.txt").write_text(
+            "canonical payload", encoding="utf-8"
+        )
+
+        result = migrate_legacy_curve_store_directory(
+            tmp_path, legacy_name, canonical_dir
+        )
+
+        assert result.migrated is False
+        assert (legacy_dir / "legacy.txt").exists()
+        assert (canonical_dir / "canonical.txt").exists()
+        assert not (canonical_dir / "legacy.txt").exists()
+
+    def test_empty_canonical_directory_does_not_block_migration(self, tmp_path):
+        """An empty canonical directory (e.g. created by an earlier mkdir
+        with nothing ever written into it) is treated as absent, not as a
+        populated conflict."""
+        legacy_name = "UK Production 2026"
+        legacy_dir = tmp_path / legacy_name
+        legacy_dir.mkdir(parents=True)
+        (legacy_dir / "note.txt").write_text("artifact payload", encoding="utf-8")
+        canonical_dir = tmp_path / "canonical-dir"
+        canonical_dir.mkdir(parents=True)  # empty
+
+        result = migrate_legacy_curve_store_directory(
+            tmp_path, legacy_name, canonical_dir
+        )
+
+        assert result.migrated is True
+        assert (canonical_dir / "note.txt").exists()

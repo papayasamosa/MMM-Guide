@@ -19,15 +19,12 @@ This module implements the Phase B work the `REQ-SEARCH-004` addendum
    accepted as a pre-computed input (Decision 4: "the business must
    never manually add detailed categories to obtain a parent total").
 
-Explicitly NOT built here (per the addendum's own scope, and Decision 2's
-"D4 remains open" instruction): any deeper Non-Brand keyword/search-term
-group, or the evidence threshold that would promote one to separately
-reportable. `SearchIntentGroup.parent_search_intent_group_id` already
-supports a future group nesting under Non-Brand without a schema change
-when that threshold work (reusing `REQ-VAL-001`'s per-artefact
-threshold-policy-record mechanism) is eventually done - this module does
-not anticipate that by inventing a third hierarchy level or a numeric
-threshold now.
+The approved reporting content remains the two top-level Brand and
+Non-Brand groups. This module now permits explicitly supplied deeper
+Non-Brand draft groups, as requested by the current implementation brief,
+but does not approve, auto-invent, auto-fit, or promote them. The evidence
+threshold that would make a child separately reportable remains open; this
+module does not invent a numeric threshold or a third hierarchy level.
 
 PMax, Demand Gen, and YouTube are confirmed excluded from this taxonomy
 (Decision 2: "do not classify them as PPC simply because of the source
@@ -37,6 +34,8 @@ carries both a taxonomy reference and one of those campaign types.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import asdict, dataclass, replace
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
@@ -95,8 +94,17 @@ class SearchIntentGroup:
                 f"SearchIntentGroup: unknown brand_class '{self.brand_class}' "
                 f"(expected one of {BRAND_CLASSES})."
             )
+        if type(self.search_intent_group_version) is not int:
+            raise ValueError("search_intent_group_version must be an integer.")
         if self.search_intent_group_version < 1:
             raise ValueError("search_intent_group_version must be >= 1.")
+        if (
+            type(self.schema_version) is not int
+            or self.schema_version != SEARCH_INTENT_TAXONOMY_SCHEMA_VERSION
+        ):
+            raise ValueError(
+                "unsupported or malformed search intent taxonomy schema_version."
+            )
         if self.parent_search_intent_group_id == self.search_intent_group_id:
             raise ValueError(
                 f"SearchIntentGroup '{self.search_intent_group_id}' cannot be "
@@ -154,8 +162,9 @@ def new_search_intent_group_version(
 
 # ---------------------------------------------------------------------------
 # Approved minimum taxonomy content (REQ-SEARCH-004 addendum, 2026-08-30,
-# Decision 2). Two top-level governed groups only - this is the entire
-# approved content; a deeper split remains open (D4).
+# Decision 2). Two top-level governed groups are the approved content;
+# explicitly supplied deeper draft children may be added without changing
+# that minimum.
 # ---------------------------------------------------------------------------
 
 SEARCH_INTENT_GROUP_ID_BRAND = "brand_search"
@@ -193,9 +202,497 @@ APPROVED_MINIMUM_SEARCH_INTENT_GROUPS: Tuple[SearchIntentGroup, ...] = (
 )
 
 
+def validate_search_intent_group_catalogue(
+    groups: Sequence[SearchIntentGroup],
+) -> List[str]:
+    """Validate an explicit parent/child taxonomy without inventing groups."""
+    issues: List[str] = []
+    by_id: Dict[str, SearchIntentGroup] = {}
+    for group in groups:
+        if group.search_intent_group_id in by_id:
+            issues.append(
+                f"Duplicate search intent group id '{group.search_intent_group_id}'."
+            )
+        by_id[group.search_intent_group_id] = group
+    for group in groups:
+        parent = group.parent_search_intent_group_id
+        if parent and parent not in by_id:
+            issues.append(
+                f"Search intent group '{group.search_intent_group_id}' references unknown parent '{parent}'."
+            )
+        if parent and parent != SEARCH_INTENT_GROUP_ID_NON_BRAND:
+            issues.append(
+                f"Deeper search intent group '{group.search_intent_group_id}' must be governed under Non-Brand Search."
+            )
+    for group in groups:
+        seen = {group.search_intent_group_id}
+        parent = group.parent_search_intent_group_id
+        while parent:
+            if parent in seen:
+                issues.append(f"Search intent group parent cycle includes '{parent}'.")
+                break
+            seen.add(parent)
+            ancestor = by_id.get(parent)
+            parent = (
+                ancestor.parent_search_intent_group_id if ancestor is not None else None
+            )
+    return issues
+
+
+def governed_search_intent_groups(
+    additional_groups: Sequence[SearchIntentGroup] = (),
+) -> Tuple[SearchIntentGroup, ...]:
+    """Merge the approved minimum with explicitly supplied governed children."""
+    by_id = {
+        group.search_intent_group_id: group
+        for group in APPROVED_MINIMUM_SEARCH_INTENT_GROUPS
+    }
+    for group in additional_groups:
+        by_id[group.search_intent_group_id] = group
+    issues = validate_search_intent_group_catalogue(tuple(by_id.values()))
+    if issues:
+        raise ValueError("Invalid search intent taxonomy: " + "; ".join(issues))
+    return tuple(sorted(by_id.values(), key=lambda group: group.search_intent_group_id))
+
+
+def resolve_imported_search_intent_groups(
+    values: Sequence[SearchIntentGroup | Mapping[str, Any]],
+) -> Tuple[SearchIntentGroup, ...]:
+    """Restore imported custom groups on top of repository-approved parents.
+
+    Project bundles intentionally persist custom children only.  The approved
+    Brand and Non-Brand parents are repository authority and are merged before
+    parent/child validation, so a valid child is not quarantined merely
+    because its approved parent was omitted from the bundle.
+    """
+
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise ValueError(
+            "Search intent taxonomy records are not a sequence and were "
+            "quarantined (dropped, not silently kept)."
+        )
+    imported: list[SearchIntentGroup] = []
+    for index, value in enumerate(values):
+        if isinstance(value, SearchIntentGroup):
+            imported.append(value)
+        elif isinstance(value, Mapping):
+            try:
+                imported.append(SearchIntentGroup.from_dict(value))
+            except (TypeError, ValueError, KeyError, AttributeError) as exc:
+                raise ValueError(
+                    f"Search intent taxonomy record {index} was malformed and "
+                    f"was quarantined (dropped, not silently kept): {exc}"
+                ) from exc
+        else:
+            raise ValueError(
+                f"Search intent taxonomy record {index} is not a mapping and "
+                "was quarantined (dropped, not silently kept)."
+            )
+    custom_groups = tuple(
+        group
+        for group in imported
+        if group.search_intent_group_id
+        not in {SEARCH_INTENT_GROUP_ID_BRAND, SEARCH_INTENT_GROUP_ID_NON_BRAND}
+    )
+    return governed_search_intent_groups(custom_groups)
+
+
+def resolve_imported_search_intent_group_versions(
+    values: Sequence[SearchIntentGroup | Mapping[str, Any]] | None,
+    *,
+    current_groups: Sequence[SearchIntentGroup] = (),
+) -> Tuple[List[dict], List[str]]:
+    """Validate the append-only Search taxonomy version history on import.
+
+    Current taxonomy records and their history have different purposes: the
+    approved Brand/Non-Brand parents and the current custom children are the
+    live catalogue, while this collection is an audit trail.  A malformed
+    history record must therefore be quarantined without discarding an
+    otherwise valid current catalogue.  In particular, do not let JSON type
+    coercion turn an invalid version or lineage reference into a usable
+    record that can later break the editor or be re-exported.
+    """
+
+    warnings: List[str] = []
+    if values is None or values == []:
+        return [], warnings
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        return [], [
+            "Search intent taxonomy version history is not a sequence and was "
+            "quarantined (dropped, not silently kept)."
+        ]
+
+    known_ids = {
+        group.search_intent_group_id for group in APPROVED_MINIMUM_SEARCH_INTENT_GROUPS
+    }
+    known_ids.update(group.search_intent_group_id for group in current_groups)
+    parsed: List[tuple[int, SearchIntentGroup]] = []
+    seen_keys: set[Tuple[str, int]] = set()
+
+    for index, value in enumerate(values):
+        if not isinstance(value, Mapping):
+            warnings.append(
+                f"Search intent taxonomy version record {index} is not a mapping "
+                "and was quarantined (dropped, not silently kept)."
+            )
+            continue
+        try:
+            group = SearchIntentGroup.from_dict(value)
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            group_id = value.get("search_intent_group_id", "<unknown>")
+            warnings.append(
+                f"Search intent taxonomy version record {index} "
+                f"(search_intent_group_id={group_id!r}) was malformed and was "
+                f"quarantined (dropped, not silently kept): {exc}"
+            )
+            continue
+        key = group.version_key
+        if key in seen_keys:
+            warnings.append(
+                f"Search intent taxonomy version record {index} "
+                f"({key[0]!r}, version {key[1]}) duplicated an existing history "
+                "record and was quarantined (dropped, not silently kept)."
+            )
+            continue
+        seen_keys.add(key)
+        parsed.append((index, group))
+
+    # A lineage reference may point to another history-only record, so do not
+    # make every parsed ID known before validating.  Accept records in
+    # dependency order; anything still unresolved after a pass is either
+    # unknown or depends on a record that was itself quarantined.  This keeps
+    # exported history from retaining references to records that are absent
+    # from the retained audit trail.
+    candidate_ids = {group.search_intent_group_id for _, group in parsed}
+    remaining = list(parsed)
+    accepted: List[tuple[int, SearchIntentGroup]] = []
+    accepted_ids = set(known_ids)
+    rejected: dict[int, str] = {}
+    while remaining:
+        progressed = False
+        next_remaining: List[tuple[int, SearchIntentGroup]] = []
+        for index, group in remaining:
+            parent = group.parent_search_intent_group_id
+            supersedes = group.supersedes_search_intent_group_id
+            issue: str | None = None
+            deferred = False
+            if parent and parent != SEARCH_INTENT_GROUP_ID_NON_BRAND:
+                issue = "has a deeper-group parent other than Non-Brand Search"
+            elif parent and parent not in accepted_ids:
+                if parent in candidate_ids:
+                    deferred = True
+                else:
+                    issue = f"references unknown parent {parent!r}"
+            elif supersedes is not None and (
+                not isinstance(supersedes, str) or not supersedes.strip()
+            ):
+                issue = f"references unknown superseded group {supersedes!r}"
+            elif supersedes not in {None, *accepted_ids}:
+                if supersedes in candidate_ids:
+                    deferred = True
+                else:
+                    issue = f"references unknown superseded group {supersedes!r}"
+            if deferred and issue is None:
+                next_remaining.append((index, group))
+                continue
+            if issue is not None:
+                rejected[index] = issue
+                continue
+            accepted.append((index, group))
+            accepted_ids.add(group.search_intent_group_id)
+            progressed = True
+        if not next_remaining:
+            break
+        if not progressed:
+            for index, group in next_remaining:
+                rejected[index] = (
+                    "references a quarantined or unresolved lineage record"
+                )
+            break
+        remaining = next_remaining
+
+    for index, group in parsed:
+        if index not in rejected:
+            continue
+        warnings.append(
+            f"Search intent taxonomy version record {index} "
+            f"({group.search_intent_group_id!r}, version "
+            f"{group.search_intent_group_version}) {rejected[index]} and was "
+            "quarantined (dropped, not silently kept)."
+        )
+    normalised = [group.to_dict() for _, group in sorted(accepted)]
+    return normalised, warnings
+
+
+def search_intent_taxonomy_fit_fingerprint(
+    activities: Sequence[object],
+    groups: Sequence[SearchIntentGroup | Mapping[str, Any]],
+    versions: Sequence[SearchIntentGroup | Mapping[str, Any]] | None,
+    *,
+    consumed_model_input_columns: Sequence[str],
+) -> str:
+    """Fingerprint the governed Search taxonomy consumed by one fit.
+
+    Only groups attached to activities whose resolved model-input column is
+    actually consumed by the fitted spec are included.  The current group
+    records and their retained lineage records are canonicalised, so a
+    change to a consumed child's name, parent, approval/evidence metadata or
+    version history invalidates the fit while unrelated taxonomy edits do not.
+    """
+
+    current = resolve_imported_search_intent_groups(groups)
+    by_id = {group.search_intent_group_id: group for group in current}
+    consumed_columns = set(consumed_model_input_columns)
+    consumed_ids = {
+        str(group_id)
+        for activity in activities
+        for group_id in [_attr(activity, "search_intent_group_id", None)]
+        if group_id
+        and (
+            str(
+                _attr(activity, "model_input_column", "")
+                or _attr(activity, "channel", "")
+            )
+            in consumed_columns
+        )
+    }
+    if not consumed_ids:
+        return ""
+
+    # Include governed ancestors as well as the directly consumed group.  The
+    # approved parent is part of the causal/reporting boundary for a child.
+    lineage_ids = set(consumed_ids)
+    changed = True
+    while changed:
+        changed = False
+        for group_id in tuple(lineage_ids):
+            parent = by_id.get(group_id)
+            parent_id = parent.parent_search_intent_group_id if parent else None
+            if parent_id and parent_id not in lineage_ids:
+                lineage_ids.add(parent_id)
+                changed = True
+
+    retained_versions, _warnings = resolve_imported_search_intent_group_versions(
+        versions, current_groups=current
+    )
+    version_payload = [
+        value
+        for value in retained_versions
+        if isinstance(value, Mapping)
+        and value.get("search_intent_group_id") in lineage_ids
+    ]
+    payload = {
+        "schema_version": 1,
+        "current_groups": [
+            by_id[group_id].to_dict()
+            for group_id in sorted(lineage_ids)
+            if group_id in by_id
+        ],
+        "version_history": sorted(
+            version_payload,
+            key=lambda value: (
+                str(value.get("search_intent_group_id", "")),
+                int(value.get("search_intent_group_version", 0)),
+            ),
+        ),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def resolve_search_intent_model_grain(
+    requested_group_ids: Sequence[str],
+    groups: Sequence[SearchIntentGroup],
+    activity_definitions: Sequence[Any] = (),
+) -> Tuple[str, ...]:
+    """Resolve an explicit Search model grain without parent/child double fit.
+
+    An empty selection means the approved parent grain. A deeper child is
+    usable only when it is selected explicitly; selecting both that child and
+    its parent is rejected *within the same applicable market* - REQ-SEARCH-004
+    §4 and REQ-SEARCH-005 §2 explicitly permit ragged market coverage (one
+    market fit at the approved parent grain while another uses an approved
+    deeper child), so a project-wide selection covering both is only a real
+    double-fit risk where a single market's activities resolve to both the
+    parent and the child.
+
+    ``activity_definitions`` (``ActivityDefinition``-like objects or mappings
+    carrying ``market`` and ``search_intent_group_id``) supplies that market
+    scope. When it is omitted - callers that only ever validate a flat group
+    selection with no per-market activity mapping available, such as the SEO
+    upload group check - this falls back to the previous project-wide
+    overlap rejection, since no market scope exists to narrow it. A ``"*"``
+    (all-markets) activity market is treated as applicable to every market,
+    since it can genuinely overlap with any market-specific row.
+
+    This helper does not infer child economics or planning eligibility from
+    taxonomy membership.
+    """
+    catalogue = governed_search_intent_groups(groups)
+    by_id = {group.search_intent_group_id: group for group in catalogue}
+    requested = tuple(
+        dict.fromkeys(
+            str(value).strip() for value in requested_group_ids if str(value).strip()
+        )
+    )
+    unknown = sorted(set(requested) - set(by_id))
+    if unknown:
+        raise ValueError(f"Unknown Search model-grain group(s): {', '.join(unknown)}")
+    if not requested:
+        return (SEARCH_INTENT_GROUP_ID_BRAND, SEARCH_INTENT_GROUP_ID_NON_BRAND)
+    parent_by_child = {
+        group_id: by_id[group_id].parent_search_intent_group_id
+        for group_id in requested
+        if by_id[group_id].parent_search_intent_group_id
+    }
+    overlap_pairs = sorted(
+        (child_id, parent_id)
+        for child_id, parent_id in parent_by_child.items()
+        if parent_id in requested
+    )
+    if not overlap_pairs:
+        return requested
+    if not activity_definitions:
+        overlap = sorted({parent_id for _, parent_id in overlap_pairs})
+        raise ValueError(
+            "Search model grain cannot select a parent and its deeper child "
+            f"together: {', '.join(overlap)}"
+        )
+    markets_by_group: Dict[str, set[str]] = {}
+    for activity in activity_definitions:
+        group_id = str(_attr(activity, "search_intent_group_id", "") or "")
+        if group_id not in requested:
+            continue
+        market = str(_attr(activity, "market", "*") or "*")
+        markets_by_group.setdefault(group_id, set()).add(market)
+
+    def _same_market_scope(left: str, right: str) -> bool:
+        left_markets = markets_by_group.get(left, set())
+        right_markets = markets_by_group.get(right, set())
+        if "*" in left_markets or "*" in right_markets:
+            return bool(left_markets) and bool(right_markets)
+        return bool(left_markets & right_markets)
+
+    conflicting = sorted(
+        {
+            parent_id
+            for child_id, parent_id in overlap_pairs
+            if _same_market_scope(child_id, parent_id)
+        }
+    )
+    if conflicting:
+        raise ValueError(
+            "Search model grain cannot select a parent and its deeper child "
+            "together within the same market: "
+            f"{', '.join(conflicting)}"
+        )
+    return requested
+
+
+def resolve_search_model_input_columns(
+    model_input_columns: Sequence[str],
+    requested_group_ids: Sequence[str],
+    groups: Sequence[SearchIntentGroup],
+    activity_definitions: Sequence[Any] = (),
+) -> Tuple[str, ...]:
+    """Resolve fitted model inputs for one explicit Search grain.
+
+    ``ModelSpec.channels`` is the engine's physical input boundary, while
+    ``ActivityDefinition.search_intent_group_id`` is the governed Search
+    taxonomy reference.  This adapter applies the latter to the former before
+    model construction.  A physical input shared by selected and unselected
+    Search groups is rejected because the current engine boundary cannot
+    represent a market-specific split of one column without double counting.
+    Non-Search or unclassified inputs remain in the fit.
+    """
+
+    catalogue = governed_search_intent_groups(groups)
+    selected = set(
+        resolve_search_intent_model_grain(
+            requested_group_ids, catalogue, activity_definitions
+        )
+    )
+    by_id = {group.search_intent_group_id: group for group in catalogue}
+    known_ids = set(by_id)
+    input_groups: Dict[str, set[str]] = {}
+    for activity in activity_definitions:
+        if isinstance(activity, Mapping):
+            input_column = str(
+                activity.get("model_input_column") or activity.get("channel") or ""
+            )
+            group_id = activity.get("search_intent_group_id")
+        else:
+            input_column = str(
+                getattr(activity, "resolved_model_input_column", "") or ""
+            )
+            group_id = getattr(activity, "search_intent_group_id", None)
+        if not input_column or input_column not in model_input_columns or not group_id:
+            continue
+        group_id = str(group_id)
+        if group_id not in known_ids:
+            raise ValueError(
+                f"Activity input '{input_column}' references unknown Search intent "
+                f"group '{group_id}'."
+            )
+        input_groups.setdefault(input_column, set()).add(group_id)
+
+    resolved: list[str] = []
+    resolved_groups: set[str] = set()
+    for column in model_input_columns:
+        groups_for_input = input_groups.get(column)
+        if not groups_for_input:
+            resolved.append(column)
+            continue
+        selected_groups = groups_for_input & selected
+        unselected_groups = groups_for_input - selected
+        if selected_groups and unselected_groups:
+            raise ValueError(
+                f"Model input '{column}' is mapped to both selected Search grain "
+                f"{sorted(selected_groups)} and unselected grain "
+                f"{sorted(unselected_groups)}; split the physical inputs before fitting."
+            )
+        if selected_groups:
+            resolved.append(column)
+            resolved_groups.update(selected_groups)
+    if not resolved:
+        raise ValueError(
+            "The selected Search model grain does not resolve to any model input "
+            "column."
+        )
+    # A deeper child is only ever in `selected` because the analyst
+    # explicitly picked it (the approved Brand/Non-Brand parents are the
+    # only implicit default, and a project with no Paid Search activity at
+    # all legitimately has neither mapped to any column - that must not
+    # block an ordinary non-Search fit). An explicitly selected child is
+    # different: it has no sensible "silently unused" reading, so if it
+    # never appeared in `input_groups` above (in any market) the persisted
+    # grain would claim a group that silently contributes nothing to the
+    # posterior. Checked against `resolved_groups`, not raw membership in
+    # `input_groups`, so a child whose only mapped column lost the
+    # selected/unselected conflict check above still counts as unresolved
+    # rather than passing on a column that was ultimately rejected.
+    unresolved_children = sorted(
+        group_id
+        for group_id in selected
+        if by_id.get(group_id) is not None
+        and by_id[group_id].parent_search_intent_group_id
+        and group_id not in resolved_groups
+    )
+    if unresolved_children:
+        raise ValueError(
+            "The following selected deeper Search group(s) have no mapped "
+            "physical model input in any applicable market: "
+            f"{', '.join(unresolved_children)}. Map an activity to this "
+            "group, or remove it from the Search model grain, before "
+            "fitting."
+        )
+    return tuple(resolved)
+
+
 # ---------------------------------------------------------------------------
-# Platform axis (orthogonal to intent group; Phase B implementation work
-# named, but not done, by the REQ-SEARCH-004 addendum).
+# Platform axis (orthogonal to intent group; Google/Bing are the governed
+# current values).
 # ---------------------------------------------------------------------------
 
 SEARCH_PLATFORM_GOOGLE = "google"
@@ -229,9 +726,13 @@ def validate_activity_search_taxonomy(
       `NON_PAID_SEARCH_CAMPAIGN_TYPES` must not also carry a
       `search_intent_group_id` or `search_platform` (Decision 2's PMax/
       Demand Gen/YouTube exclusion).
+    - A deeper Non-Brand child remains excluded from planning and monetary
+      economics until it has child-level observed and governed support.
     """
     issues: List[str] = []
-    group_ids = {g.search_intent_group_id for g in groups}
+    catalogue = governed_search_intent_groups(groups)
+    by_id = {g.search_intent_group_id: g for g in catalogue}
+    group_ids = set(by_id)
 
     for activity in activities:
         activity_id = _attr(activity, "activity_id", "<unknown>")
@@ -245,6 +746,32 @@ def validate_activity_search_taxonomy(
                 f"search_intent_group_id '{group_id}' - not in the supplied "
                 "governed taxonomy."
             )
+        referenced_group = by_id.get(group_id) if group_id else None
+        if (
+            referenced_group is not None
+            and referenced_group.parent_search_intent_group_id is not None
+        ):
+            planning = _attr(activity, "planning_eligibility", "excluded")
+            economic_treatment = _attr(activity, "economic_treatment", "response_only")
+            if planning != "excluded":
+                issues.append(
+                    f"Activity '{activity_id}' references deeper Search intent group "
+                    f"'{group_id}' but has planning_eligibility '{planning}'. "
+                    "Deeper-child planning remains excluded until child-level "
+                    "evidence is approved."
+                )
+            if economic_treatment in {
+                "paid_media_cost",
+                "fully_loaded_cost",
+                "campaign_cost",
+            }:
+                issues.append(
+                    f"Activity '{activity_id}' references deeper Search intent group "
+                    f"'{group_id}' but has cost-bearing economic_treatment "
+                    f"'{economic_treatment}'. Deeper-child economics remain "
+                    "unavailable until child-level observed cost support is "
+                    "approved."
+                )
         if platform and platform not in SEARCH_PLATFORMS:
             issues.append(
                 f"Activity '{activity_id}' has unknown search_platform "
@@ -370,3 +897,73 @@ def roll_up_paid_search_reporting(
         )
 
     return PaidSearchReportingRollup(**totals)
+
+
+def roll_up_paid_search_reporting_hierarchy(
+    cells: Sequence[SearchReportingCell],
+    groups: Sequence[SearchIntentGroup],
+) -> dict:
+    """Roll up ragged parent/child intent coverage without parent duplication.
+
+    The existing ``PaidSearchReportingRollup`` remains the stable four-leaf
+    API.  This general form is used when explicitly governed deeper
+    Non-Brand children are present; economics/planning eligibility is not
+    inferred from their existence.
+    """
+    catalogue = governed_search_intent_groups(groups)
+    by_id = {group.search_intent_group_id: group for group in catalogue}
+    leaf_totals: Dict[Tuple[str, str], float] = {}
+    supplied_by_platform: Dict[str, set[str]] = {}
+    for cell in cells:
+        if cell.search_intent_group_id not in by_id:
+            raise ValueError(
+                f"Unknown governed Search intent group '{cell.search_intent_group_id}'."
+            )
+        if cell.platform not in SEARCH_PLATFORMS:
+            raise ValueError(f"Unknown Search platform '{cell.platform}'.")
+        supplied_by_platform.setdefault(cell.platform, set()).add(
+            cell.search_intent_group_id
+        )
+        key = (cell.search_intent_group_id, cell.platform)
+        leaf_totals[key] = leaf_totals.get(key, 0.0) + float(cell.value)
+    for platform, supplied_ids in supplied_by_platform.items():
+        for parent in by_id.values():
+            child_ids = {
+                group.search_intent_group_id
+                for group in by_id.values()
+                if group.parent_search_intent_group_id == parent.search_intent_group_id
+            }
+            overlap = sorted({parent.search_intent_group_id} & supplied_ids)
+            if overlap and child_ids & supplied_ids:
+                raise ValueError(
+                    f"Search hierarchy input for platform '{platform}' contains "
+                    f"parent '{parent.search_intent_group_id}' and child group(s) "
+                    f"{sorted(child_ids & supplied_ids)}; provide one governed "
+                    "model/reporting grain to prevent double counting."
+                )
+    group_totals: Dict[str, float] = {
+        group.search_intent_group_id: 0.0 for group in catalogue
+    }
+    for (group_id, _platform), value in leaf_totals.items():
+        current: Optional[str] = group_id
+        while current is not None:
+            group = by_id.get(current)
+            if group is None:
+                break
+            group_totals[current] += value
+            current = group.parent_search_intent_group_id
+    non_brand_children = [
+        group.search_intent_group_id
+        for group in catalogue
+        if group.parent_search_intent_group_id == SEARCH_INTENT_GROUP_ID_NON_BRAND
+    ]
+    return {
+        "leaves": {
+            f"{group_id}:{platform}": value
+            for (group_id, platform), value in sorted(leaf_totals.items())
+        },
+        "groups": group_totals,
+        "total_paid_search": group_totals[SEARCH_INTENT_GROUP_ID_BRAND]
+        + group_totals[SEARCH_INTENT_GROUP_ID_NON_BRAND],
+        "non_brand_children": non_brand_children,
+    }

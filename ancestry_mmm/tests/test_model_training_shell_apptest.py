@@ -8,13 +8,34 @@ changed here - this is presentation only.
 """
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
+from ancestry_mmm.application.fit_job_service import FitJobStore, FitJobSubmission
+from ancestry_mmm.application.model_fit_service import SEARCH_CANDIDATE_A_ENGINE
+from ancestry_mmm.core.activities import ActivityDefinition
 from ancestry_mmm.core.schema import ModelSpec
+from ancestry_mmm.core.hierarchical_model import FHModelMeta
+from ancestry_mmm.core.search_intent_taxonomy import (
+    SEARCH_INTENT_GROUP_ID_BRAND,
+    SEARCH_INTENT_GROUP_ID_NON_BRAND,
+)
+from ancestry_mmm.core.seo_visibility import (
+    GscPositionRow,
+    SeoModelFitInputs,
+    compute_weekly_positional_visibility_series,
+)
+from ancestry_mmm.core.google_trends_anchor import (
+    GoogleTrendsAnchorFitInputs,
+    GoogleTrendsAnchorObservation,
+    GoogleTrendsQuerySetDefinition,
+    UK_BRAND_DEMAND_QUERY_EXPRESSION,
+    UK_BRAND_DEMAND_QUERY_SET_ID,
+)
 
 st.page_link = lambda *a, **k: None
 
@@ -165,17 +186,601 @@ def test_completed_fit_card_reflects_real_approval_state():
 
 def test_progress_display_never_shows_a_percentage_before_any_real_progress_report():
     """Root brief rule: no fake progress animation implying sampling
-    progress the backend cannot genuinely report. The page's progress bar
-    is only ever updated from progress_state['done']/['total'], which
-    fit_model's real progress_callback populates - confirmed here by static
-    inspection that no other progress_bar.progress(...) call feeds it a
-    time-based or otherwise fabricated fraction."""
+    progress the backend cannot genuinely report. The page's durable-job
+    progress bar is derived only from persisted completed/total steps; the
+    worker populates those fields from fit_model's real progress callback."""
     source = PAGE.read_text(encoding="utf-8")
-    assert "progress_bar.progress(frac)" in source
-    assert (
-        'frac = min(1.0, progress_state["done"] / max(progress_state["total"], 1))'
-        in source
+    assert "st.progress(fraction)" in source
+    assert "min(1.0, progress.completed_steps / progress.total_steps)" in source
+    assert "completed_steps" in source
+    assert "total_steps" in source
+
+
+def test_adopted_durable_fit_remains_available_for_fingerprint_verified_recovery(
+    monkeypatch, tmp_path
+):
+    """A refreshed session must still expose an already-adopted job."""
+
+    project_name = "UK Production 2026"
+    monkeypatch.setenv("ANCESTRY_MMM_FIT_JOB_ROOT", str(tmp_path))
+    store = FitJobStore(tmp_path, project_name)
+    record = store.create(
+        FitJobSubmission(
+            project_id=project_name,
+            project_display_name=project_name,
+            engine="pymc",
+            model_type="shared",
+            sampler_settings={"draws": 4, "tune": 2, "chains": 1},
+            random_seed=42,
+            data_fingerprint="data-fp",
+            model_spec_fingerprint="spec-fp",
+            fit_input_fingerprints={"seo": "seo-fp", "frame": "frame-fp"},
+            build_kwargs={"frame": {"values": [1]}, "model_spec": {"x": 1}},
+        )
     )
-    # No second, independent progress source (e.g. a hardcoded sleep-based
-    # counter) exists anywhere else in the file.
-    assert source.count("progress_bar.progress(") == 2  # 0.0 init + real frac update
+    store.transition(record.job_id, "running")
+    store.transition(record.job_id, "succeeded")
+    store.mark_adopted(record.job_id, "old-session-run")
+
+    at = _run_at(project_name=project_name)
+
+    assert not at.exception, f"page raised: {at.exception}"
+    assert any(button.label == "Re-adopt completed fit" for button in at.button)
+
+
+def test_adopting_durable_fit_restores_the_frozen_search_grain_frame(
+    monkeypatch, tmp_path
+):
+    """Downstream replay must use the same sliced frame the worker fitted."""
+
+    project_name = "grain-project"
+    monkeypatch.setenv("ANCESTRY_MMM_FIT_JOB_ROOT", str(tmp_path))
+    base_frame = _frame()
+    frozen_frame = dict(base_frame)
+    frozen_frame["channels"] = ["TV"]
+    frozen_frame["X_media"] = base_frame["X_media"][:, :1]
+    frozen_spec = _spec_dict()
+    frozen_spec["channels"] = ["TV"]
+    store = FitJobStore(tmp_path, project_name)
+    record = store.create(
+        FitJobSubmission(
+            project_id=project_name,
+            project_display_name=project_name,
+            engine="pymc",
+            model_type="shared",
+            sampler_settings={
+                "draws": 4,
+                "tune": 2,
+                "chains": 1,
+                "target_accept": 0.83,
+            },
+            random_seed=42,
+            data_fingerprint="data-fp",
+            model_spec_fingerprint="spec-fp",
+            fit_input_fingerprints={"seo": "seo-fp", "frame": "data-fp"},
+            build_kwargs={"frame": frozen_frame, "model_spec": frozen_spec},
+        )
+    )
+    store.transition(record.job_id, "running")
+    store.transition(record.job_id, "succeeded")
+    fitted_meta = FHModelMeta(
+        markets=["UK"],
+        outcome_ids=[OUTCOME_ID],
+        channels=["TV"],
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0],
+        dna_outcome_id=OUTCOME_ID,
+        dna_lag_weeks=0,
+        unpooled_markets=[],
+        control_names=[],
+    )
+
+    def fake_load_succeeded_fit(backend, job_id, **kwargs):
+        return object(), fitted_meta, backend.store.get(job_id)
+
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service.LocalFitJobBackend.load_succeeded_fit",
+        fake_load_succeeded_fit,
+    )
+    import ancestry_mmm.core.predict as predict
+
+    monkeypatch.setattr(predict, "extract_posterior_params", lambda *args: {"ok": 1})
+
+    at = _run_at(project_name=project_name, frame=base_frame)
+    adopt = next(
+        button for button in at.button if button.label == "Adopt completed fit"
+    )
+    at = adopt.click().run()
+
+    assert not at.exception, f"fit adoption raised: {at.exception}"
+    assert at.session_state["frame"]["channels"] == ["TV"]
+    assert at.session_state["frame"]["X_media"].shape == (len(base_frame["X_media"]), 1)
+    assert at.session_state["model_spec"]["channels"] == ["TV"]
+    assert at.session_state["fitted_model_spec"]["channels"] == ["TV"]
+    assert at.session_state["prepared_model_spec"]["channels"] == CHANNELS
+    assert at.session_state["prepared_frame"]["channels"] == CHANNELS
+    assert at.session_state["mcmc_draws"] == 4
+    assert at.session_state["mcmc_tune"] == 2
+    assert at.session_state["mcmc_chains"] == 1
+    assert at.session_state["mcmc_target_accept"] == 0.83
+    assert at.session_state["mcmc_random_seed"] == 42
+
+
+def _submit_completed_job(store, project_name, base_frame, *, project_run_id):
+    return store.create(
+        FitJobSubmission(
+            project_id=project_name,
+            project_display_name=project_name,
+            engine="pymc",
+            model_type="shared",
+            sampler_settings={
+                "draws": 4,
+                "tune": 2,
+                "chains": 1,
+                "target_accept": 0.9,
+            },
+            random_seed=42,
+            data_fingerprint="data-fp",
+            model_spec_fingerprint="spec-fp",
+            fit_input_fingerprints={"seo": "seo-fp", "frame": "data-fp"},
+            build_kwargs={"frame": base_frame, "model_spec": _spec_dict()},
+            project_run_id=project_run_id,
+        )
+    )
+
+
+def _fitted_meta():
+    return FHModelMeta(
+        markets=["UK"],
+        outcome_ids=[OUTCOME_ID],
+        channels=CHANNELS,
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0],
+        dna_outcome_id=OUTCOME_ID,
+        dna_lag_weeks=0,
+        unpooled_markets=[],
+        control_names=[],
+    )
+
+
+def test_adopting_a_different_run_clears_previous_run_downstream_evidence(
+    monkeypatch, tmp_path
+):
+    """Regression for review PRRT_kwDOTd28Js6fnFak: adopting a durable fit
+    with a genuinely different run identity must clear scorecard,
+    diagnostics, approval readiness, the curve-bank reference, scenarios,
+    and the model approval bound to the PREVIOUS posterior - not just
+    model_approval - and tell the analyst what must be recomputed."""
+
+    project_name = "adoption-clear-project"
+    monkeypatch.setenv("ANCESTRY_MMM_FIT_JOB_ROOT", str(tmp_path))
+    base_frame = _frame()
+    store = FitJobStore(tmp_path, project_name)
+    record = _submit_completed_job(
+        store, project_name, base_frame, project_run_id="new-run-id"
+    )
+    store.transition(record.job_id, "running")
+    store.transition(record.job_id, "succeeded")
+
+    def fake_load_succeeded_fit(backend, job_id, **kwargs):
+        return object(), _fitted_meta(), backend.store.get(job_id)
+
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service.LocalFitJobBackend.load_succeeded_fit",
+        fake_load_succeeded_fit,
+    )
+    import ancestry_mmm.core.predict as predict
+
+    monkeypatch.setattr(predict, "extract_posterior_params", lambda *args: {"ok": 1})
+
+    at = _run_at(
+        project_name=project_name,
+        frame=base_frame,
+        model_run_id="old-run-id",
+        model_trained=True,
+        scorecard={"stale": "old"},
+        diagnostics_artefact={"stale": "old"},
+        approval_readiness={"overall_ready": True},
+        curve_bank_entry_id="old-entry",
+        scenarios=[{"name": "old-scenario"}],
+        model_approval={"approved_by": "Someone"},
+    )
+    adopt = next(
+        button for button in at.button if button.label == "Adopt completed fit"
+    )
+    at = adopt.click().run()
+
+    assert not at.exception, f"fit adoption raised: {at.exception}"
+    assert at.session_state["model_run_id"] == "new-run-id"
+    assert at.session_state["scorecard"] is None
+    assert at.session_state["diagnostics_artefact"] is None
+    assert at.session_state["approval_readiness"] is None
+    assert at.session_state["curve_bank_entry_id"] is None
+    assert at.session_state["scenarios"] == []
+    assert at.session_state["model_approval"] is None
+    assert any(
+        "cleared" in (w.value or "") and "diagnostics" in (w.value or "").lower()
+        for w in at.warning
+    )
+
+
+def test_readopting_the_same_run_after_session_recovery_preserves_evidence(
+    monkeypatch, tmp_path
+):
+    """Non-regression: re-adopting the SAME run identity - fingerprint-
+    verified recovery of an already-adopted job after a session/browser
+    loss, not a new fit - must not destroy valid diagnostics/approval/
+    curve/scenario evidence that still applies to that exact run."""
+
+    project_name = "adoption-recovery-project"
+    monkeypatch.setenv("ANCESTRY_MMM_FIT_JOB_ROOT", str(tmp_path))
+    base_frame = _frame()
+    store = FitJobStore(tmp_path, project_name)
+    record = _submit_completed_job(
+        store, project_name, base_frame, project_run_id="same-run-id"
+    )
+    store.transition(record.job_id, "running")
+    store.transition(record.job_id, "succeeded")
+    store.mark_adopted(record.job_id, "same-run-id")
+
+    def fake_load_succeeded_fit(backend, job_id, **kwargs):
+        return object(), _fitted_meta(), backend.store.get(job_id)
+
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service.LocalFitJobBackend.load_succeeded_fit",
+        fake_load_succeeded_fit,
+    )
+    import ancestry_mmm.core.predict as predict
+
+    monkeypatch.setattr(predict, "extract_posterior_params", lambda *args: {"ok": 1})
+
+    at = _run_at(
+        project_name=project_name,
+        frame=base_frame,
+        # This session's active run is already the same one being
+        # re-adopted (project_run_id="same-run-id" above).
+        model_run_id="same-run-id",
+        model_trained=True,
+        scorecard={"current": "still valid"},
+        diagnostics_artefact={"current": "still valid"},
+        approval_readiness={"overall_ready": True},
+        curve_bank_entry_id="current-entry",
+        scenarios=[{"name": "current-scenario"}],
+        model_approval={"approved_by": "Someone"},
+    )
+    adopt = next(
+        button for button in at.button if button.label == "Re-adopt completed fit"
+    )
+    at = adopt.click().run()
+
+    assert not at.exception, f"fit re-adoption raised: {at.exception}"
+    assert at.session_state["model_run_id"] == "same-run-id"
+    assert at.session_state["scorecard"] == {"current": "still valid"}
+    assert at.session_state["diagnostics_artefact"] == {"current": "still valid"}
+    assert at.session_state["approval_readiness"] == {"overall_ready": True}
+    assert at.session_state["curve_bank_entry_id"] == "current-entry"
+    assert at.session_state["scenarios"] == [{"name": "current-scenario"}]
+    assert at.session_state["model_approval"] == {"approved_by": "Someone"}
+    assert not any("cleared" in (w.value or "").lower() for w in at.warning), (
+        "recovery of the same run must not report evidence as cleared"
+    )
+
+
+def test_adopting_search_fit_keeps_unsliced_preparation_boundary_available(
+    monkeypatch, tmp_path
+):
+    """A fitted Search subset must not become the only model configuration."""
+
+    project_name = "grain-invalidation-project"
+    monkeypatch.setenv("ANCESTRY_MMM_FIT_JOB_ROOT", str(tmp_path))
+    base_frame = _frame()
+    frozen_frame = dict(base_frame)
+    frozen_frame["channels"] = ["TV"]
+    frozen_frame["X_media"] = base_frame["X_media"][:, :1]
+    frozen_spec = _spec_dict()
+    frozen_spec["channels"] = ["TV"]
+    store = FitJobStore(tmp_path, project_name)
+    record = store.create(
+        FitJobSubmission(
+            project_id=project_name,
+            project_display_name=project_name,
+            engine="pymc",
+            model_type="shared",
+            sampler_settings={"draws": 4, "tune": 2, "chains": 1},
+            random_seed=42,
+            data_fingerprint="data-fp",
+            model_spec_fingerprint="spec-fp",
+            fit_input_fingerprints={"seo": "seo-fp", "frame": "data-fp"},
+            build_kwargs={"frame": frozen_frame, "model_spec": frozen_spec},
+        )
+    )
+    store.transition(record.job_id, "running")
+    store.transition(record.job_id, "succeeded")
+    fitted_meta = FHModelMeta(
+        markets=["UK"],
+        outcome_ids=[OUTCOME_ID],
+        channels=["TV"],
+        dna_channels=[],
+        dna_channel_idx=[],
+        non_dna_idx=[0],
+        dna_outcome_id=OUTCOME_ID,
+        dna_lag_weeks=0,
+        unpooled_markets=[],
+        control_names=[],
+    )
+
+    monkeypatch.setattr(
+        "ancestry_mmm.application.fit_job_service.LocalFitJobBackend.load_succeeded_fit",
+        lambda backend, job_id, **kwargs: (
+            object(),
+            fitted_meta,
+            backend.store.get(job_id),
+        ),
+    )
+    import ancestry_mmm.core.predict as predict
+
+    monkeypatch.setattr(predict, "extract_posterior_params", lambda *args: {"ok": 1})
+
+    at = _run_at(project_name=project_name, frame=base_frame)
+    next(
+        button for button in at.button if button.label == "Adopt completed fit"
+    ).click()
+    at.run()
+
+    assert not at.exception, f"fit adoption raised: {at.exception}"
+    assert at.session_state["model_spec"]["channels"] == ["TV"]
+    assert at.session_state["prepared_model_spec"]["channels"] == CHANNELS
+    assert at.session_state["fitted_model_spec"]["channels"] == ["TV"]
+
+
+def test_changed_seo_boundary_clears_adopted_fit_and_downstream_evidence():
+    """Replacing SEO observations cannot leave a stale posterior approved."""
+
+    weeks = [str(pd.Timestamp(week).date()) for week in _frame()["dates"]]
+    existing_seo = SeoModelFitInputs.from_observations(
+        compute_weekly_positional_visibility_series(
+            {("UK", week): [GscPositionRow("ancestry", 1.0, 100.0)] for week in weeks}
+        ),
+        model_markets=["UK"] * len(weeks),
+        model_weeks=weeks,
+    )
+    at = _run_at(
+        model_trained=True,
+        model_type="shared",
+        model_run_id="old-run",
+        trace=object(),
+        posterior_params={"old": 1},
+        model_approval={"approved_by": "old reviewer"},
+        seo_fit_inputs=existing_seo.to_dict(),
+    )
+    uploader = next(
+        item for item in at.file_uploader if "GSC CSV" in (item.label or "")
+    )
+    rows = [
+        "market,week,impressions,dimension_label,position",
+        *(
+            f"UK,{pd.Timestamp(week).date()},100,ancestry,{1 if index % 2 == 0 else 2}"
+            for index, week in enumerate(_frame()["dates"])
+        ),
+    ]
+    uploader.set_value(("gsc.csv", "\n".join(rows).encode(), "text/csv")).run()
+    next(
+        button
+        for button in at.button
+        if button.label == "Validate and load SEO visibility"
+    ).click().run()
+
+    assert not at.exception, f"SEO upload raised: {at.exception}"
+    assert "seo_fit_inputs" in at.session_state, [error.value for error in at.error]
+    assert at.session_state["model_trained"] is False
+    assert at.session_state["trace"] is None
+    assert at.session_state["posterior_params"] is None
+    assert at.session_state["model_approval"] is None
+    assert any(
+        "SEO visibility boundary changed" in (warning.value or "")
+        for warning in at.warning
+    )
+
+
+def test_seo_upload_rejects_an_ungoverned_explicit_group_id():
+    at = _run_at(seo_selected_group_ids_text="arbitrary_group")
+    uploader = next(
+        item for item in at.file_uploader if "GSC CSV" in (item.label or "")
+    )
+    rows = [
+        "market,week,impressions,seo_group_id,dimension_label,position",
+        *(
+            f"UK,{pd.Timestamp(week).date()},100,arbitrary_group,ancestry,1"
+            for week in _frame()["dates"]
+        ),
+    ]
+    uploader.set_value(("gsc.csv", "\n".join(rows).encode(), "text/csv")).run()
+    next(
+        button
+        for button in at.button
+        if button.label == "Validate and load SEO visibility"
+    ).click().run()
+
+    assert not at.exception, f"SEO upload raised: {at.exception}"
+    assert any(
+        "Unknown Search model-grain group" in (error.value or "") for error in at.error
+    )
+    assert "seo_fit_inputs" not in at.session_state
+
+
+def _google_trends_anchor(raw_offset: float = 0.0):
+    weeks = [str(pd.Timestamp(week).date()) for week in _frame()["dates"]]
+    query_set = GoogleTrendsQuerySetDefinition(
+        query_set_id=UK_BRAND_DEMAND_QUERY_SET_ID,
+        branded_terms=tuple(UK_BRAND_DEMAND_QUERY_EXPRESSION.split(" + ")),
+        geography="GB",
+        time_range_start=weeks[0],
+        time_range_end=weeks[-1],
+    )
+    observations = tuple(
+        GoogleTrendsAnchorObservation(
+            query_set_id=query_set.query_set_id,
+            week=week,
+            raw_index=40.0 + index + raw_offset,
+            anchor_value=(40.0 + index + raw_offset) / 100.0,
+        )
+        for index, week in enumerate(weeks)
+    )
+    return GoogleTrendsAnchorFitInputs(
+        query_set=query_set,
+        observations=observations,
+        model_weeks=tuple(weeks),
+    )
+
+
+def test_changed_candidate_a_trends_anchor_clears_fit_and_downstream_evidence():
+    at = _run_at(
+        model_trained=True,
+        trace=object(),
+        posterior_params={"old": 1},
+        model_meta=SimpleNamespace(causal_graph_engine=SEARCH_CANDIDATE_A_ENGINE),
+        model_approval={"approved_by": "old reviewer"},
+        google_trends_anchor=_google_trends_anchor().to_dict(),
+        gt_geography="GB",
+    )
+    uploader = next(
+        item for item in at.file_uploader if "Google Trends CSV" in (item.label or "")
+    )
+    rows = "week,raw_index\n" + "\n".join(
+        f"{week},{50 + index}" for index, week in enumerate(_frame()["dates"])
+    )
+    uploader.set_value(("trends.csv", rows.encode(), "text/csv")).run()
+    at = (
+        next(
+            button
+            for button in at.button
+            if button.label == "Validate and load Google Trends anchor"
+        )
+        .click()
+        .run()
+    )
+
+    assert not at.exception, f"Trends upload raised: {at.exception}"
+    assert at.session_state["model_trained"] is False
+    assert at.session_state["trace"] is None
+    assert at.session_state["posterior_params"] is None
+    assert at.session_state["model_approval"] is None
+    assert any(
+        "Google Trends Candidate A anchor changed" in (warning.value or "")
+        for warning in at.warning
+    )
+
+
+def test_non_approved_candidate_a_trends_identity_is_rejected():
+    at = _run_at(gt_query_set_id="ad_hoc_query_set", gt_geography="GB")
+    uploader = next(
+        item for item in at.file_uploader if "Google Trends CSV" in (item.label or "")
+    )
+    rows = "week,raw_index\n" + "\n".join(
+        f"{week},{50 + index}" for index, week in enumerate(_frame()["dates"])
+    )
+    uploader.set_value(("trends.csv", rows.encode(), "text/csv")).run()
+    at = (
+        next(
+            button
+            for button in at.button
+            if button.label == "Validate and load Google Trends anchor"
+        )
+        .click()
+        .run()
+    )
+
+    assert not at.exception, f"Trends validation raised: {at.exception}"
+    assert any(
+        "approved UK Google Trends query-set ID" in (error.value or "")
+        for error in at.error
+    )
+
+
+def test_search_model_grain_reaches_the_proposed_model_builder(monkeypatch):
+    """The selected Search grain changes the physical fit input boundary."""
+
+    base = _frame()
+    values = np.column_stack((base["X_media"], base["X_media"][:, :1] * 0.5))
+    base["X_media"] = values
+    base["channels"] = ["PaidBrand", "PaidNonBrand", "TV"]
+    base["df"] = base["df"].copy()
+    base["df"]["PaidBrand"] = values[:, 0]
+    base["df"]["PaidNonBrand"] = values[:, 1]
+    base["df"]["TV"] = values[:, 2]
+    spec = ModelSpec(
+        date_col="date",
+        market_col="market",
+        markets=["UK"],
+        segment_outcomes={"New": OUTCOME_ID},
+        channels=base["channels"],
+    ).to_dict()
+    activities = [
+        ActivityDefinition(
+            activity_id="paid-brand",
+            channel="PaidBrand",
+            activity_ownership="paid",
+            model_role="intervention",
+            economic_treatment="paid_media_cost",
+            planning_eligibility="excluded",
+            source="test",
+            model_input_column="PaidBrand",
+            search_intent_group_id=SEARCH_INTENT_GROUP_ID_BRAND,
+            search_platform="google",
+        ).to_dict(),
+        ActivityDefinition(
+            activity_id="paid-non-brand",
+            channel="PaidNonBrand",
+            activity_ownership="paid",
+            model_role="intervention",
+            economic_treatment="paid_media_cost",
+            planning_eligibility="excluded",
+            source="test",
+            model_input_column="PaidNonBrand",
+            search_intent_group_id=SEARCH_INTENT_GROUP_ID_NON_BRAND,
+            search_platform="google",
+        ).to_dict(),
+    ]
+    captured = {}
+
+    def fake_build_model_for_spec(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(model=object(), meta={})
+
+    import ancestry_mmm.application.model_fit_service as fit_service
+    import ancestry_mmm.core.diagnostics as diagnostics
+
+    monkeypatch.setattr(fit_service, "build_model_for_spec", fake_build_model_for_spec)
+    monkeypatch.setattr(
+        diagnostics,
+        "prior_predictive_summary",
+        lambda *args, **kwargs: {
+            "n_samples": kwargs["n_samples"],
+            "random_seed": kwargs["random_seed"],
+            "rows": [],
+            "warnings": [],
+        },
+    )
+
+    at = _run_at(
+        frame=base,
+        model_spec=spec,
+        activity_definitions=activities,
+        search_intent_model_grain=[SEARCH_INTENT_GROUP_ID_BRAND],
+    )
+    at = (
+        next(
+            button
+            for button in at.button
+            if button.label == "Preview prior predictive (no fitting)"
+        )
+        .click()
+        .run()
+    )
+
+    assert not at.exception, f"preview raised: {at.exception}"
+    assert captured["model_spec"].channels == ["PaidBrand", "TV"]
+    assert captured["frame"]["channels"] == ["PaidBrand", "TV"]
+    assert captured["frame"]["X_media"].shape == (len(base["X_media"]), 2)
