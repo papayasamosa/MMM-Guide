@@ -45,6 +45,24 @@ Do not rely on adding the workflow only inside a feature PR that has not yet rea
 
 ## One-time Claude authentication
 
+This workflow depends on two **separate** authentication layers - both are
+required, and configuring one does not configure the other:
+
+1. **Claude/Anthropic API authentication** - proves the workflow is
+   allowed to call the Claude API. Configured via the
+   `CLAUDE_CODE_OAUTH_TOKEN` repository secret (or `ANTHROPIC_API_KEY`),
+   below.
+2. **GitHub-side authentication for the official Claude GitHub App** - lets
+   the App act on this repository (checking out code, posting the review
+   comment) via a short-lived token the App exchanges for a GitHub Actions
+   OIDC token. This is why the workflow's `permissions:` block grants
+   `id-token: write`: this workflow does not supply a custom `github_token`
+   input, so the App's default OIDC-based GitHub authentication is what's
+   in effect, and Anthropic's own FAQ states that path requires
+   `id-token: write` to function. See
+   [Install the official Claude GitHub App](#install-the-official-claude-github-app)
+   below for the App-installation half of this layer.
+
 Anthropic's official Claude Code GitHub Action supports either:
 
 - a Claude Code OAuth token, or
@@ -202,8 +220,9 @@ The workflow:
 - grants repository contents read-only access, and requests only the
   additional scopes actually used (`pull-requests: read` to resolve the PR
   head/base SHAs, `issues: write` to post the review comment, `actions: read`
-  to let Claude inspect CI) - no `id-token` permission is requested, since
-  authentication uses a static secret, not OIDC
+  to let Claude inspect CI, `id-token: write` because the official Claude
+  GitHub App's default GitHub-side authentication requires it - see
+  [One-time Claude authentication](#one-time-claude-authentication) above)
 - disables Edit and Write tools
 - does not enable arbitrary Bash for Claude
 - tells Claude not to commit/push/merge

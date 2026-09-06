@@ -21,14 +21,25 @@ concurrency:
 # final review comment and reading prior ones for duplicate detection (PR
 # conversation comments are Issues-API objects even for pull requests);
 # actions:read is forwarded to Claude via additional_permissions so it can
-# inspect CI results. No id-token permission is granted - this workflow
-# authenticates with a static claude_code_oauth_token secret, not OIDC
-# federation, so id-token:write is unused and intentionally omitted.
+# inspect CI results.
+#
+# id-token: write is required even though CLAUDE_CODE_OAUTH_TOKEN is set.
+# These are two separate authentication layers: claude_code_oauth_token
+# authenticates the action's calls to the Claude/Anthropic API, while
+# id-token: write is required by the *official Claude GitHub App's* default
+# GitHub-side authentication, which exchanges a GitHub Actions OIDC token
+# for the app's own GitHub credentials. This workflow does not supply a
+# custom `github_token` input to anthropics/claude-code-action, so the
+# default GitHub App path is what's in effect, and Anthropic's own FAQ
+# ("Why am I getting OIDC authentication errors?") states id-token: write
+# is required for it to function - omitting it does not disable OIDC, it
+# just makes the GitHub-side auth fail at runtime.
 permissions:
   contents: read
   pull-requests: read
   issues: write
   actions: read
+  id-token: write
 
 jobs:
   claude-fallback-review:
