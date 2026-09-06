@@ -3304,7 +3304,14 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
                     for p in meta_dict["pathway_catalogue_at_fit"]
                 ]
             result["model_meta"] = FHModelMeta(**meta_dict)
-        except TypeError:
+        except (TypeError, ValueError, KeyError, AttributeError):
+            # Widened for the same reason as the frame-reconstruction except
+            # clause below: a malformed OutcomeDefinition/OutcomeGroupDefinition/
+            # OutcomeGroupTreatment/MediaOutcomePathway record inside a
+            # corrupted model_meta snapshot can raise ValueError from
+            # __post_init__ validation, not only TypeError from a missing
+            # required field - either must resolve to "no model_meta",
+            # never an uncaught crash, per this function's own contract.
             result["model_meta"] = None
 
     fit_input = (
@@ -3345,7 +3352,20 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
                 if imported.get("official_prepared_data") is not None
                 else "exploratory"
             )
-        except (ValueError, KeyError):
+        except (TypeError, ValueError, KeyError, AttributeError):
+            # Independent-review finding: this function's own docstring
+            # promises "never raises - callers decide what an incomplete
+            # reconstruction means", but ModelSpec.from_dict(fitted_spec_dict)
+            # above raises TypeError (not ValueError/KeyError) for a
+            # malformed fitted_model_spec/model_spec payload - e.g. one
+            # missing required fields - which this except clause did not
+            # catch. That let a malformed spec crash every caller
+            # (09_Project_Export.py's import handler directly, and
+            # verify_imported_approval/audit_project_resumability via
+            # current_model_identity_fingerprints) instead of the documented
+            # "incomplete reconstruction, frame stays None" outcome. Widened
+            # to the same four-exception tuple used throughout this module's
+            # other malformed-payload quarantine points.
             result["frame"] = None
 
     if imported.get("trace") is not None and result["model_meta"] is not None:
@@ -3364,7 +3384,11 @@ def reconstruct_model_state(imported: Dict[str, Any]) -> Dict[str, Any]:
                 result["posterior_params"] = extract_posterior_params(
                     imported["trace"], result["model_meta"]
                 )
-        except (KeyError, ValueError):
+        except (TypeError, ValueError, KeyError, AttributeError):
+            # Same "never raises" contract as the frame reconstruction
+            # above - widened defensively for consistency, since a
+            # malformed/incompatible trace or model_meta could plausibly
+            # raise any of these from posterior-array reshaping.
             result["posterior_params"] = None
 
     return result

@@ -3432,6 +3432,56 @@ def test_reconstruct_model_state_handles_missing_inputs_without_raising():
     }
 
 
+def test_reconstruct_model_state_never_raises_on_malformed_fitted_spec():
+    """Independent-review finding: reconstruct_model_state's own docstring
+    promises "never raises - callers decide what an incomplete
+    reconstruction means", but ModelSpec.from_dict(fitted_spec_dict) raises
+    TypeError (not ValueError/KeyError) for a malformed
+    fitted_model_spec/model_spec payload - e.g. one missing required fields
+    like date_col/market_col - which the frame-reconstruction except clause
+    did not catch. This crashed every caller: 09_Project_Export.py's import
+    handler directly (uncaught, after the rest of project state was already
+    installed), and verify_imported_approval/audit_project_resumability via
+    current_model_identity_fingerprints."""
+    imported = {
+        "transformed_data": pd.DataFrame({"x": [1]}),
+        "official_prepared_data": None,
+        "fitted_model_spec": {"not_a_valid": "spec"},
+        "outcome_definitions": [],
+    }
+    result = reconstruct_model_state(imported)
+    assert result["frame"] is None
+
+
+def test_reconstruct_model_state_still_handles_malformed_outcome_catalogue_at_fit():
+    """Non-regression: model_meta reconstruction's except clause was
+    widened from `except TypeError` to the module's standard four-exception
+    tuple alongside the frame-reconstruction fix above, purely for
+    consistency/defense-in-depth (a malformed OutcomeDefinition/
+    OutcomeGroupDefinition/OutcomeGroupTreatment/MediaOutcomePathway record
+    could plausibly raise ValueError from __post_init__ validation, not
+    only TypeError) - this confirms the pre-existing TypeError case (a
+    non-mapping catalogue entry) still resolves to "no model_meta" rather
+    than raising, exactly as before."""
+    imported = {
+        "model_meta": {
+            "markets": ["UK"],
+            "outcome_ids": ["New"],
+            "channels": ["TV"],
+            "dna_channels": [],
+            "dna_channel_idx": [],
+            "non_dna_idx": [0],
+            "dna_outcome_id": "New",
+            "dna_lag_weeks": 4,
+            "unpooled_markets": [],
+            "control_names": [],
+            "outcome_catalogue_at_fit": [42],
+        },
+    }
+    result = reconstruct_model_state(imported)
+    assert result["model_meta"] is None
+
+
 class TestReconstructModelStateWithDnaKitOutcomes:
     """The instruction document's audit-confirmed persistence defect:
     reconstruct_model_state used to rebuild the frame from transformed_data

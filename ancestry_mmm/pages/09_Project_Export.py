@@ -1832,19 +1832,36 @@ with SectionCard(
 ):
     model_type_for_export = get_state("model_type", "shared")
     if get_state("trace") is not None and get_state("model_spec"):
-        _export_spec = ModelSpec.from_dict(get_state("model_spec"))
-        render_drift_status(
-            resolve_outcome_definitions(
-                get_state("outcome_definitions"),
-                _export_spec.segment_outcomes,
-                _export_spec.segment_ltv,
-            ),
-            get_state("model_meta"),
-        )
-        _current_pathways = [
-            MediaOutcomePathway.from_dict(p)
-            for p in (get_state("media_outcome_pathways") or [])
-        ]
+        # Independent-review finding: this drift-status display reads
+        # session state's model_spec/media_outcome_pathways directly and
+        # unguarded, on every render (not only right after an import) -
+        # a malformed model_spec (e.g. missing required fields, however it
+        # got into session state) used to crash the whole page here rather
+        # than degrading gracefully, the same "never let malformed
+        # persisted data crash a render" contract every other quarantine
+        # point in this page already follows.
+        try:
+            _export_spec = ModelSpec.from_dict(get_state("model_spec"))
+            _current_pathways = [
+                MediaOutcomePathway.from_dict(p)
+                for p in (get_state("media_outcome_pathways") or [])
+            ]
+        except (TypeError, ValueError, KeyError, AttributeError) as _drift_exc:
+            st.warning(
+                "Could not compute drift status: the current model "
+                f"specification or pathway catalogue is malformed: {_drift_exc}"
+            )
+            _export_spec = None
+            _current_pathways = []
+        if _export_spec is not None:
+            render_drift_status(
+                resolve_outcome_definitions(
+                    get_state("outcome_definitions"),
+                    _export_spec.segment_outcomes,
+                    _export_spec.segment_ltv,
+                ),
+                get_state("model_meta"),
+            )
         _pathway_drift_df = pathways_drift_dataframe(
             _current_pathways, get_state("model_meta")
         )

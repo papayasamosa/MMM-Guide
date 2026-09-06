@@ -675,6 +675,53 @@ def test_import_quarantines_malformed_search_objects_activities_and_coverage_mat
     )
 
 
+def test_import_does_not_crash_on_a_malformed_fitted_model_spec(monkeypatch, tmp_path):
+    """Independent-review finding: reconstruct_model_state's own docstring
+    promises "never raises", but ModelSpec.from_dict(fitted_spec_dict)
+    raised an uncaught TypeError for a malformed fitted_model_spec (e.g.
+    missing required fields like date_col/market_col), which this handler
+    calls directly and unguarded at import - crashing the page after the
+    rest of project state had already been installed, the same failure
+    mode already fixed for every other malformed governed payload."""
+
+    export_root = tmp_path / "exports"
+    monkeypatch.setattr("ancestry_mmm.utils.PROJECT_EXPORT_ROOT", export_root)
+
+    project = build_lifecycle_project()
+    bundle_path = export_project(
+        tmp_path / "malformed-fitted-spec.zip",
+        raw_sources={"joined": project.fitted.transformed_data.copy()},
+        transformed_data=project.fitted.transformed_data,
+        pipeline_steps=[],
+        model_spec=project.fitted.model_spec_dict,
+        prior_config=project.fitted.prior_config,
+        dna_lag_weeks=project.fitted.dna_lag_weeks,
+        trace=project.fitted.trace,
+        scenarios=[],
+        model_approval=project.approval.to_dict(),
+        model_run_id=project.fitted.model_run_id,
+        model_meta=project.fitted.meta,
+        # Missing required fields (date_col/market_col) - ModelSpec.from_dict
+        # raises TypeError constructing it.
+        fitted_model_spec={"not_a_valid": "spec"},
+    )
+
+    at = AppTest.from_file(str(PAGE), default_timeout=60)
+    at.run()
+    assert not at.exception, f"initial load raised: {at.exception}"
+    at.file_uploader[0].set_value(
+        (bundle_path.name, bundle_path.read_bytes(), "application/zip")
+    ).run()
+    next(
+        button for button in at.button if button.label == "Import bundle"
+    ).click().run()
+
+    assert not at.exception, (
+        "malformed fitted_model_spec crashed the import instead of "
+        f"reconstruct_model_state resolving frame=None: {at.exception}"
+    )
+
+
 def test_import_clears_stale_cached_optimiser_results(monkeypatch, tmp_path):
     """Fresh review finding: a cached constrained_result/unconstrained_result
     left over from a DIFFERENT project earlier in this same Streamlit
