@@ -258,6 +258,13 @@ class TestThirdPartyActionsArePinned:
 
 
 class TestPermissionsAreMinimal:
+    """id-token: write is required by the official Claude GitHub App's
+    default GitHub-side OIDC authentication (this workflow supplies no
+    custom `github_token`), separately from claude_code_oauth_token which
+    authenticates the Claude/Anthropic API side - see Anthropic's FAQ entry
+    "Why am I getting OIDC authentication errors?". Every other scope stays
+    at the minimum each step actually uses."""
+
     def test_only_the_needed_scopes_are_granted(self):
         doc = _load_workflow_yaml()
         permissions = doc["permissions"]
@@ -266,15 +273,42 @@ class TestPermissionsAreMinimal:
             "pull-requests": "read",
             "issues": "write",
             "actions": "read",
+            "id-token": "write",
         }
 
-    def test_no_id_token_permission_is_requested(self):
+    def test_id_token_write_is_present_for_the_github_app_oidc_path(self):
         doc = _load_workflow_yaml()
-        assert "id-token" not in doc["permissions"]
+        assert doc["permissions"]["id-token"] == "write"
 
     def test_contents_permission_is_read_only(self):
         doc = _load_workflow_yaml()
         assert doc["permissions"]["contents"] == "read"
+
+    def test_contents_is_never_write(self):
+        doc = _load_workflow_yaml()
+        assert doc["permissions"]["contents"] != "write"
+
+    def test_pull_requests_permission_is_read_only(self):
+        doc = _load_workflow_yaml()
+        assert doc["permissions"]["pull-requests"] == "read"
+
+    def test_issues_permission_is_write(self):
+        doc = _load_workflow_yaml()
+        assert doc["permissions"]["issues"] == "write"
+
+    def test_actions_permission_is_read_only(self):
+        doc = _load_workflow_yaml()
+        assert doc["permissions"]["actions"] == "read"
+
+    def test_no_extra_scopes_beyond_the_five_declared(self):
+        doc = _load_workflow_yaml()
+        assert set(doc["permissions"].keys()) == {
+            "contents",
+            "pull-requests",
+            "issues",
+            "actions",
+            "id-token",
+        }
 
 
 class TestClaudeIsReviewOnly:
