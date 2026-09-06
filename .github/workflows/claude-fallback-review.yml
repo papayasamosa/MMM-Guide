@@ -1,0 +1,201 @@
+name: Claude fallback PR review
+
+# Codex remains the primary reviewer.
+# Claude runs only when the official Codex GitHub bot posts its
+# code-review usage-limit message on a pull request.
+#
+# IMPORTANT: because this uses issue_comment, this workflow file must
+# already exist on the repository's default branch (main).
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: claude-fallback-review-pr-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  actions: read
+  id-token: write
+
+jobs:
+  claude-fallback-review:
+    if: >-
+      github.event.issue.pull_request &&
+      github.event.comment.user.login == 'chatgpt-codex-connector[bot]' &&
+      contains(github.event.comment.body, 'You have reached your Codex usage limits for code reviews') &&
+      vars.CLAUDE_FALLBACK_REVIEW_ENABLED != 'false'
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      PR_NUMBER: ${{ github.event.issue.number }}
+      REPOSITORY: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Resolve exact PR head
+        id: pr
+        shell: bash
+        run: |
+          set -euo pipefail
+          HEAD_SHA="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')"
+          BASE_SHA="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.base.sha')"
+          echo "head_sha=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
+          echo "base_sha=${BASE_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if Claude already reviewed this exact head
+        id: duplicate
+        shell: bash
+        env:
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          MARKER="<!-- claude-fallback-review:${HEAD_SHA} -->"
+
+          if gh api "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments"               --paginate               --jq '.[].body' | grep -Fq -- "${MARKER}"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Claude fallback already completed for ${HEAD_SHA}; skipping."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout exact PR head
+        if: steps.duplicate.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/head
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify checked-out SHA did not move
+        if: steps.duplicate.outputs.skip != 'true'
+        shell: bash
+        env:
+          EXPECTED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_HEAD_SHA="$(git rev-parse HEAD)"
+          if [ "${ACTUAL_HEAD_SHA}" != "${EXPECTED_HEAD_SHA}" ]; then
+            echo "Expected ${EXPECTED_HEAD_SHA} but checked out ${ACTUAL_HEAD_SHA}."
+            echo "The PR moved while the fallback review was starting."
+            exit 1
+          fi
+
+      - name: Load review prompt
+        if: steps.duplicate.outputs.skip != 'true'
+        id: prompt
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo 'content<<CLAUDE_PROMPT_EOF'
+            cat .github/claude/fallback-review-prompt.md
+            echo 'CLAUDE_PROMPT_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run Claude fallback review
+        if: steps.duplicate.outputs.skip != 'true'
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          # Recommended for Claude Code Pro / Max:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+          # If you prefer Anthropic API pay-as-you-go instead, replace the
+          # line above with:
+          # anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+
+          allowed_bots: "chatgpt-codex-connector[bot]"
+
+          additional_permissions: |
+            actions: read
+
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.issue.number }}
+            EXACT HEAD SHA: ${{ steps.pr.outputs.head_sha }}
+            BASE SHA: ${{ steps.pr.outputs.base_sha }}
+
+            Codex was the primary PR reviewer, but its GitHub code-review
+            quota is exhausted. You are the fallback independent reviewer
+            for this exact PR head.
+
+            ${{ steps.prompt.outputs.content }}
+
+          claude_args: >-
+            --max-turns 30
+            --disallowedTools "Edit,Write"
+            --json-schema
+            '{"type":"object","properties":{"review":{"type":"string","description":"Complete Markdown PR review. Start with a clear merge-readiness verdict and include only substantiated findings."}},"required":["review"],"additionalProperties":false}'
+
+          show_full_output: false
+          display_report: false
+
+      - name: Re-check PR head before posting review
+        if: steps.duplicate.outputs.skip != 'true' && success()
+        id: current
+        shell: bash
+        env:
+          REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          CURRENT_HEAD_SHA="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')"
+
+          if [ "${CURRENT_HEAD_SHA}" != "${REVIEWED_HEAD_SHA}" ]; then
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "PR moved from ${REVIEWED_HEAD_SHA} to ${CURRENT_HEAD_SHA}; stale review will not be posted."
+          else
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post Claude fallback review
+        if: >-
+          steps.duplicate.outputs.skip != 'true' &&
+          success() &&
+          steps.current.outputs.current == 'true'
+        shell: bash
+        env:
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          STRUCTURED_OUTPUT: ${{ steps.claude.outputs.structured_output }}
+        run: |
+          set -euo pipefail
+
+          REVIEW_FILE="${RUNNER_TEMP}/claude-fallback-review.md"
+          MARKER="<!-- claude-fallback-review:${HEAD_SHA} -->"
+
+          printf '%s' "${STRUCTURED_OUTPUT}" | jq -r '.review' > "${REVIEW_FILE}"
+
+          {
+            echo "${MARKER}"
+            echo
+            echo "## Claude fallback review"
+            echo
+            echo "_Codex was unavailable because its code-review usage limit was reached. Claude reviewed exact head \`${HEAD_SHA}\` instead._"
+            echo
+            cat "${REVIEW_FILE}"
+          } > "${REVIEW_FILE}.final"
+
+          gh pr comment "${PR_NUMBER}" --body-file "${REVIEW_FILE}.final"
+
+      - name: Report stale fallback review
+        if: >-
+          steps.duplicate.outputs.skip != 'true' &&
+          success() &&
+          steps.current.outputs.current == 'false'
+        shell: bash
+        env:
+          REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          gh pr comment "${PR_NUMBER}" --body             "Claude fallback finished reviewing \`${REVIEWED_HEAD_SHA}\`, but the PR head changed before the review could be posted. The stale review was discarded."
+
+      - name: Report Claude fallback failure
+        if: steps.duplicate.outputs.skip != 'true' && failure()
+        shell: bash
+        run: |
+          gh pr comment "${PR_NUMBER}" --body             "Claude fallback review could not complete after Codex reported exhausted review quota. Check GitHub Actions run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}. No fallback-complete marker was written, so a later Codex quota event can retry."
